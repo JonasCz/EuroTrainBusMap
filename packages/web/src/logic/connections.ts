@@ -2,7 +2,8 @@
  * Onward connections from a city after arriving there at a given instant.
  */
 import type { CityFile, Route } from "@etbm/shared";
-import { addDays, runsOnDate, weekdayNote } from "./calendar.ts";
+import { addDays, runsOnDate } from "./calendar.ts";
+import { ServiceDays, mergeRows, serviceKey } from "./merge.ts";
 import { bestStop, prepare, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
 import { localDate, serviceTimeToUtc } from "./tz.ts";
@@ -23,6 +24,8 @@ export interface OnwardStop {
   arrUtc: number;
   /** corridors from the boarding city to this stop */
   corridors: number[];
+  /** Set when the stop comes from another trip of a merged row (split train): ride that one. */
+  via?: { trip: number; serviceDate: string; board: number };
 }
 
 export interface Connection {
@@ -60,6 +63,8 @@ export function transferMinutes(cf: CityFile, from: number, to: number): number 
 export function connections(cf: CityFile, ctx: NetCtx, f: Filters, arrival: Arrival, windowMin = 180): Connection[] {
   const prep = prepare(cf, ctx);
   const out: Connection[] = [];
+  const keys: string[] = [];
+  const services = new ServiceDays();
   const limit = arrival.utc + windowMin * 60000;
   cf.patterns.forEach((p, pi) => {
     const route = cf.routes[p.route];
@@ -73,6 +78,10 @@ export function connections(cf: CityFile, ctx: NetCtx, f: Filters, arrival: Arri
       // candidate boarding stops in this city segment, excluding a stop that is the trip's last
       for (const ti of prep.tripsByPattern[pi]!) {
         const [, start, cal, number] = cf.trips[ti]!;
+        for (let i = seg.first; i <= seg.last; i++) {
+          const off = start + p.dep[i]!;
+          services.add(serviceKey(route, number, tz, [p.stations[i]!, off]), { calendar: cal, shift: Math.floor(off / 1440) });
+        }
         const maxBack = Math.floor((start + p.dep[seg.last]!) / 1440) + 1;
         for (let k = -maxBack; k <= 1; k++) {
           const svc = addDays(arrDate, k);
@@ -126,13 +135,23 @@ export function connections(cf: CityFile, ctx: NetCtx, f: Filters, arrival: Arri
             headsign: p.headsign,
             startStation: ctx.stationCity[first] === cf.city ? null : first,
             stops,
-            note: weekdayNote(ctx.cal, cal),
+            note: null, // set by mergeRows
             tripTz: tz,
           });
+          keys.push(serviceKey(route, number, tz, [p.stations[chosen.stop]!, start + p.dep[chosen.stop]!]));
         }
       }
     });
   });
-  out.sort((a, b) => a.depUtc - b.depUtc);
-  return out;
+  // one row per service (split trips / duplicates): through services first, stops united
+  const order = out.map((_, i) => i).sort((a, b) => out[a]!.depUtc - out[b]!.depUtc || Number(out[b]!.through) - Number(out[a]!.through) || a - b);
+  return mergeRows(order.map((i) => out[i]!), order.map((i) => keys[i]!), ctx.cal, services, (keep, other) => {
+    let added = false;
+    for (const s of other.stops)
+      if (!keep.stops.some((t) => t.city === s.city)) {
+        keep.stops.push(s.via ? s : { ...s, via: { trip: other.trip, serviceDate: other.serviceDate, board: other.board } });
+        added = true;
+      }
+    if (added) keep.stops.sort((a, b) => a.arrUtc - b.arrUtc);
+  });
 }

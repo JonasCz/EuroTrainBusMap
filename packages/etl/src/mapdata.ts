@@ -67,7 +67,7 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
     stations: network.stations,
     hasDtCats: network.corridors.some((c) => c.dtCats !== undefined),
   };
-  const idx = buildNetIndex(net);
+  const idx = buildNetIndex(net, { density: true, log });
   let files = 0, bytes = 0;
   const write = async (rel: string, data: string | Uint8Array) => {
     const p = join(buildDir, rel);

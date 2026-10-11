@@ -42,7 +42,10 @@ Pipeline in short:
 6. **Patterns & trips** – station sequences with offsets, deduplicated; calendars as 60-day bitmasks.
 7. **Corridors** – undirected edges between consecutive cities, with trips/day per category and
    geometry routed on the rail graph (trains) or the major-road graph (coaches/buses; ferries and
-   islands stay curves), simplified to city-level detail.
+   islands stay curves), simplified to city-level detail. A city's point is its main station
+   (busiest rail station, else busiest stop; `src/core/anchor.ts`), so lines run through stations
+   instead of kinking towards a town centroid; lines from a city's other stations keep their own
+   end station and get a straight lead-in to the main one.
 8. **Line graph** (`src/core/segments.ts`) – corridor geometries are conflated onto shared
    reference lines (resampled every 100 m, matched within 80 m with a similar direction, rail with
    rail, road with road) and cut where the set of corridors using them changes. Each piece of
@@ -60,7 +63,10 @@ Pipeline in short:
      drawn network (layers `seg`, `city`, and at z7 also `term` end pieces and `st` stations),
      overzoomed beyond z7. Features are filter-independent: per category width/LOD level/D-Ticket
      flag; the style packs the visible categories side by side. Low zooms only hold what is shown
-     there, with equal neighbouring segments merged. Stored gzipped because static hosts don't
+     there, with equal neighbouring segments merged. LOD is density-aware
+     (`packages/shared/src/density.ts`): where the map around a line is sparse, regional rail,
+     coach and bus lines appear up to three LOD levels earlier, in importance order within an ink
+     budget per screen cell, and only connected to the visible network. Stored gzipped because static hosts don't
      compress protobuf; the app inflates them (DecompressionStream).
    - `geo/<shard>.json` (~50 KB gzip on average): for each timetable shard, the corridors its patterns
      use (with segment geometry, for the selection highlight) and the stations it references

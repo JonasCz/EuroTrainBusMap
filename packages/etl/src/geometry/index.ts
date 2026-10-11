@@ -24,6 +24,12 @@ export interface GeometryRequest {
   /** city representative points */
   a: [number, number];
   b: [number, number];
+  /**
+   * The city points are stations (each city's main station): a line must pass through its own
+   * end stations, so it is only trimmed where it really passes the city point, and joined by a
+   * plain stub otherwise (no Bézier shortcut past the station).
+   */
+  anchored?: boolean;
 }
 export interface GeometryResult { id: number; coords: [number, number][]; snapped: boolean }
 
@@ -170,16 +176,16 @@ function railGeometry(r: GeometryRequest, router: Router | null, cache: Map<stri
     if (routed) {
       if (shape && routed.length > 1.3 * polylineLength(shape)) {
         counts.shape++;
-        return { id: r.id, coords: finish(attach(r.a, simplify(shape, SHAPE_TOL), r.b), 1), snapped: true };
+        return { id: r.id, coords: finish(attach(r.a, simplify(shape, SHAPE_TOL), r.b, r.anchored), 1), snapped: true };
       }
       counts.routed++;
-      return { id: r.id, coords: finish(attach(r.a, routed.coords, r.b), 1), snapped: true };
+      return { id: r.id, coords: finish(attach(r.a, routed.coords, r.b, r.anchored), 1), snapped: true };
     }
     if (shape && !shapeFallback) shapeFallback = shape;
   }
   if (shapeFallback) {
     counts.shape++;
-    return { id: r.id, coords: finish(attach(r.a, simplify(shapeFallback, SHAPE_TOL), r.b), 1), snapped: true };
+    return { id: r.id, coords: finish(attach(r.a, simplify(shapeFallback, SHAPE_TOL), r.b, r.anchored), 1), snapped: true };
   }
   counts.fallback++;
   return { id: r.id, coords: finish(gentleCurve(r.a, r.b, 0), 0), snapped: false };
@@ -193,7 +199,7 @@ function roadGeometry(r: GeometryRequest, router: Router | null, cache: Map<stri
     const shape = plausibleShape(h);
     if (shape) {
       counts.roadShape++;
-      return { id: r.id, coords: finish(attach(r.a, simplify(shape, 40), r.b), 2), snapped: true };
+      return { id: r.id, coords: finish(attach(r.a, simplify(shape, 40), r.b, r.anchored), 2), snapped: true };
     }
   }
   if (router) {
@@ -205,7 +211,7 @@ function roadGeometry(r: GeometryRequest, router: Router | null, cache: Map<stri
       const routed = cachedRoute(router, cache, from, to, MAX_DETOUR(gc));
       if (routed) {
         counts.roadRouted++;
-        return { id: r.id, coords: finish(attach(r.a, routed.coords, r.b), 3), snapped: true };
+        return { id: r.id, coords: finish(attach(r.a, routed.coords, r.b, r.anchored), 3), snapped: true };
       }
     }
   }
@@ -233,14 +239,30 @@ function cachedRoute(router: Router, cache: Map<string, RouteResult | null>, fro
  * city point (searched within the first / last 35 % of its length), so a line never runs past
  * the city dot and back; the remaining gap becomes a straight stub that smoothing rounds off.
  */
-export function attach(a: LonLat, path: readonly LonLat[], b: LonLat): LonLat[] {
+export function attach(a: LonLat, path: readonly LonLat[], b: LonLat, anchored = false): LonLat[] {
   let P = dedupe(path);
   if (P.length < 2) return [a, b];
+  if (anchored) {
+    // city points are stations: trim only a run past the city's station, keep the line's own end station
+    P = trimStart(a, P, PASS_M);
+    P = trimStart(b, P.slice().reverse(), PASS_M).reverse();
+    P = stub(a, P);
+    P = stub(b, P.slice().reverse()).reverse();
+    return dedupe(P);
+  }
   P = trimStart(a, P);
   P = trimStart(b, P.slice().reverse()).reverse();
   P = lead(a, P);
   P = lead(b, P.slice().reverse()).reverse();
   return dedupe(P);
+}
+
+/** A line passing within this distance (m) of an anchored city point is cut there. */
+const PASS_M = 300;
+
+/** Prefix the path with point a: snapped onto it when close, else a straight stub. */
+function stub(a: LonLat, P: LonLat[]): LonLat[] {
+  return dist(a, P[0]!) < 40 ? [a, ...P.slice(1)] : [a, ...P];
 }
 
 /**
@@ -307,7 +329,8 @@ function pointAt(P: LonLat[], s: number): { p: LonLat; k: number; s: number } {
   return { p: P[P.length - 1]!, k: P.length - 2, s: cum };
 }
 
-function trimStart(a: LonLat, P: LonLat[]): LonLat[] {
+/** Cut P at its closest approach to a (within the first 35 %); with maxDist, only if it comes that close. */
+function trimStart(a: LonLat, P: LonLat[], maxDist = Infinity): LonLat[] {
   const total = polylineLength(P);
   const lim = 0.35 * total;
   const { kx, ky } = mPerDeg(a[1]);
@@ -328,6 +351,7 @@ function trimStart(a: LonLat, P: LonLat[]): LonLat[] {
   if (bk === 0 && bt === 0) return P;
   const p = P[bk]!, q = P[bk + 1]!;
   const start: LonLat = [p[0] + bt * (q[0] - p[0]), p[1] + bt * (q[1] - p[1])];
+  if (dist(a, start) > maxDist) return P;
   const rest = P.slice(bt >= 1 ? bk + 2 : bk + 1);
   return dedupe([start, ...rest]);
 }

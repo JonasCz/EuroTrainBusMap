@@ -2,7 +2,8 @@
  * Direct departures between two cities on a given (origin-local) date.
  */
 import type { CityFile, Route } from "@etbm/shared";
-import { addDays, dayNumber, inHorizon, lastDate, runsOnDate, weekdayNote } from "./calendar.ts";
+import { addDays, dayNumber, inHorizon, lastDate, runsOnDate } from "./calendar.ts";
+import { ServiceDays, mergeRows, serviceKey } from "./merge.ts";
 import { bestStop, prepare, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
 import { localDate, serviceTimeToUtc } from "./tz.ts";
@@ -32,7 +33,7 @@ export interface Departure {
   /** Last station of the trip. */
   endStation: number;
   minutes: number;
-  /** Day restriction like "Fri, Sun only" (null = daily). */
+  /** Days this service runs, e.g. "Mon–Fri", "Sun only" (null = daily); see daysNote. */
   note: string | null;
   corridors: number[];
   /** Other stops of the same trip in origin / destination city. */
@@ -100,13 +101,18 @@ export function timetable(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, d
   const prep = prepare(cf, ctx);
   const originTz = ctx.cityTz[cf.city]!;
   const out: Departure[] = [];
+  const keys: string[] = [];
+  const services = new ServiceDays();
   for (const c of cands) {
     const p = cf.patterns[c.pattern]!;
     const tz = prep.tz[c.pattern]!;
+    const route = cf.routes[p.route]!;
     for (const ti of prep.tripsByPattern[c.pattern]!) {
       const [, start, cal, number] = cf.trips[ti]!;
       // a trip on service day S departs at start+dep minutes, possibly > 24 h
       const depOff = start + p.dep[c.board]!;
+      const key = serviceKey(route, number, tz, [p.stations[c.board]!, depOff], [p.stations[c.alight]!, start + p.arr[c.alight]!]);
+      services.add(key, { calendar: cal, shift: Math.floor(depOff / 1440) });
       const back = Math.floor(depOff / 1440) + 1;
       for (let k = -back; k <= 1; k++) {
         const svc = addDays(date, k);
@@ -136,17 +142,19 @@ export function timetable(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, d
           startStation: ctx.stationCity[first] === cf.city ? null : first,
           endStation: p.stations[p.stations.length - 1]!,
           minutes: Math.round((arrUtc - depUtc) / 60000),
-          note: weekdayNote(ctx.cal, cal),
+          note: null, // set by mergeRows
           corridors: c.corridors,
           altBoard,
           altAlight,
           tripTz: tz,
         });
+        keys.push(key);
       }
     }
   }
-  out.sort((a, b) => a.depUtc - b.depUtc || a.arrUtc - b.arrUtc);
-  return out;
+  // one row per service: split trips (disjoint calendars) and duplicates on this date merge
+  const order = out.map((_, i) => i).sort((a, b) => out[a]!.depUtc - out[b]!.depUtc || out[a]!.arrUtc - out[b]!.arrUtc || a - b);
+  return mergeRows(order.map((i) => out[i]!), order.map((i) => keys[i]!), ctx.cal, services);
 }
 
 /** Next dates (after `date`) with at least one departure, up to `limit`. */

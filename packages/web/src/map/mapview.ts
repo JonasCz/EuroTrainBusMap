@@ -127,8 +127,17 @@ export class MapView {
       if (id !== null) cb.onCity(id);
       else cb.onBackground();
     });
-    this.map.on("mousemove", (e) => this.hover(e.point));
-    this.map.on("mouseout", () => this.setHover(null));
+    this.map.on("mousemove", (e) => {
+      // touch: a tap emulates a mousemove; ignore the ones that are part of a pan / pinch
+      if (!this.map.isMoving()) this.hover(e.point);
+    });
+    this.map.on("mouseout", () => this.clearHover());
+    // the hover tooltip is anchored to a screen point: close it whenever the map moves, and on
+    // any press elsewhere (on touch screens it would otherwise stay put after a tap)
+    for (const ev of ["movestart", "zoomstart", "dragstart", "touchstart"] as const) this.map.on(ev, () => this.clearHover());
+    document.addEventListener("pointerdown", (e) => {
+      if (!this.tooltip.hidden && e.target !== this.map.getCanvas()) this.clearHover();
+    }, { capture: true, passive: true });
     this.map.on("moveend", () => cb.onMove?.());
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
       this.theme = currentTheme();
@@ -217,6 +226,13 @@ export class MapView {
       this.tooltip.style.transform = `translate(${p.x + 14}px, ${p.y - 10}px)`;
       this.tooltip.hidden = false;
     } else this.tooltip.hidden = true;
+  }
+
+  /** Hide the tooltip and the hover highlight. */
+  private clearHover(): void {
+    this.tooltip.hidden = true;
+    this.setHover(null);
+    this.map.getCanvas().style.cursor = "";
   }
 
   private setHover(h: { source: string; sourceLayer?: string; id: number } | null): void {

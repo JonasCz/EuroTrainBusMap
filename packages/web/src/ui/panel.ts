@@ -2,7 +2,7 @@
 import { Cat } from "@etbm/shared";
 import { cityTz, slugify, stationName, type Net } from "../data/net.ts";
 import { addDays, dateFromDayNumber, formatDateShort, lastDate } from "../logic/calendar.ts";
-import type { Connection } from "../logic/connections.ts";
+import type { Connection, OnwardStop } from "../logic/connections.ts";
 import { CAT_LABEL, CAT_ORDER, type Filters } from "../logic/filters.ts";
 import type { Leg, LegInfo } from "../logic/journey.ts";
 import type { Reach } from "../logic/reach.ts";
@@ -36,7 +36,7 @@ export interface PanelActions {
   clickCity(id: number): void;
   back(): void;
   chooseDeparture(d: Departure): void;
-  chooseConnection(c: Connection, stopIdx: number, fromCity: number): void;
+  chooseConnection(c: Connection, stop: OnwardStop, fromCity: number): void;
   shiftDate(days: number): void;
   today(city: number): string;
 }
@@ -639,7 +639,7 @@ export class Panel {
                     type: "button",
                     class: "stop-chip",
                     title: `Continue to ${n.cities[s.city]!.name} (${stationName(n, s.station)})`,
-                    onclick: () => this.actions.chooseConnection(c, s.stop, here),
+                    onclick: () => this.actions.chooseConnection(c, s, here),
                   },
                   h("span", { class: "stop-name" }, n.cities[s.city]!.name),
                   timeEl(n, s.arrUtc, s.station, { refDate: arrDate, refTz: hereTz }),

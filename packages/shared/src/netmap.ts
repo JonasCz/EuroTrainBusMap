@@ -15,6 +15,7 @@ import { decodePolyline, encodePolyline, packCities, packStations, unpackCities,
 import type { CatBit, City, Corridor, Segment, Station } from "./schema.ts";
 import type * as GeoJSON from "geojson";
 import { Cat } from "./schema.ts";
+import { promoteSparse } from "./density.ts";
 import { LEVELS, LONG_HOP_ZOOM, catWidth, cityTierZoom, corridorMinZoom, haversineKm, isLongHop, levelIndex, stationLevel } from "./lod.ts";
 
 export const MAPDATA_VERSION = 1;
@@ -96,7 +97,13 @@ export function cutIndices(net: MapNet, c: Corridor): [number, number] {
   return [ka, Math.max(ka, kb)];
 }
 
-export function buildNetIndex(net: MapNet): NetIndex {
+export interface NetIndexOptions {
+  /** Density-aware LOD (density.ts): lines appear earlier where the map is sparse. */
+  density?: boolean | { budget?: number; maxPromote?: number };
+  log?: (s: string) => void;
+}
+
+export function buildNetIndex(net: MapNet, opts: NetIndexOptions = {}): NetIndex {
   const nC = net.corridors.length;
   const nS = net.segments.length;
   const segLen = new Float32Array(nS);
@@ -105,20 +112,48 @@ export function buildNetIndex(net: MapNet): NetIndex {
   const cutA = new Int32Array(nC), cutB = new Int32Array(nC);
   const NC = CAT_BITS.length;
   const segLevel = new Int8Array(nS * NC).fill(127);
+  // corridor × cat level (base rules), and corridor length
+  const corLevel = new Int8Array(nC * NC).fill(127);
+  const corLen = new Float32Array(nC);
+  const fixed = new Uint8Array(nC * NC);
   for (const c of net.corridors) {
     if (!c) continue;
     const co = c.coords?.length ? c.coords : null;
     const ca = net.cities[c.a]!, cb = net.cities[c.b]!;
     const len = co ? haversineKm(co[0]!, co[co.length - 1]!) : haversineKm([ca.lon, ca.lat], [cb.lon, cb.lat]);
+    corLen[c.id] = len;
+    CAT_BITS.forEach((k, i) => {
+      if (!(c.cats & k)) return;
+      corLevel[c.id * NC + i] = levelIndex(corridorMinZoom(k, c.tpd[k] ?? 0, len, c.snapped));
+      if (isLongHop(len, c.snapped)) fixed[c.id * NC + i] = 1;
+    });
+  }
+  if (opts.density) {
+    const t0 = Date.now();
+    const r = promoteSparse(
+      {
+        segCoords: net.segments.map((s) => s?.coords),
+        corridors: net.corridors.map((c) => (c ? { a: c.a, b: c.b, segs: c.segs ?? [], cats: c.cats, tpd: c.tpd } : undefined)),
+        cats: CAT_BITS,
+        levels: corLevel,
+        fixed,
+      },
+      typeof opts.density === "object" ? opts.density : {},
+    );
+    opts.log?.(`mapdata: density LOD promoted ${CAT_BITS.map((k, i) => `${k}:${r.promoted[i]}`).join(" ")} corridor lines (${Date.now() - t0} ms)`);
+  }
+  for (const c of net.corridors) {
+    if (!c) continue;
+    const ca = net.cities[c.a]!, cb = net.cities[c.b]!;
+    const len = corLen[c.id]!;
     const de = ca.country === "DE" && cb.country === "DE";
     const segs = c.segs ?? [];
     const [ka, kb] = cutIndices(net, c);
     cutA[c.id] = ka;
     cutB[c.id] = kb;
-    const lv = CAT_BITS.map((k) => (c.cats & k ? levelIndex(corridorMinZoom(k, c.tpd[k] ?? 0, len, c.snapped)) : 127));
     segs.forEach((code, i) => {
       const s = segId(code);
-      for (let k = 0; k < NC; k++) if (lv[k]! < segLevel[s * NC + k]!) segLevel[s * NC + k] = lv[k]!;
+      for (let k = 0; k < NC; k++) if (corLevel[c.id * NC + k]! < segLevel[s * NC + k]!) segLevel[s * NC + k] = corLevel[c.id * NC + k]!;
       if (len > segLen[s]!) segLen[s] = len;
       if (!de) segDe[s]! &= ~c.cats;
       if (i > ka && i < kb) segTerm[s] = 0;

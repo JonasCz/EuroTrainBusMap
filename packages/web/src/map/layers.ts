@@ -415,6 +415,9 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
       "text-letter-spacing": 0.25,
       "text-max-width": 12,
       "text-padding": 20,
+      // the city point is its main station (ETL): keep the area label off its station marker and name
+      "text-variable-anchor": ["bottom", "top", "right", "left"],
+      "text-radial-offset": 1.6,
       "symbol-sort-key": ["-", 1, ["get", "imp"]],
     },
     paint: { "text-color": t.countryText, "text-opacity": 0.75, "text-halo-color": t.land, "text-halo-width": 1 },

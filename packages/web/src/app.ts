@@ -3,7 +3,7 @@ import type { CityFile } from "@etbm/shared";
 import { loadCity } from "./data/load.ts";
 import { cityTz, ensureDetail, type Net } from "./data/net.ts";
 import { addDays, inHorizon } from "./logic/calendar.ts";
-import { connections, type Connection } from "./logic/connections.ts";
+import { connections, type Connection, type OnwardStop } from "./logic/connections.ts";
 import { sameFilters, type Filters } from "./logic/filters.ts";
 import { resolveLeg, type Leg, type LegInfo } from "./logic/journey.ts";
 import { computeReach } from "./logic/reach.ts";
@@ -235,8 +235,9 @@ export class App {
     this.set({ legs: [{ from: this.state.city!, trip: d.trip, date: d.serviceDate, board: d.board, alight: d.alight }] });
   }
 
-  chooseConnection(c: Connection, stopIdx: number, fromCity: number): void {
-    const leg: Leg = { from: fromCity, trip: c.trip, date: c.serviceDate, board: c.board, alight: stopIdx };
+  chooseConnection(c: Connection, stop: OnwardStop, fromCity: number): void {
+    const v = stop.via ?? { trip: c.trip, serviceDate: c.serviceDate, board: c.board };
+    const leg: Leg = { from: fromCity, trip: v.trip, date: v.serviceDate, board: v.board, alight: stop.stop };
     this.set({ legs: [...this.state.legs, leg] });
   }
 

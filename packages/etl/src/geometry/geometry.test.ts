@@ -161,6 +161,17 @@ describe('geo helpers', () => {
     expect(out[0]).toEqual([0, 50.001]);
     expect(out.some((p) => p[0] < -0.01)).toBe(false);
   });
+  it('anchored attach keeps the end station of a line that does not pass the city point', () => {
+    // city point = main station 4 km north-west; the line starts at another station and runs north-east
+    const station: LonLat = [0, 50];
+    const path: LonLat[] = [station, [0.01, 50.01], [0.03, 50.012], [0.5, 50.1]];
+    const out = attach([-0.04, 50.03], path, [0.5, 50.1], true);
+    expect(out[0]).toEqual([-0.04, 50.03]);
+    expect(out[1]).toEqual(station); // straight stub to the station, no shortcut past it
+    // a line passing right by the city point is still cut there
+    const by: LonLat[] = [[-0.07, 50], [0, 50.0005], [0.3, 50], [1, 50]];
+    expect(attach([0, 50.001], by, [1, 50], true).some((p) => p[0] < -0.01)).toBe(false);
+  });
 });
 
 describe('rail graph file', () => {

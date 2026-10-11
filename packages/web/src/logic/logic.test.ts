@@ -6,7 +6,10 @@ import { decodeLegs, encodeLegs, resolveLeg } from "./journey.ts";
 import { computeReach } from "./reach.ts";
 import { nextServiceDates, pairCorridors, timetable } from "./timetable.ts";
 import { fmtTime, wallToUtc } from "./tz.ts";
-import { alpha, ctx } from "./testdata.ts";
+import { alpha, calendars, ctx, network } from "./testdata.ts";
+import { buildCalIndex, encodeMask } from "./calendar.ts";
+import { buildNetCtx } from "./context.ts";
+import type { CityFile } from "@etbm/shared";
 
 const all = { cats: ALL_CATS, dticket: false };
 const BER = "Europe/Berlin";
@@ -51,7 +54,7 @@ describe("timetable", () => {
     expect(t[0]!.minutes).toBe(120);
     expect(t[0]!.altBoard.map((s) => s.station)).toEqual([1]);
     expect(t[0]!.note).toBeNull();
-    expect(t[1]!.note).toBe("Fri, Sun only");
+    expect(t[1]!.note).toBe("Fri, Sun");
     expect(t[1]!.number).toBe("3");
     expect(timetable(alpha, ctx, all, 1, "2026-10-10")).toHaveLength(1);
   });
@@ -111,5 +114,33 @@ describe("journey", () => {
     expect(s).toBe("0.20261010.0.2");
     expect(decodeLegs(s, 0)).toEqual([leg]);
     expect(resolveLeg(alpha, ctx, { ...leg, from: 3 })).toBeNull();
+  });
+});
+
+describe("split trips", () => {
+  // ICE 77 at 08:00 is two GTFS trips with disjoint calendars (Mon–Wed / Thu–Sun) and
+  // different stop patterns; ICE 1 at 10:00 is listed twice (duplicate trip).
+  const days = (pred: (wd: number) => boolean) => encodeMask(Array.from({ length: calendars.days }, (_, i) => pred((1 + i) % 7)));
+  const cal2 = buildCalIndex({ ...calendars, masks: [...calendars.masks, days((wd) => wd >= 1 && wd <= 3), days((wd) => wd === 0 || wd >= 4)] });
+  const ctx2 = buildNetCtx(network, cal2);
+  const a2: CityFile = {
+    ...alpha,
+    patterns: [...alpha.patterns, { route: 0, stations: [0, 2], arr: [0, 120], dep: [0, 125], corridors: [10], headsign: "Beta" }],
+    patternTz: [...alpha.patternTz, 0],
+    trips: [...alpha.trips, [0, 480, 5, "77"], [5, 480, 6, "77"], [0, 600, 0, "1"]],
+  };
+  it("merges them into one row labelled with the union of their days", () => {
+    for (const date of ["2026-10-05", "2026-10-09"]) {
+      const t = timetable(a2, ctx2, { cats: Cat.LongDistance, dticket: false }, 1, date);
+      expect(t.map((d) => `${fmtTime(d.depUtc, BER)} ${d.number}`)).toEqual(["08:00 77", "10:00 1", ...(date === "2026-10-09" ? ["23:50 3"] : [])]);
+      expect(t[0]!.note).toBeNull(); // daily: Mon–Wed ∪ Thu–Sun
+    }
+  });
+  it("merges onward connections too", () => {
+    const arr = { city: 0, station: 0, utc: wallToUtc("2026-10-09", 7 * 60, BER) };
+    const c = connections(a2, ctx2, all, arr).filter((x) => x.route.name === "ICE");
+    expect(c.map((x) => `${fmtTime(x.depUtc, BER)} ${x.number}`)).toEqual(["08:00 77", "10:00 1"]);
+    expect(c[0]!.note).toBeNull();
+    expect(c[1]!.stops.map((s) => s.city)).toEqual([1, 2]);
   });
 });

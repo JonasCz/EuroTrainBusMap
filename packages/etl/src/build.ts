@@ -36,6 +36,7 @@ import { PatternStore, localizeStart, processTripStops, type RawStop } from "./c
 import { displayName } from "./core/classify.ts";
 import { sliceShape } from "./core/shapes.ts";
 import { buildSegments } from "./core/segments.ts";
+import { anchorCitiesAtMainStation } from "./core/anchor.ts";
 import { applyStopNames, stopAltKey, stopKey } from "./core/stopnames.ts";
 import { loadStopNames, writeStopCandidates } from "./stopnames-io.ts";
 import { GridIndex, fastDist, greatCircle, haversine, round5, simplifyLine, type LonLat } from "./util/geo.ts";
@@ -527,6 +528,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const patterns = store.patterns;
   patternDays = Array.from({ length: patterns.length }, (_, i) => patternDays[i] ?? 0);
   log(`${patterns.length} patterns, ${tripP.length} trips, ${masks.masks.length} calendars, ${routes.length} routes, ${droppedTrips} trips dropped (<2 cities)`);
+  anchorCitiesAtMainStation(cities, stations, patterns, patternDays, (p) => routes[patterns[p]!.route]!.cat, log);
 
   // ------------------------------------------------------------------ corridors
   timer.start("corridors");
@@ -614,7 +616,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       }
       return hop;
     });
-    return { id, mode: (c.cats & RAIL ? "rail" : "road") as "rail" | "road", hops, a: [A.lon, A.lat] as [number, number], b: [B.lon, B.lat] as [number, number] };
+    return { id, mode: (c.cats & RAIL ? "rail" : "road") as "rail" | "road", hops, a: [A.lon, A.lat] as [number, number], b: [B.lon, B.lat] as [number, number], anchored: true };
   });
   // The database is not needed any more: close it and release big JS structures
   // before geometry (which runs its own DuckDB instance on a large extract).
@@ -709,7 +711,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     }
   const outCities: City[] = cityOrder.map((c, i) => {
     const cr = cities[c]!;
-    // representative point: weighted mean of rail stations if any, else city point
+    // representative point: the main station (anchorCitiesAtMainStation), else the GeoNames point
     return {
       id: i,
       name: cr.name,
