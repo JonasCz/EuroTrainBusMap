@@ -565,6 +565,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   // ------------------------------------------------------------------ geometry
   timer.start("geometry");
   const RAIL = Cat.LongDistance | Cat.Regional;
+  // Douglas-Peucker tolerance (m) of road-routed corridors (coach / regional bus)
+  const ROAD_TOL_COACH = 300, ROAD_TOL_BUS = 500;
   const reqs = corrs.map((c, id) => {
     const A = cities[c.a]!, B = cities[c.b]!;
     const hops = hopLists[id]!.map((h) => {
@@ -698,7 +700,9 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const g = geomById.get(id);
     const A = cities[c.a]!, B = cities[c.b]!;
     const raw = g?.coords ?? greatCircle([A.lon, A.lat], [B.lon, B.lat]);
-    const coords = simplifyLine(raw, c.cats & RAIL ? 150 : c.cats & Cat.Coach ? 400 : 800).map(([x, y]) => [round5(x), round5(y)] as [number, number]);
+    // road-routed coach/bus lines follow roads: finer tolerance than for unsnapped curves
+    const tol = c.cats & RAIL ? 150 : g?.snapped ? (c.cats & Cat.Coach ? ROAD_TOL_COACH : ROAD_TOL_BUS) : c.cats & Cat.Coach ? 400 : 800;
+    const coords = simplifyLine(raw, tol).map(([x, y]) => [round5(x), round5(y)] as [number, number]);
     // orient from new a to new b
     const flip = a > b;
     if (flip) coords.reverse();

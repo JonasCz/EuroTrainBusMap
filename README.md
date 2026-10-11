@@ -18,7 +18,7 @@ packages/
     src/build.ts        cities, stations, dedup, patterns, corridors, geometry, output, sanity
     src/core/*          pure logic (classification, calendars, names, city assignment, station merging,
                         pattern building, cross-feed dedup) – unit tested in test/
-    src/geometry/       corridor geometry: rail routing on a graph built from Overture (OSM) rail
+    src/geometry/       corridor geometry: rail / coach+bus routing on graphs built from Overture (OSM) rail and major roads
     src/assets.ts       builds the slow-changing inputs stored in R2 (see below)
   web/      MapLibre front end (Vite); reads data/ at runtime
 ```
@@ -41,7 +41,8 @@ Pipeline in short:
    (city, time) sequences and kept once, with merged calendars.
 6. **Patterns & trips** – station sequences with offsets, deduplicated; calendars as 60-day bitmasks.
 7. **Corridors** – undirected edges between consecutive cities, with trips/day per category and
-   geometry routed on the rail graph (simplified to city-level detail).
+   geometry routed on the rail graph (trains) or the major-road graph (coaches/buses; ferries and
+   islands stay curves), simplified to city-level detail.
 8. **Output** (`data/<build>/`): `network.json` (packed, ~9 MB raw / ~3.5 MB compressed),
    `calendars.json`, `attribution.json`, `basemap/*.json` and `shard/<n>.json` – the per-city
    timetables, grouped into ~600 shards of spatially neighbouring cities (`City.shard`).
@@ -70,9 +71,9 @@ inputs are unchanged – handy when iterating on later stages), `--no-geometry`,
 `--start YYYY-MM-DD`, `--days 60`. A build report (stats per stage/country, sanity checks) is written to
 `<work>/build-report.json`.
 
-Without assets the ETL downloads GeoNames/Natural Earth itself; rail geometry needs the rail graph
-(`pnpm --filter @etbm/etl run assets -- --only rail`, ~30 min the first time, or download
-`rail/rail-graph-v1.bin` from R2 into `work/geometry/`), otherwise corridors are drawn as curves.
+Without assets the ETL downloads GeoNames/Natural Earth itself; corridor geometry needs the rail and road graphs
+(`pnpm --filter @etbm/etl run assets -- --only rail,road`, ~30 min each the first time, or download
+`rail/rail-graph-v1.bin` / `road/road-graph-v1.bin` from R2 into `work/geometry/`), otherwise corridors are drawn as curves.
 
 Tests: `pnpm test`, types: `pnpm typecheck`.
 
@@ -90,7 +91,7 @@ Tests: `pnpm test`, types: `pnpm typecheck`.
 - **`.github/workflows/refresh-assets.yml`** (monthly + manual): rebuilds the slow-changing inputs and
   uploads them to the R2 bucket `eurotrainbusmap-assets`: `geonames/places-europe.tsv.gz` (pruned
   GeoNames, ~2 MB), `basemap/*.json` (Natural Earth), `rail/rail-graph-v1.bin` (rail graph from the
-  Overture rail extract, ~19 MB), and `manifest.json`.
+  Overture rail extract, ~19 MB), `road/road-graph-v1.bin` (motorway…secondary road graph, ~53 MB) and `manifest.json`.
 
 Secrets: `CLOUDFLARE_API_TOKEN` (Workers deploy + R2) and `CLOUDFLARE_ACCOUNT_ID`.
 
@@ -101,7 +102,7 @@ Designed to run for free:
 - **GitHub Actions** – free for public repositories (weekly ~20–30 min job, monthly asset refresh).
 - **Cloudflare Workers static assets** – requests to static assets are free; ~640 files ≈ 1.1 GB per
   build (limits: 25 MiB per file, 20k files per deployment on the free plan).
-- **Cloudflare R2** – ~25 MB stored, a handful of operations per week: well inside the free tier
+- **Cloudflare R2** – ~80 MB stored, a handful of operations per week: well inside the free tier
   (10 GB storage, 1M class A / 10M class B ops per month, no egress fees).
 - **Data sources** – free/open (Transitous mirror, Mobility Database, GeoNames, Natural Earth,
   Overture/OSM). Transitous is a community service: the pipeline downloads once a week with a

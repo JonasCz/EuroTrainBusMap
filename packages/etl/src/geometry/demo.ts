@@ -16,7 +16,7 @@ import type { Router } from './route.ts';
 import { buildWithRouter, loadRouter, MAX_DETOUR, type GeometryRequest, type GeometryResult } from './index.ts';
 import { dist, polylineLength, type LonLat } from './geo.ts';
 
-interface Pair { name: string; from: LonLat; to: LonLat; a: LonLat; b: LonLat; alt?: [LonLat, LonLat]; mode?: 'rail' | 'road'; expect?: LonLat[] }
+interface Pair { name: string; from: LonLat; to: LonLat; a: LonLat; b: LonLat; alt?: [LonLat, LonLat]; mode?: 'rail' | 'road'; expect?: LonLat[]; unsnapped?: boolean }
 const PAIRS: Pair[] = [
   { name: 'Berlin Hbf → Hamburg Hbf', from: [13.3695, 52.5251], to: [10.0067, 53.5528], a: [13.405, 52.52], b: [9.9937, 53.5511] },
   // via the Köln–Rhein/Main high-speed line: passes Montabaur and Limburg Süd
@@ -31,7 +31,12 @@ const PAIRS: Pair[] = [
   { name: 'İstanbul Söğütlüçeşme → Ankara', from: [29.0381, 40.9937], to: [32.8441, 39.9364], a: [28.9784, 41.0082], b: [32.8597, 39.9334], alt: [[28.7826, 41.0168], [32.8441, 39.9364]], expect: [[30.5194, 39.7806]] },
   { name: 'Oslo S → Bergen', from: [10.7522, 59.9111], to: [5.3326, 60.3904], a: [10.7522, 59.9139], b: [5.3221, 60.3913], expect: [[7.5036, 60.6015]] },
   { name: 'København H → Malmö C', from: [12.5649, 55.6728], to: [13.0003, 55.6094], a: [12.5683, 55.6761], b: [13.0038, 55.605], expect: [[12.75, 55.585]] },
-  { name: 'Berlin → Dresden (coach curve)', from: [13.3695, 52.5251], to: [13.7323, 51.0403], a: [13.405, 52.52], b: [13.7373, 51.0504], mode: 'road' },
+  // coaches on the road graph
+  { name: 'Berlin ZOB → Praha Florenc (coach)', from: [13.2793, 52.5073], to: [14.4404, 50.0896], a: [13.405, 52.52], b: [14.4378, 50.0755], mode: 'road', expect: [[13.74, 50.98]] },
+  { name: 'Wien Erdberg → Budapest Népliget (coach)', from: [16.4136, 48.1915], to: [19.1003, 47.4757], a: [16.3738, 48.2082], b: [19.0402, 47.4979], mode: 'road', expect: [[17.6, 47.66]] },
+  { name: 'Madrid Estación Sur → Valencia (coach)', from: [-3.6938, 40.3949], to: [-0.3923, 39.4669], a: [-3.7038, 40.4168], b: [-0.3763, 39.4699], mode: 'road', expect: [[-1.1, 39.48]] },
+  // ferry: no road → gentle curve
+  { name: 'Bari → Igoumenitsa (ferry, curve)', from: [16.87, 41.12], to: [20.27, 39.5], a: [16.87, 41.12], b: [20.27, 39.5], mode: 'road', unsnapped: true },
 ];
 
 const COLORS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#008080', '#f032e6', '#9a6324', '#800000', '#000075', '#808000'];
@@ -46,6 +51,9 @@ async function main() {
   // prebuilt graph (ETBM_RAIL_GRAPH or <workDir>/geometry/rail-graph-v<N>.bin), else extraction
   const router = await loadRouter({ workDir, log });
   if (!router) throw new Error('no rail graph');
+  const t0r = Date.now();
+  const roadRouter = await loadRouter({ workDir, log, noExtract: true }, 'road');
+  if (roadRouter) log(`road graph ready in ${((Date.now() - t0r) / 1000).toFixed(1)} s, rss ${(process.memoryUsage().rss / 1e6).toFixed(0)} MB`);
   const g = router.g;
   log(`graph ready in ${((Date.now() - t0) / 1000).toFixed(1)} s, ${g.nodeCount} nodes, ${g.edgeCount} edges, ${(graphBytes(g) / 1e6).toFixed(0)} MB typed arrays, rss ${(process.memoryUsage().rss / 1e6).toFixed(0)} MB`);
 
@@ -54,7 +62,7 @@ async function main() {
     hops: [{ from: p.from, to: p.to }, ...(p.alt ? [{ from: p.alt[0], to: p.alt[1] }] : [])],
   }));
   const t1 = Date.now();
-  const res = buildWithRouter(reqs, router, log);
+  const res = buildWithRouter(reqs, router, log, roadRouter);
   log(`demo pairs routed in ${Date.now() - t1} ms`);
 
   // checks
@@ -65,7 +73,7 @@ async function main() {
     const len = polylineLength(r.coords);
     const gc = dist(p.from, p.to);
     const misses = (p.expect ?? []).filter((e) => Math.min(...r.coords.map((c) => dist(c, e))) > 6000);
-    const good = (p.mode === 'road' || r.snapped) && misses.length === 0;
+    const good = r.snapped === !p.unsnapped && misses.length === 0;
     if (good) ok++;
     rows.push(`${good ? 'OK ' : 'BAD'} ${p.name.padEnd(36)} snapped=${r.snapped} ${(len / 1000).toFixed(0)} km (gc ${(gc / 1000).toFixed(0)} km, ×${(len / gc).toFixed(2)}) ${r.coords.length} pts${misses.length ? ` misses ${JSON.stringify(misses)}` : ''}`);
   });
@@ -80,7 +88,7 @@ async function main() {
     type: 'FeatureCollection',
     features: res.map((r, i) => ({ type: 'Feature', properties: { name: PAIRS[i]!.name, snapped: r.snapped }, geometry: { type: 'LineString', coordinates: r.coords } })),
   }));
-  await render(g, res, outDir, log);
+  await render(g, roadRouter?.g ?? g, res, outDir, log);
 }
 
 function throughput(router: Router, g: RailGraph): string {
@@ -107,12 +115,12 @@ function throughput(router: Router, g: RailGraph): string {
   return `throughput: ${pairs.length} random 20-150 km pairs in ${ms} ms (${(ms / pairs.length).toFixed(2)} ms/route, ${found} found, ${(((router.stats.settled - s0) / pairs.length) | 0)} nodes settled/route)`;
 }
 
-async function render(g: RailGraph, res: GeometryResult[], outDir: string, log: (s: string) => void) {
+async function render(railG: RailGraph, roadG: RailGraph, res: GeometryResult[], outDir: string, log: (s: string) => void) {
   const W = 560;
   const panels: string[] = [];
   const mx = (lon: number) => (lon + 180) / 360;
   const my = (lat: number) => { const s = Math.sin((lat * Math.PI) / 180); return 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI); };
-  const panel = (title: string, focus: { coords: LonLat[]; color: string }[], marks: LonLat[], bbox?: [number, number, number, number]) => {
+  const panel = (title: string, focus: { coords: LonLat[]; color: string }[], marks: LonLat[], bbox?: [number, number, number, number], g: RailGraph = railG) => {
     const all = focus.flatMap((f) => f.coords).concat(marks);
     let [x0, y0, x1, y1] = bbox ?? [Math.min(...all.map((c) => c[0])), Math.min(...all.map((c) => c[1])), Math.max(...all.map((c) => c[0])), Math.max(...all.map((c) => c[1]))];
     const X0 = mx(x0), X1 = mx(x1), Y0 = my(y1), Y1 = my(y0);
@@ -137,17 +145,17 @@ async function render(g: RailGraph, res: GeometryResult[], outDir: string, log: 
   res.forEach((r, i) => {
     const p = PAIRS[i]!;
     const km = (polylineLength(r.coords) / 1000).toFixed(0);
-    panel(`${p.name} — ${km} km, ${r.coords.length} pts${r.snapped ? '' : ' (not snapped)'}`, [{ coords: r.coords, color: COLORS[i % COLORS.length]! }], [p.a, p.b]);
+    panel(`${p.name} — ${km} km, ${r.coords.length} pts${r.snapped ? '' : ' (not snapped)'}`, [{ coords: r.coords, color: COLORS[i % COLORS.length]! }], [p.a, p.b], undefined, p.mode === 'road' ? roadG : railG);
   });
   // zooms to check smoothness / track-following near stations
-  const zoom = (title: string, c: LonLat, km: number) => {
+  const zoom = (title: string, c: LonLat, km: number, g: RailGraph = railG) => {
     const dLat = km / 111, dLon = dLat / Math.cos((c[1] * Math.PI) / 180);
-    panel(title, res.map((r, i) => ({ coords: r.coords, color: COLORS[i % COLORS.length]! })), [], [c[0] - dLon, c[1] - dLat, c[0] + dLon, c[1] + dLat]);
+    panel(title, res.map((r, i) => ({ coords: r.coords, color: COLORS[i % COLORS.length]! })), [], [c[0] - dLon, c[1] - dLat, c[0] + dLon, c[1] + dLat], g);
   };
   zoom('zoom: Köln 6 km', [6.97, 50.94], 3);
-  zoom('zoom: Frankfurt 8 km', [8.63, 50.1], 4);
-  zoom('zoom: Paris 10 km', [2.37, 48.86], 5);
   zoom('zoom: Øresund 30 km', [12.78, 55.62], 15);
+  zoom('zoom: Wien coach exit 30 km (roads)', [16.5, 48.12], 15, roadG);
+  zoom('zoom: Dresden 40 km (roads)', [13.75, 51.0], 20, roadG);
   const html = `<!doctype html><html><head><style>body{margin:0;font:13px sans-serif;display:flex;flex-wrap:wrap;width:${4 * (W + 8)}px}.p{margin:4px}.t{padding:2px 4px}</style></head><body>${panels.join('')}</body></html>`;
   writeFileSync(join(outDir, 'demo.html'), html);
   let chromium: { launch: (o?: object) => Promise<any> };

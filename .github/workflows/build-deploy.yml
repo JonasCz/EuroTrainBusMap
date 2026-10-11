@@ -120,6 +120,8 @@ jobs:
           unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_REGION AWS_REGION
           rail=$(ls work/assets/rail/rail-graph-v*.bin 2>/dev/null | sort -V | tail -1 || true)
           if [ -n "$rail" ]; then export ETBM_RAIL_GRAPH="$PWD/$rail"; else echo "::warning::no rail graph asset – corridors will not be snapped"; fi
+          road=$(ls work/assets/road/road-graph-v*.bin 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "$road" ]; then export ETBM_ROAD_GRAPH="$PWD/$road"; else echo "::warning::no road graph asset – coach/bus corridors will not follow roads"; fi
           rm -rf work/out-new
           pnpm --filter @etbm/etl run build-data -- --out "$WORK/out-new" --work "$WORK" --assets "$WORK/assets" --subset "${{ steps.mode.outputs.subset }}"
           rm -rf work/out && mv work/out-new work/out

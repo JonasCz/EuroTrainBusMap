@@ -8,9 +8,10 @@
  * rounded to 5 decimals.
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { ensureRailExtract, loadRailGraph } from './overture.ts';
-import { deserializeRailGraph } from './railbin.ts';
-import { RAIL_SIMPLIFY_TOL, railGraphPath } from './refresh-rail.ts';
+import { ensureRailExtract, ensureRoadExtract, loadRailGraph, loadRoadGraph } from './overture.ts';
+import { join } from 'node:path';
+import { deserializeRailGraph, pruneGraph, type GraphKind } from './railbin.ts';
+import { RAIL_SIMPLIFY_TOL, ROAD_MIN_COMPONENT, ROAD_SIMPLIFY_TOL, graphFileName } from './refresh-rail.ts';
 import { graphBytes, type RailGraph } from './graph.ts';
 import { Router, type RouteResult } from './route.ts';
 import { dedupe, dist, gentleCurve, mPerDeg, polylineLength, roundCoords, simplify, smooth, type LonLat } from './geo.ts';
@@ -29,9 +30,11 @@ export interface GeometryResult { id: number; coords: [number, number][]; snappe
 export interface BuildOptions {
   workDir: string;
   log: (s: string) => void;
-  /** rail graph file (default: env ETBM_RAIL_GRAPH, else <workDir>/geometry/rail-graph-v<N>.bin) */
+  /** rail graph file (default: env ETBM_RAIL_GRAPH, else <workDir>/geometry/ or <workDir>/assets/rail/rail-graph-v<N>.bin) */
   railGraph?: string;
-  /** if no rail graph file exists: true → unsnapped curves; false (default) → slow Overture extraction */
+  /** road graph file (default: env ETBM_ROAD_GRAPH, else <workDir>/geometry/ or <workDir>/assets/road/road-graph-v<N>.bin) */
+  roadGraph?: string;
+  /** if a graph file is missing: true → unsnapped curves; false (default) → slow Overture extraction */
   noExtract?: boolean;
 }
 
@@ -40,49 +43,74 @@ export const MAX_DETOUR = (gc: number) => 2.2 * gc + 5000;
 const ROAD_BULGE = 0.05;
 const SHAPE_TOL = 25;
 
-/** Load the rail graph: prebuilt binary if present, else (unless noExtract) extract Overture. */
-export async function loadRouter(opts: BuildOptions): Promise<Router | null> {
+/** Bus stops in small towns can be a few km from the nearest secondary road; the gap becomes a stub. */
+export const ROAD_ROUTER_OPTS = { snapRadius: 5000, snapSlack: 300, minComponent: 20000 };
+
+/** Candidate graph files for a kind: option, env, <workDir>/geometry/, <workDir>/assets/<kind>/. */
+function graphFiles(kind: GraphKind, opts: BuildOptions): string[] {
+  const opt = kind === 'rail' ? opts.railGraph : opts.roadGraph;
+  const env = process.env[kind === 'rail' ? 'ETBM_RAIL_GRAPH' : 'ETBM_ROAD_GRAPH'];
+  const name = graphFileName(kind);
+  return [opt, env, join(opts.workDir, 'geometry', name), join(opts.workDir, 'assets', kind, name)].filter((f): f is string => !!f);
+}
+
+/** Load a routing graph: prebuilt binary if present, else (unless noExtract) extract Overture. */
+export async function loadRouter(opts: BuildOptions, kind: GraphKind = 'rail'): Promise<Router | null> {
   const { log } = opts;
   const t0 = Date.now();
-  const file = opts.railGraph ?? process.env.ETBM_RAIL_GRAPH ?? railGraphPath(opts.workDir);
+  const files = graphFiles(kind, opts);
+  const file = files.find((f) => existsSync(f));
+  const ropts = kind === 'road' ? ROAD_ROUTER_OPTS : {};
+  const what = kind === 'rail' ? 'rail corridors' : 'coach/bus corridors';
   try {
-    if (existsSync(file)) {
+    if (file) {
       const { graph, header } = deserializeRailGraph(readFileSync(file));
-      log(`geometry: rail graph ${file} (Overture ${header.release}, built ${header.created}) loaded in ${((Date.now() - t0) / 1000).toFixed(1)} s: ${graph.nodeCount} nodes, ${graph.edgeCount} edges, ${(graphBytes(graph) / 1e6).toFixed(0)} MB`);
-      return new Router(graph);
+      log(`geometry: ${kind} graph ${file} (Overture ${header.release}, built ${header.created}) loaded in ${((Date.now() - t0) / 1000).toFixed(1)} s: ${graph.nodeCount} nodes, ${graph.edgeCount} edges, ${(graphBytes(graph) / 1e6).toFixed(0)} MB`);
+      return new Router(graph, ropts);
     }
     if (opts.noExtract) {
-      log(`geometry: WARNING no rail graph at ${file} (set ETBM_RAIL_GRAPH or run rail:refresh) — rail corridors will be unsnapped curves`);
+      log(`geometry: WARNING no ${kind} graph (${files[0]}; set ETBM_${kind.toUpperCase()}_GRAPH or run the assets refresh) — ${what} will be unsnapped curves`);
       return null;
     }
-    log(`geometry: WARNING no rail graph at ${file} — extracting Overture rail now (slow, ~15-30 min; run rail:refresh to prebuild)`);
-    const parquet = await ensureRailExtract(opts.workDir, log);
-    const g = await loadRailGraph(parquet, opts.workDir, log, RAIL_SIMPLIFY_TOL);
-    log(`geometry: rail graph ready in ${((Date.now() - t0) / 1000).toFixed(0)} s, ${(graphBytes(g) / 1e6).toFixed(0)} MB`);
-    return new Router(g);
+    log(`geometry: WARNING no ${kind} graph at ${files[0]} — extracting Overture ${kind} now (slow, ~15-30 min; prebuild with the assets refresh)`);
+    const g = kind === 'rail'
+      ? await loadRailGraph(await ensureRailExtract(opts.workDir, log), opts.workDir, log, RAIL_SIMPLIFY_TOL)
+      : pruneGraph(await loadRoadGraph(await ensureRoadExtract(opts.workDir, log), opts.workDir, log, { simplifyTol: ROAD_SIMPLIFY_TOL }), ROAD_MIN_COMPONENT);
+    log(`geometry: ${kind} graph ready in ${((Date.now() - t0) / 1000).toFixed(0)} s, ${(graphBytes(g) / 1e6).toFixed(0)} MB`);
+    return new Router(g, ropts);
   } catch (e) {
-    log(`geometry: WARNING rail graph unavailable, rail corridors will be unsnapped curves (${String(e).slice(0, 300)})`);
+    log(`geometry: WARNING ${kind} graph unavailable, ${what} will be unsnapped curves (${String(e).slice(0, 300)})`);
     return null;
   }
 }
 
 export async function buildGeometries(reqs: GeometryRequest[], opts: BuildOptions): Promise<GeometryResult[]> {
-  const router = reqs.some((r) => r.mode === 'rail') ? await loadRouter(opts) : null;
-  return buildWithRouter(reqs, router, opts.log);
+  const rail = reqs.some((r) => r.mode === 'rail') ? await loadRouter(opts, 'rail') : null;
+  const road = reqs.some((r) => r.mode === 'road') ? await loadRouter(opts, 'road') : null;
+  return buildWithRouter(reqs, rail, opts.log, road);
 }
 
-/** Same as buildGeometries but with a ready router (tests / demo). */
-export function buildWithRouter(reqs: GeometryRequest[], router: Router | null, log: (s: string) => void = () => {}): GeometryResult[] {
+/** Same as buildGeometries but with ready routers (tests / demo). */
+export function buildWithRouter(
+  reqs: GeometryRequest[], router: Router | null, log: (s: string) => void = () => {}, roadRouter: Router | null = null,
+): GeometryResult[] {
   const t0 = Date.now();
   const cache = new Map<string, RouteResult | null>();
-  const counts = { rail: 0, routed: 0, shape: 0, fallback: 0, road: 0, roadShape: 0 };
+  const roadCache = new Map<string, RouteResult | null>();
+  const counts: Counts = { rail: 0, routed: 0, shape: 0, fallback: 0, road: 0, roadShape: 0, roadRouted: 0, roadFallback: 0 };
   const out: GeometryResult[] = [];
   let lastLog = Date.now();
+  let tRoad = 0;
   for (let i = 0; i < reqs.length; i++) {
     const r = reqs[i]!;
     let res: GeometryResult;
     try {
-      res = r.mode === 'rail' ? railGeometry(r, router, cache, counts) : roadGeometry(r, counts);
+      if (r.mode === 'rail') res = railGeometry(r, router, cache, counts);
+      else {
+        const t = performance.now();
+        res = roadGeometry(r, roadRouter, roadCache, counts);
+        tRoad += performance.now() - t;
+      }
     } catch (e) {
       log(`geometry: request ${r.id} failed (${String(e).slice(0, 200)}), using fallback`);
       res = { id: r.id, coords: finish(gentleCurve(r.a, r.b, 0), 0), snapped: false };
@@ -94,11 +122,11 @@ export function buildWithRouter(reqs: GeometryRequest[], router: Router | null, 
     }
   }
   const s = (Date.now() - t0) / 1000;
-  log(`geometry: ${reqs.length} corridors in ${s.toFixed(1)} s — rail ${counts.rail} (routed ${counts.routed}, shape ${counts.shape}, fallback ${counts.fallback}), road ${counts.road} (shape ${counts.roadShape})`);
+  log(`geometry: ${reqs.length} corridors in ${s.toFixed(1)} s — rail ${counts.rail} (routed ${counts.routed}, shape ${counts.shape}, fallback ${counts.fallback}), road ${counts.road} (routed ${counts.roadRouted}, shape ${counts.roadShape}, fallback ${counts.roadFallback}; ${(tRoad / 1000).toFixed(1)} s)`);
   return out;
 }
 
-type Counts = { rail: number; routed: number; shape: number; fallback: number; road: number; roadShape: number };
+type Counts = { rail: number; routed: number; shape: number; fallback: number; road: number; roadShape: number; roadRouted: number; roadFallback: number };
 
 function orient(h: GeometryRequest['hops'][number], a: LonLat, b: LonLat) {
   if (dist(h.from, a) + dist(h.to, b) <= dist(h.from, b) + dist(h.to, a)) return h;
@@ -157,18 +185,47 @@ function railGeometry(r: GeometryRequest, router: Router | null, cache: Map<stri
   return { id: r.id, coords: finish(gentleCurve(r.a, r.b, 0), 0), snapped: false };
 }
 
-function roadGeometry(r: GeometryRequest, counts: Counts): GeometryResult {
+function roadGeometry(r: GeometryRequest, router: Router | null, cache: Map<string, RouteResult | null>, counts: Counts): GeometryResult {
   counts.road++;
-  for (const raw of r.hops.slice(0, 3)) {
-    const shape = plausibleShape(orient(raw, r.a, r.b));
+  const hops = r.hops.slice(0, 3).map((h) => orient(h, r.a, r.b));
+  // a plausible feed shape is the real bus path: prefer it
+  for (const h of hops) {
+    const shape = plausibleShape(h);
     if (shape) {
       counts.roadShape++;
-      return { id: r.id, coords: finish(attach(r.a, simplify(shape, 40), r.b), 2), snapped: false };
+      return { id: r.id, coords: finish(attach(r.a, simplify(shape, 40), r.b), 2), snapped: true };
     }
   }
+  if (router) {
+    // stops of the representative hops, else the city points themselves
+    const tries = hops.length ? hops.map((h) => [h.from, h.to] as const) : [[r.a, r.b] as const];
+    for (const [from, to] of tries) {
+      const gc = dist(from, to);
+      if (gc < 30) continue;
+      const routed = cachedRoute(router, cache, from, to, MAX_DETOUR(gc));
+      if (routed) {
+        counts.roadRouted++;
+        return { id: r.id, coords: finish(attach(r.a, routed.coords, r.b), 3), snapped: true };
+      }
+    }
+  }
+  counts.roadFallback++;
   // bulge to the left of west→east, so a↔b and b↔a give the same curve
   const sign = r.a[0] < r.b[0] || (r.a[0] === r.b[0] && r.a[1] < r.b[1]) ? 1 : -1;
   return { id: r.id, coords: finish(gentleCurve(r.a, r.b, sign * ROAD_BULGE), 0), snapped: false };
+}
+
+/** Route with a per-run cache keyed by the (~10 m rounded) endpoint pair, in both directions. */
+function cachedRoute(router: Router, cache: Map<string, RouteResult | null>, from: LonLat, to: LonLat, maxLen: number): RouteResult | null {
+  const k = key(from, to), kr = key(to, from);
+  if (cache.has(k)) return cache.get(k)!;
+  if (cache.has(kr)) {
+    const c = cache.get(kr)!;
+    return c && { ...c, coords: c.coords.slice().reverse(), snapA: c.snapB, snapB: c.snapA };
+  }
+  const r = router.route(from, to, maxLen);
+  cache.set(k, r);
+  return r;
 }
 
 /**
@@ -275,10 +332,11 @@ function trimStart(a: LonLat, P: LonLat[]): LonLat[] {
   return dedupe([start, ...rest]);
 }
 
-/** Smooth + round. style 0 = already smooth curve, 1 = rail (stay on track), 2 = road shape. */
-function finish(c: LonLat[], style: 0 | 1 | 2): [number, number][] {
+/** Smooth + round. style 0 = already smooth curve, 1 = rail (stay on track), 2 = feed shape (road), 3 = road graph. */
+function finish(c: LonLat[], style: 0 | 1 | 2 | 3): [number, number][] {
   if (style === 1) c = smooth(c, { iterations: 2, maxCut: 200, minTurnDeg: [6, 20] });
   else if (style === 2) c = smooth(c, { iterations: 2, maxCut: 600, minTurnDeg: 4 });
+  else if (style === 3) c = smooth(c, { iterations: 2, maxCut: 300, minTurnDeg: [6, 20] });
   return roundCoords(c);
 }
 

@@ -191,3 +191,67 @@ describe('rail graph file', () => {
     expect(logs.some((l) => l.includes('WARNING no rail graph'))).toBe(true);
   });
 });
+
+describe('road graph (connector topology)', () => {
+  /**
+   * W–E road along lat 48 (one segment, lon 0..1) crossed mid-segment by a N–S road along lon 0.5
+   * (one segment, lat 47.5..48.5). They share connector "X" at (0.5, 48) — an interior vertex of
+   * both — which only the connector ids reveal. A third road crosses at (0.25, 48) on a bridge:
+   * same coordinates, no shared connector, so no junction there.
+   */
+  function roads() {
+    const b = new RailGraphBuilder();
+    const we = line([0, 48], [0.25, 48], [0.5, 48], [1, 48]);
+    const n = we.length / 2;
+    const iX = we.findIndex((v, i) => i % 2 === 0 && Math.abs(v - 0.5) < 1e-9 && Math.abs(we[i + 1]! - 48) < 1e-9) / 2;
+    b.addLine(we, 1, { idx: [0, iX, n - 1], hi: [1, 9, 2], lo: [1, 9, 2] });
+    const ns = line([0.5, 47.5], [0.5, 48], [0.5, 48.5]);
+    const m = ns.length / 2;
+    const jX = (ns.findIndex((v, i) => i % 2 === 1 && Math.abs(v - 48) < 1e-9) - 1) / 2;
+    b.addLine(ns, 1.5, { idx: [0, jX, m - 1], hi: [3, 9, 4], lo: [3, 9, 4] });
+    b.addLine(line([0.25, 47.8], [0.25, 48], [0.25, 48.2]), 1, { idx: [0, 999], hi: [5, 6], lo: [5, 6] });
+    return b.build({ simplifyTol: 50 });
+  }
+  it('joins roads at shared connectors only', () => {
+    const g = roads();
+    // nodes: W, E, X, S, N + bridge road's two ends
+    expect(g.nodeCount).toBe(7);
+    expect(g.edgeCount).toBe(5);
+  });
+  it('routes through the mid-segment junction with the class cost', () => {
+    const g = roads();
+    const r = new Router(g, { snapRadius: 2000, minComponent: 1000 });
+    const res = r.route([0.1, 48.001], [0.5, 48.4], 2e5)!;
+    expect(res).not.toBeNull();
+    expect(res.length / 1000).toBeCloseTo(29.8 + 44.5, 0);
+    // bridge road is not connected to the W–E road
+    expect(r.route([0.25, 47.81], [0.9, 48], 2e5)).toBeNull();
+  });
+  it('buildWithRouter snaps road corridors, prefers shapes, falls back to curves', () => {
+    const g = roads();
+    const road = new Router(g, { snapRadius: 2000, minComponent: 1000 });
+    const req = (id: number, extra: Partial<GeometryRequest> = {}): GeometryRequest => ({
+      id, mode: 'road', a: [0.05, 48.01], b: [0.5, 48.45], hops: [{ from: [0.06, 48.002], to: [0.5, 48.44] }], ...extra,
+    });
+    const shape: LonLat[] = [];
+    for (let i = 0; i <= 60; i++) shape.push([0.06 + (0.44 * i) / 60, 48.002 + (0.438 * i) / 60 + 0.02 * Math.sin((i / 60) * Math.PI)]);
+    const [routed, viaShape, far] = buildWithRouter(
+      [req(1), req(2, { hops: [{ from: [0.06, 48.002], to: [0.5, 48.44], shape }] }), req(3, { a: [5, 50], b: [5.5, 50.2], hops: [] })],
+      null, () => {}, road,
+    );
+    expect(routed!.snapped).toBe(true);
+    expect(routed!.coords[0]).toEqual([0.05, 48.01]);
+    expect(routed!.coords.some((c) => Math.abs(c[0] - 0.5) < 0.005 && Math.abs(c[1] - 48) < 0.005)).toBe(true);
+    expect(viaShape!.snapped).toBe(true);
+    expect(viaShape!.coords.some((c) => Math.abs(c[0] - 0.5) < 0.002 && Math.abs(c[1] - 48) < 0.002)).toBe(false);
+    expect(far!.snapped).toBe(false);
+    const [noGraph] = buildWithRouter([req(4)], null, () => {}, null);
+    expect(noGraph!.snapped).toBe(false);
+  });
+  it('round-trips a road graph file with its kind', () => {
+    const buf = serializeRailGraph(roads(), { kind: 'road', release: 'r', bbox: [0, 0, 1, 1], simplifyTol: 50, minComponent: 0 });
+    const { header, graph } = deserializeRailGraph(buf);
+    expect(header.kind).toBe('road');
+    expect(graph.edgeCount).toBe(5);
+  });
+});

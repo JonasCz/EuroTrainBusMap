@@ -2,7 +2,8 @@ name: Refresh build assets (R2)
 
 # Rebuilds the slow-changing inputs of the weekly data build and uploads them to the
 # R2 bucket `eurotrainbusmap-assets`:
-#   geonames/places-europe.tsv.gz   basemap/*.json   rail/rail-graph-v1.bin   manifest.json
+#   geonames/places-europe.tsv.gz   basemap/*.json   rail/rail-graph-v1.bin   road/road-graph-v1.bin
+#   manifest.json
 # Overture publishes monthly; GeoNames / Natural Earth change rarely.
 on:
   schedule:
@@ -10,8 +11,8 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Comma-separated subset to rebuild (geonames,basemap,rail); others are kept from R2"
-        default: "geonames,basemap,rail"
+        description: "Comma-separated subset to rebuild (geonames,basemap,rail,road); others are kept from R2"
+        default: "geonames,basemap,rail,road"
 
 concurrency:
   group: refresh-assets
@@ -66,18 +67,21 @@ jobs:
             npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/$key" --file "work/assets/$key" --remote || true
           done
 
-      # The Overture rail extract (~220 MB) is cached per month so re-runs take ~1 min instead of ~30.
-      - name: Restore Overture extract
+      # The Overture extracts (rail ~190 MB, major roads ~ROADMB) are cached, so re-runs within the same
+      # Overture release skip the slow S3 scan (a new release is detected and re-extracted).
+      - name: Restore Overture extracts
         uses: actions/cache@v4
         with:
           path: work/overture
-          key: overture-rail-${{ github.run_id }}
-          restore-keys: overture-rail-
+          key: overture-v2-${{ github.run_id }}
+          restore-keys: |
+            overture-v2-
+            overture-rail-
 
       - name: Build assets
         run: |
           unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_REGION AWS_REGION
-          pnpm --filter @etbm/etl run assets -- --out "$WORK/assets" --work "$WORK" --only "${{ inputs.only || 'geonames,basemap,rail' }}"
+          pnpm --filter @etbm/etl run assets -- --out "$WORK/assets" --work "$WORK" --only "${{ inputs.only || 'geonames,basemap,rail,road' }}"
           cat work/assets/manifest.json
           du -ah work/assets
 

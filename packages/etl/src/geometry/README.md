@@ -59,4 +59,54 @@ It runs extract → graph (20 m geometry) → drop fragments < 3 km of track →
   zstd (or gzip) payload. The payload holds int32/float32 sections: edgeU, edgeV, edgeLen, edgeCost, geoCount, and geoDX/geoDY
   (1e-6° deltas). Node coordinates come from edge end vertices. Size is about 19 MB (0.92 M nodes, 1.15 M edges).
   Loading takes about 1.2 s and uses about 110 MB of arrays (process RSS about 0.3 GB).
-- Skill: `.claude/skills/refresh-rail-data/SKILL.md`.
+- Skill: `.claude/skills/refresh-geometry-assets/SKILL.md`.
+
+## Road graph (coach / bus corridors)
+
+Coach and bus corridors (mode `road`) are routed on a major-road graph using the same machinery as rail.
+
+- **Extract:** Overture `subtype='road'`, classes `motorway, trunk, primary, secondary`. Their `_link`
+  ramps are included because they have the same class with `subclass='link'`. Segments flagged
+  abandoned or under construction are dropped. The bbox is Europe plus Turkey, the same as rail.
+  - Columns: `class, subclass, connectors, geometry`.
+  - Result: 6.17 M segments, 994 MB parquet, ~28 min through the proxy. DuckDB RSS stays at ~0.6 GB with the 4 GB limit.
+- **Topology:** roads join and cross in the middle of segments, so nodes come from the Overture
+  connector ids (64-bit hash). Shared coordinates are not used. Each segment is cut at its
+  connectors, so a bridge over a road does not become a junction.
+  - Chains through degree-2 nodes are contracted.
+  - Geometry is simplified to 50 m.
+  - Components with less than 20 km of road are dropped. That leaves 1.85 M nodes, 2.74 M edges and 186 components.
+- **Cost:** length × (110 km/h ÷ class speed). Class speeds are motorway 110, trunk 90, primary 70, secondary 60 and links 50 km/h.
+- **Asset:** `road/road-graph-v1.bin`, the same `railbin.ts` format with `header.kind = 'road'`. It is 53.3 MB.
+  Without `secondary` it would be 27.4 MB, but regional buses mostly use secondary roads, so they stay in.
+  - Building it takes ~4 min from the cached extract, with peak RSS 1.2 GB.
+  - Loading it takes ~4–8 s and uses 263 MB of arrays.
+- **Routing:**
+  - A plausible feed shape is used first.
+  - Otherwise the corridor is routed between the hop's stops. Snapping reaches up to 5 km, because rural stops are often a few km from the nearest secondary road. The route must be at most 2.2× the straight-line distance plus 5 km.
+  - Otherwise it falls back to the gentle curve, with `snapped: false`. That covers ferries (Bari–Igoumenitsa, Helsinki–Tallinn, Dover–Calais), islands, and short local hops where only minor roads exist.
+  - Road-routed lines are `snapped: true`.
+- **Loader:** `opts.roadGraph`, then env `ETBM_ROAD_GRAPH`, then `<work>/geometry/road-graph-v1.bin`, then
+  `<work>/assets/road/road-graph-v1.bin`. A missing graph gives curves with a WARNING, the same as rail.
+
+### Route cache: not needed (measured)
+
+Full-Europe build, 4 vCPU sandbox, single thread:
+
+| | |
+|---|---|
+| Road corridors routed | 37,585 in **39.7 s** |
+| Routed on roads | 36,103 (96.1 %) |
+| From feed shapes | 18 |
+| Fallback curves | 1,464 |
+| Graph load | 8 s |
+
+That is far below the 2–3 min threshold. The expensive part is the monthly graph build, so there is no persistent
+route cache, and nothing needs to go to R2 between weekly builds. An in-run cache already reuses repeated
+stop pairs. If routing ever gets slow, the plan was a cache keyed by graph sha + endpoint pair rounded to ~100 m,
+stored as `road/route-cache-v1.bin`.
+
+### Output size
+
+`build.ts` simplifies road-routed corridors to **300 m (coach) / 500 m (bus)**. Unsnapped curves stay at 400 / 800 m.
+`network.json` grows from 8.94 MB to **10.16 MB raw** (4.37 MB gzip).

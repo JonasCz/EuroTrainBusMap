@@ -1,5 +1,6 @@
 /**
- * Compact binary serialisation of the routing graph ("rail graph file").
+ * Compact binary serialisation of a routing graph (rail graph file / road graph file;
+ * header.kind tells which).
  *
  * Layout (little endian):
  *   bytes 0..7    magic "ETBMRAIL"
@@ -23,10 +24,14 @@ import * as zlib from 'node:zlib';
 import { assemble, type RailGraph } from './graph.ts';
 
 export const RAIL_FORMAT = 1;
+/** The same format stores the rail graph and the major-road graph. */
+export type GraphKind = 'rail' | 'road';
 const MAGIC = 'ETBMRAIL';
 
 export interface RailBinHeader {
   format: number;
+  /** 'rail' | 'road' (absent in early rail files = rail) */
+  kind?: GraphKind;
   /** Overture release the graph was built from */
   release: string;
   /** [xmin, ymin, xmax, ymax] of the extraction */
@@ -74,7 +79,7 @@ const hasZstd = typeof (zlib as { zstdCompressSync?: unknown }).zstdCompressSync
 
 export function serializeRailGraph(
   g: RailGraph,
-  meta: { release: string; bbox: readonly number[]; simplifyTol: number; minComponent: number },
+  meta: { kind?: GraphKind; release: string; bbox: readonly number[]; simplifyTol: number; minComponent: number },
 ): Buffer {
   const E = g.edgeCount, G = g.geoX.length;
   const geoCount = new Int32Array(E);
@@ -96,7 +101,7 @@ export function serializeRailGraph(
       })
     : gzipSync(payload, { level: 9 });
   const header: RailBinHeader = {
-    format: RAIL_FORMAT, release: meta.release, bbox: meta.bbox, created: new Date().toISOString(), compression,
+    format: RAIL_FORMAT, kind: meta.kind ?? 'rail', release: meta.release, bbox: meta.bbox, created: new Date().toISOString(), compression,
     nodeCount: g.nodeCount, edgeCount: E, geoCount: G, simplifyTol: meta.simplifyTol, minComponent: meta.minComponent,
     sections: secs.map(([name, a]) => ({ name, type: a instanceof Float32Array ? 'f32' : 'i32', length: a.length })),
   };

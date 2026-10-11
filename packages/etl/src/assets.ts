@@ -5,14 +5,15 @@
  *   geonames/places-europe.tsv.gz   pruned GeoNames places with local names
  *   basemap/{land,borders,lakes,labels}.json   Natural Earth basemap layers
  *   rail/rail-graph-v1.bin          rail graph for corridor geometry (Overture → pruned graph)
+ *   road/road-graph-v1.bin          major-road graph for coach/bus corridor geometry (same format)
  *   manifest.json                   list of the keys above (read by the weekly build)
  *
- * Usage: node --import tsx src/assets.ts --out <assetsDir> [--work <dir>] [--only geonames,basemap,rail]
+ * Usage: node --import tsx src/assets.ts --out <assetsDir> [--work <dir>] [--only geonames,basemap,rail,road]
  * The weekly build reads the same directory layout via `build-data --assets <dir>`.
  */
 import { existsSync } from "node:fs";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
-import { RAIL_GRAPH_KEY, buildRailAsset } from "./geometry/refresh-rail.ts";
+import { RAIL_GRAPH_KEY, ROAD_GRAPH_KEY, buildRailAsset, buildRoadAsset } from "./geometry/refresh-rail.ts";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLACES_ASSET, loadPlaces } from "./geonames.ts";
@@ -44,7 +45,7 @@ async function main() {
   const get = (n: string) => (a.indexOf(n) >= 0 ? a[a.indexOf(n) + 1] : undefined);
   const out = resolve(get("--out") ?? join(repoRoot, "work", "assets"));
   const work = resolve(get("--work") ?? join(repoRoot, "work"));
-  const only = new Set((get("--only") ?? "geonames,basemap,rail").split(","));
+  const only = new Set((get("--only") ?? "geonames,basemap,rail,road").split(","));
   const cacheDir = join(work, "cache");
   await mkdir(out, { recursive: true });
   const cfg = await loadFeedsConfig(join(here, "..", "feeds.json"));
@@ -76,6 +77,18 @@ async function main() {
       log(`assets: ${r.key} (${(r.bytes / 1e6).toFixed(1)} MB, Overture ${r.release})`);
     } catch (e) {
       warn(`assets: rail asset failed: ${(e as Error).stack ?? e}`);
+      failed = true;
+    }
+  }
+
+  if (only.has("road")) {
+    await mkdir(join(out, "road"), { recursive: true });
+    try {
+      // Major-road graph (Overture motorway…secondary + links → pruned graph) for coach/bus corridors.
+      const r = await buildRoadAsset(work, join(out, ROAD_GRAPH_KEY), log);
+      log(`assets: ${r.key} (${(r.bytes / 1e6).toFixed(1)} MB, Overture ${r.release})`);
+    } catch (e) {
+      warn(`assets: road asset failed: ${(e as Error).stack ?? e}`);
       failed = true;
     }
   }

@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
 import { RailGraphBuilder, type RailGraph } from './graph.ts';
+import { haversine } from './geo.ts';
 
 export const FALLBACK_RELEASE = '2026-09-23.1';
 export const EUROPE_BBOX = [-25, 34, 45, 72] as const; // xmin ymin xmax ymax
@@ -113,12 +114,50 @@ export async function resolveRelease(c: DuckDBConnection | null, log: Log): Prom
   return null;
 }
 
+/** What to extract from Overture transportation segments. */
+export interface ExtractSpec {
+  /** file prefix: <kind>-europe-<release>.parquet */
+  kind: 'rail' | 'road';
+  /** env var with a parquet path that overrides the extraction */
+  env: string;
+  /** SELECT list */
+  select: string;
+  /** extra WHERE conditions (bbox is added) */
+  where: string;
+}
+
+const flagFilter = (col: string, flags: string[]) =>
+  `NOT coalesce(list_bool_or(list_transform(${col}, f -> f.between IS NULL
+     AND list_has_any(f.values, [${flags.map((k) => `'${k}'`).join(',')}]))), false)`;
+
+export const RAIL_SPEC: ExtractSpec = {
+  kind: 'rail',
+  env: 'ETBM_RAIL_PARQUET',
+  select: 'id, class, names.primary AS name, rail_flags, geometry',
+  where: `subtype = 'rail' AND class IN (${KEEP_CLASSES.map((k) => `'${k}'`).join(',')}) AND ${flagFilter('rail_flags', DROP_FLAGS)}`,
+};
+
+/** Road classes kept for coach/bus routing (their `_link` ramps have the same class, subclass 'link'). */
+export const ROAD_CLASSES = ['motorway', 'trunk', 'primary', 'secondary'];
+export const ROAD_SPEC: ExtractSpec = {
+  kind: 'road',
+  env: 'ETBM_ROAD_PARQUET',
+  select: 'class, subclass, connectors, geometry',
+  where: `subtype = 'road' AND class IN (${ROAD_CLASSES.map((k) => `'${k}'`).join(',')})
+    AND ${flagFilter('road_flags', ['is_abandoned', 'is_under_construction'])}`,
+};
+
 /** Ensure the Europe rail extract exists in the work dir; returns its path. */
-export async function ensureRailExtract(workDir: string, log: Log): Promise<string> {
-  if (process.env.ETBM_RAIL_PARQUET) return process.env.ETBM_RAIL_PARQUET;
+export const ensureRailExtract = (workDir: string, log: Log): Promise<string> => ensureOvertureExtract(workDir, log, RAIL_SPEC);
+/** Ensure the Europe major-road extract exists in the work dir; returns its path. */
+export const ensureRoadExtract = (workDir: string, log: Log): Promise<string> => ensureOvertureExtract(workDir, log, ROAD_SPEC);
+
+export async function ensureOvertureExtract(workDir: string, log: Log, spec: ExtractSpec): Promise<string> {
+  if (process.env[spec.env]) return process.env[spec.env]!;
   const dir = join(workDir, 'overture');
   mkdirSync(dir, { recursive: true });
-  const cached = readdirSync(dir).filter((f) => /^rail-europe-.*\.parquet$/.test(f)).sort();
+  const re = new RegExp(`^${spec.kind}-europe-.*\\.parquet$`);
+  const cached = readdirSync(dir).filter((f) => re.test(f)).sort();
   // The Overture bucket is public. DuckDB would send AWS_* credentials from the environment (e.g.
   // a CI role or a sandbox placeholder) and get 403, so hide them while DuckDB runs.
   const saved: Record<string, string> = {};
@@ -126,33 +165,29 @@ export async function ensureRailExtract(workDir: string, log: Log): Promise<stri
     if (process.env[k] !== undefined) { saved[k] = process.env[k]!; delete process.env[k]; }
   }
   try {
-    return await extract(dir, cached, workDir, log);
+    const c = await openDuckDB(workDir, log, ['httpfs', 'spatial']);
+    try {
+      return await extractWith(c, spec, dir, cached, log);
+    } finally {
+      closeDuckDB(c);
+    }
   } finally {
     Object.assign(process.env, saved);
   }
 }
 
-async function extract(dir: string, cached: string[], workDir: string, log: Log): Promise<string> {
-  const c = await openDuckDB(workDir, log, ['httpfs', 'spatial']);
-  try {
-    return await extractWith(c, dir, cached, workDir, log);
-  } finally {
-    closeDuckDB(c);
-  }
-}
-
-async function extractWith(c: DuckDBConnection, dir: string, cached: string[], workDir: string, log: Log): Promise<string> {
+async function extractWith(c: DuckDBConnection, spec: ExtractSpec, dir: string, cached: string[], log: Log): Promise<string> {
   let release = await resolveRelease(c, log);
   if (!release) {
     if (cached.length) { log(`  overture: using cached ${cached[cached.length - 1]}`); return join(dir, cached[cached.length - 1]!); }
     release = FALLBACK_RELEASE;
   }
-  const file = join(dir, `rail-europe-${release}.parquet`);
+  const file = join(dir, `${spec.kind}-europe-${release}.parquet`);
   if (existsSync(file) && statSync(file).size > 0) {
     log(`  overture: cached extract ${file}`);
     return file;
   }
-  log(`  overture: extracting rail segments from release ${release} (takes ~10-15 min)…`);
+  log(`  overture: extracting ${spec.kind} segments from release ${release} (takes ~15-30 min)…`);
   const t0 = Date.now();
   // Anonymous S3 access: an explicit secret without keys, so DuckDB doesn't send the AWS_* env credentials.
   await c.run(`CREATE OR REPLACE SECRET overture (TYPE s3, PROVIDER config, KEY_ID '', SECRET '', REGION 'us-west-2')`);
@@ -162,24 +197,22 @@ async function extractWith(c: DuckDBConnection, dir: string, cached: string[], w
   rmSync(tmp, { force: true });
   try {
     await c.run(`COPY (
-      SELECT id, class, names.primary AS name, rail_flags, geometry
+      SELECT ${spec.select}
       FROM read_parquet('${src}', hive_partitioning=false)
-      WHERE subtype = 'rail' AND class IN (${KEEP_CLASSES.map((k) => `'${k}'`).join(',')})
-        AND bbox.xmin < ${x1} AND bbox.xmax > ${x0} AND bbox.ymin < ${y1} AND bbox.ymax > ${y0}
-        AND NOT coalesce(list_bool_or(list_transform(rail_flags, f -> f.between IS NULL
-              AND list_has_any(f.values, [${DROP_FLAGS.map((k) => `'${k}'`).join(',')}]))), false)
+      WHERE bbox.xmin < ${x1} AND bbox.xmax > ${x0} AND bbox.ymin < ${y1} AND bbox.ymax > ${y0}
+        AND ${spec.where}
     ) TO '${tmp}' (FORMAT parquet, COMPRESSION zstd)`);
   } catch (e) {
     if (release !== FALLBACK_RELEASE) {
       log(`  overture: release ${release} failed (${String(e).slice(0, 160)}); trying ${FALLBACK_RELEASE}`);
       process.env.ETBM_OVERTURE_RELEASE = FALLBACK_RELEASE;
-      try { return await extractWith(c, dir, cached, workDir, log); } finally { delete process.env.ETBM_OVERTURE_RELEASE; }
+      try { return await extractWith(c, spec, dir, cached, log); } finally { delete process.env.ETBM_OVERTURE_RELEASE; }
     }
     throw e;
   }
   renameSync(tmp, file);
   for (const f of cached) if (join(dir, f) !== file) rmSync(join(dir, f), { force: true });
-  log(`  overture: extract done in ${((Date.now() - t0) / 1000).toFixed(0)} s (${(statSync(file).size / 1e6).toFixed(0)} MB)`);
+  log(`  overture: ${spec.kind} extract done in ${((Date.now() - t0) / 1000).toFixed(0)} s (${(statSync(file).size / 1e6).toFixed(0)} MB)`);
   return file;
 }
 
@@ -245,5 +278,80 @@ export async function loadRailGraph(parquet: string, workDir: string, log: Log, 
   const t1 = Date.now();
   const g = b.build({ simplifyTol, log });
   log(`  graph: built in ${((Date.now() - t1) / 1000).toFixed(1)} s`);
+  return g;
+}
+
+/**
+ * Typical coach speeds (km/h) per Overture road class; `_link` ramps (subclass 'link') use
+ * ROAD_LINK_SPEED. Edge cost = length × (motorway speed / class speed), so cost ≥ length.
+ */
+export const ROAD_SPEED: Record<string, number> = { motorway: 110, trunk: 90, primary: 70, secondary: 60 };
+export const ROAD_LINK_SPEED = 50;
+
+/**
+ * Read the major-road extract into a graph. Topology comes from Overture connector ids (roads
+ * cross and join mid-segment, unlike rail): each segment is cut at its connectors.
+ */
+export async function loadRoadGraph(
+  parquet: string, workDir: string, log: Log,
+  opts: { simplifyTol?: number; classes?: string[] } = {},
+): Promise<RailGraph> {
+  const classes = opts.classes ?? ROAD_CLASSES;
+  const vmax = Math.max(...Object.values(ROAD_SPEED));
+  const c = await openDuckDB(workDir, log, ['spatial']);
+  const t0 = Date.now();
+  const b = new RailGraphBuilder();
+  // 64-bit connector hash split into two int32 halves (collisions are negligible)
+  const res = await c.stream(`
+    SELECT
+      CASE WHEN subclass = 'link' THEN ${vmax / ROAD_LINK_SPEED}
+        ${Object.entries(ROAD_SPEED).map(([k, v]) => `WHEN class = '${k}' THEN ${vmax / v}`).join(' ')} ELSE ${vmax / 50} END AS mult,
+      list_transform(connectors, x -> ((hash(x.connector_id) >> 32)::BIGINT - 2147483648)::INTEGER) AS khi,
+      list_transform(connectors, x -> ((hash(x.connector_id) & 4294967295)::BIGINT - 2147483648)::INTEGER) AS klo,
+      list_transform(connectors, x -> x."at") AS kat,
+      ST_AsWKB(geometry) AS wkb
+    FROM read_parquet('${parquet}')
+    WHERE class IN (${classes.map((k) => `'${k}'`).join(',')})`);
+  let flat = new Float64Array(4096);
+  let cum = new Float64Array(2048);
+  const idx: number[] = [], hi: number[] = [], lo: number[] = [];
+  for (;;) {
+    const ch = await res.fetchChunk();
+    if (!ch || ch.rowCount === 0) break;
+    const mv = ch.getColumnVector(0), hv = ch.getColumnVector(1), lv = ch.getColumnVector(2), av = ch.getColumnVector(3), gv = ch.getColumnVector(4);
+    for (let i = 0; i < ch.rowCount; i++) {
+      const blob = gv.getItem(i) as { bytes: Uint8Array } | null;
+      if (!blob) continue;
+      const bytes = blob.bytes;
+      const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const le = dv.getUint8(0) === 1;
+      if (dv.getUint32(1, le) % 1000 !== 2) continue; // segments are linestrings
+      const n = dv.getUint32(5, le);
+      if (flat.length < 2 * n) flat = new Float64Array(4 * n);
+      if (cum.length < n) cum = new Float64Array(2 * n);
+      for (let k = 0; k < 2 * n; k++) flat[k] = dv.getFloat64(9 + 8 * k, le);
+      // cumulative length fraction per vertex, to place connectors given as `at` (0..1)
+      cum[0] = 0;
+      for (let k = 1; k < n; k++) cum[k] = cum[k - 1]! + haversine(flat[2 * k - 2]!, flat[2 * k - 1]!, flat[2 * k]!, flat[2 * k + 1]!);
+      const total = cum[n - 1]! || 1;
+      const H = (hv.getItem(i) as { items: readonly unknown[] } | null)?.items ?? [];
+      const L = (lv.getItem(i) as { items: readonly unknown[] } | null)?.items ?? [];
+      const A = (av.getItem(i) as { items: readonly unknown[] } | null)?.items ?? [];
+      idx.length = 0; hi.length = 0; lo.length = 0;
+      const order = A.map((a, k) => [Number(a), k] as const).sort((x, y) => x[0] - y[0]);
+      let j = 0;
+      for (const [a, k] of order) {
+        const target = a * total;
+        while (j < n - 1 && Math.abs(cum[j + 1]! - target) <= Math.abs(cum[j]! - target)) j++;
+        idx.push(j); hi.push(Number(H[k])); lo.push(Number(L[k]));
+      }
+      b.addLine(flat.subarray(0, 2 * n), Number(mv.getItem(i)), { idx, hi, lo });
+    }
+  }
+  closeDuckDB(c);
+  log(`  road graph: read ${b.lineCount} segments / ${b.vertexCount} vertices in ${((Date.now() - t0) / 1000).toFixed(1)} s, rss ${(process.memoryUsage().rss / 1e6).toFixed(0)} MB`);
+  const t1 = Date.now();
+  const g = b.build({ simplifyTol: opts.simplifyTol ?? 50, log });
+  log(`  road graph: built in ${((Date.now() - t1) / 1000).toFixed(1)} s`);
   return g;
 }

@@ -1,55 +1,78 @@
 /**
- * Rail graph asset: Overture extract → routing graph → prune → compact binary.
+ * Geometry graph assets: Overture extract → routing graph → prune → compact binary.
  *
- * The result is uploaded to R2 (`eurotrainbusmap-assets`, key RAIL_GRAPH_KEY) by the
- * refresh-assets workflow (packages/etl/src/assets.ts); the weekly build downloads it to
- * `<workDir>/geometry/` and buildGeometries loads it instead of extracting Overture.
+ *   rail/rail-graph-v<N>.bin   rail (standard/narrow gauge) for train corridors
+ *   road/road-graph-v<N>.bin   major roads (motorway…secondary + links) for coach/bus corridors
  *
- * CLI:  pnpm --filter @etbm/etl rail:refresh [workDir] [outFile]
- *       (defaults: ./work, <workDir>/geometry/rail-graph-v<N>.bin)
+ * Uploaded to R2 (`eurotrainbusmap-assets`) by the refresh-assets workflow
+ * (packages/etl/src/assets.ts). The weekly build downloads them into `<work>/assets/<kind>/` and
+ * buildGeometries loads them instead of extracting Overture.
+ *
+ * CLI:  pnpm --filter @etbm/etl rail:refresh [workDir] [outFile] [--road]
+ *       (defaults: ./work, <workDir>/geometry/<kind>-graph-v<N>.bin)
  */
 import { createHash } from 'node:crypto';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { EUROPE_BBOX, ensureRailExtract, loadRailGraph } from './overture.ts';
+import { EUROPE_BBOX, ensureRailExtract, ensureRoadExtract, loadRailGraph, loadRoadGraph } from './overture.ts';
 import { graphBytes } from './graph.ts';
-import { pruneGraph, RAIL_FORMAT, serializeRailGraph } from './railbin.ts';
+import { pruneGraph, RAIL_FORMAT, serializeRailGraph, type GraphKind } from './railbin.ts';
 
-export const RAIL_GRAPH_FILE = `rail-graph-v${RAIL_FORMAT}.bin`;
-/** R2 object key (bucket eurotrainbusmap-assets) */
+export const graphFileName = (kind: GraphKind): string => `${kind}-graph-v${RAIL_FORMAT}.bin`;
+export const RAIL_GRAPH_FILE = graphFileName('rail');
+export const ROAD_GRAPH_FILE = graphFileName('road');
+/** R2 object keys (bucket eurotrainbusmap-assets) */
 export const RAIL_GRAPH_KEY = `rail/${RAIL_GRAPH_FILE}`;
-/** Track tolerance of stored geometry (m) */
+export const ROAD_GRAPH_KEY = `road/${ROAD_GRAPH_FILE}`;
+/** Geometry tolerance of stored edges (m) */
 export const RAIL_SIMPLIFY_TOL = 20;
-/** Disconnected fragments with less track than this are dropped (m) */
+export const ROAD_SIMPLIFY_TOL = 50;
+/** Disconnected fragments with less track / road than this are dropped (m) */
 export const RAIL_MIN_COMPONENT = 3000;
+export const ROAD_MIN_COMPONENT = 20000;
 
-/** Default local path of the graph file inside a work dir. */
+/** Default local path of a graph file inside a work dir. */
 export const railGraphPath = (workDir: string): string => join(workDir, 'geometry', RAIL_GRAPH_FILE);
+export const roadGraphPath = (workDir: string): string => join(workDir, 'geometry', ROAD_GRAPH_FILE);
 
-export async function buildRailAsset(
+export interface GraphAsset { key: string; file: string; release: string; bytes: number; sha256: string }
+
+export async function buildGraphAsset(
+  kind: GraphKind,
   workDir: string,
-  outFile: string = railGraphPath(workDir),
+  outFile: string = join(workDir, 'geometry', graphFileName(kind)),
   log: (s: string) => void = console.log,
-): Promise<{ key: string; file: string; release: string; bytes: number; sha256: string }> {
+  opts: { roadClasses?: string[] } = {},
+): Promise<GraphAsset> {
   const t0 = Date.now();
-  const parquet = await ensureRailExtract(workDir, log);
-  const release = basename(parquet).match(/rail-europe-(.+)\.parquet$/)?.[1] ?? 'unknown';
-  const g0 = await loadRailGraph(parquet, workDir, log, RAIL_SIMPLIFY_TOL);
-  const g = pruneGraph(g0, RAIL_MIN_COMPONENT);
-  log(`rail: pruned ${g0.nodeCount}→${g.nodeCount} nodes, ${g0.edgeCount}→${g.edgeCount} edges, ${g0.compSize.length}→${g.compSize.length} components (${(graphBytes(g) / 1e6).toFixed(0)} MB in memory)`);
-  const buf = serializeRailGraph(g, { release, bbox: EUROPE_BBOX, simplifyTol: RAIL_SIMPLIFY_TOL, minComponent: RAIL_MIN_COMPONENT });
+  const parquet = kind === 'rail' ? await ensureRailExtract(workDir, log) : await ensureRoadExtract(workDir, log);
+  const release = basename(parquet).match(/-europe-(.+)\.parquet$/)?.[1] ?? 'unknown';
+  const tol = kind === 'rail' ? RAIL_SIMPLIFY_TOL : ROAD_SIMPLIFY_TOL;
+  const minComponent = kind === 'rail' ? RAIL_MIN_COMPONENT : ROAD_MIN_COMPONENT;
+  const g0 = kind === 'rail'
+    ? await loadRailGraph(parquet, workDir, log, tol)
+    : await loadRoadGraph(parquet, workDir, log, { simplifyTol: tol, classes: opts.roadClasses });
+  const g = pruneGraph(g0, minComponent);
+  log(`${kind}: pruned ${g0.nodeCount}→${g.nodeCount} nodes, ${g0.edgeCount}→${g.edgeCount} edges, ${g0.compSize.length}→${g.compSize.length} components (${(graphBytes(g) / 1e6).toFixed(0)} MB in memory, rss ${(process.memoryUsage().rss / 1e6).toFixed(0)} MB)`);
+  const buf = serializeRailGraph(g, { kind, release, bbox: EUROPE_BBOX, simplifyTol: tol, minComponent });
   mkdirSync(dirname(outFile), { recursive: true });
   writeFileSync(outFile + '.tmp', buf);
   renameSync(outFile + '.tmp', outFile);
   const sha256 = createHash('sha256').update(buf).digest('hex');
-  log(`rail: wrote ${outFile} (${(buf.length / 1e6).toFixed(1)} MB, release ${release}) in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
-  return { key: RAIL_GRAPH_KEY, file: outFile, release, bytes: buf.length, sha256 };
+  log(`${kind}: wrote ${outFile} (${(buf.length / 1e6).toFixed(1)} MB, release ${release}) in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+  return { key: `${kind}/${graphFileName(kind)}`, file: outFile, release, bytes: buf.length, sha256 };
 }
 
+export const buildRailAsset = (workDir: string, outFile?: string, log?: (s: string) => void) => buildGraphAsset('rail', workDir, outFile, log);
+export const buildRoadAsset = (workDir: string, outFile?: string, log?: (s: string) => void) => buildGraphAsset('road', workDir, outFile, log);
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  const workDir = resolve(process.argv[2] ?? 'work');
-  const out = process.argv[3] ? resolve(process.argv[3]) : railGraphPath(workDir);
-  const r = await buildRailAsset(workDir, out);
+  const args = process.argv.slice(2).filter((a) => a !== '--');
+  const kind: GraphKind = args.includes('--road') ? 'road' : 'rail';
+  const pos = args.filter((a) => !a.startsWith('--'));
+  const workDir = resolve(pos[0] ?? 'work');
+  const out = pos[1] ? resolve(pos[1]) : join(workDir, 'geometry', graphFileName(kind));
+  const r = await buildGraphAsset(kind, workDir, out);
   console.log(JSON.stringify(r));
 }
