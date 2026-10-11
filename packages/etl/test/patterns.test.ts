@@ -41,7 +41,7 @@ describe("processTripStops", () => {
     expect(t.start).toBe(2);
     expect(t.arr).toEqual([0, 18]);
   });
-  it("bus: in big cities keeps entry/exit and shared stops only", () => {
+  it("bus: in big cities keeps entry/exit stops only", () => {
     const t = processTripStops(
       [
         { station: 1, city: 1, arr: 0, dep: 0 },
@@ -50,9 +50,9 @@ describe("processTripStops", () => {
         { station: 4, city: 1, arr: 6, dep: 6 },
         { station: 5, city: 2, arr: 20, dep: 20 },
       ],
-      { ...base, cityPop: () => 500_000, cat: Cat.Bus, isShared: (s) => s === 3 },
+      { ...base, cityPop: () => 500_000, cat: Cat.Bus },
     )!;
-    expect(t.stations).toEqual([1, 3, 4, 5]);
+    expect(t.stations).toEqual([1, 4, 5]);
   });
   it("keeps times after midnight", () => {
     const t = processTripStops([{ station: 1, city: 1, arr: 1430, dep: 1430 }, { station: 2, city: 2, arr: 1500, dep: 1500 }], { ...base, cat: Cat.LongDistance })!;

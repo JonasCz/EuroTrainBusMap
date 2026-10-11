@@ -25,15 +25,15 @@ export interface ProcessOptions {
   minBusCityPop?: number;
   /** Bus: collapse consecutive stops in towns below this population to one stop. */
   collapseBusBelowPop?: number;
-  /** Bus: whether a station is also served by rail/coach (kept inside big-city runs). */
-  isShared?: (station: number) => boolean;
+  /** Bus: whether a city has rail stations (bus runs there keep entry/exit stops only). */
+  cityHasRail?: (city: number) => boolean;
 }
 
 /**
  * Turn a trip's raw stop sequence into the station sequence used in patterns:
  *  - (Bus) drop stops in places below ~1000 inhabitants,
  *  - (Bus) collapse runs of stops in the same small town to its main stop; in big
- *    cities keep only the entry/exit stops of the run and stops shared with rail/coach,
+ *    cities and towns with rail keep only the entry/exit stops of the run,
  *  - collapse consecutive stops at the same station (arr of first, dep of last),
  *  - require ≥ 2 distinct cities.
  * Returns null if the trip should be dropped.
@@ -51,14 +51,17 @@ export function processTripStops(raw: RawStop[], o: ProcessOptions): TripShape |
     for (let i = 0; i < stops.length; ) {
       let j = i;
       while (j + 1 < stops.length && stops[j + 1]!.city === stops[i]!.city) j++;
-      if (j > i && o.cityPop(stops[i]!.city) < collapseBelow) {
+      const c = stops[i]!.city;
+      if (j > i && o.cityPop(c) < collapseBelow && !o.cityHasRail?.(c)) {
         // keep the most important station of the run, spanning first arr → last dep
         let best = i;
         for (let k = i; k <= j; k++) if (o.stationWeight(stops[k]!.station) > o.stationWeight(stops[best]!.station)) best = k;
         out.push({ station: stops[best]!.station, city: stops[i]!.city, arr: stops[i]!.arr, dep: stops[j]!.dep });
-      } else
-        // big city: keep where the bus enters and leaves the city plus stops shared with rail/coach
-        for (let k = i; k <= j; k++) if (k === i || k === j || o.isShared?.(stops[k]!.station) !== false) out.push(stops[k]!);
+      } else {
+        // big city / city with rail: keep where the bus enters and leaves the city
+        out.push(stops[i]!);
+        if (j > i) out.push(stops[j]!);
+      }
       i = j + 1;
     }
     stops = out;

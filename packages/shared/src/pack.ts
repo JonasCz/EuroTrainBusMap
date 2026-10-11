@@ -30,6 +30,8 @@ export interface PackedNetwork {
     dlon: number[];
     dlat: number[];
     cats: number[];
+    /** Departures per day × 10 (Station.tpd), 0 when absent. */
+    tpd?: number[];
   };
   corridors: {
     /** Delta-encoded city a (corridors are sorted by a). */
@@ -141,6 +143,7 @@ export function packNetwork(n: Pick<NetworkFile, "cities" | "stations" | "corrid
     p.stations.dlon.push(i5(s.lon) - i5(c.lon));
     p.stations.dlat.push(i5(s.lat) - i5(c.lat));
     p.stations.cats.push(s.cats);
+    (p.stations.tpd ??= []).push(Math.round((s.tpd ?? 0) * 10));
   }
   let pa = 0;
   const first = (city: number) => n.cities[city]!.stations[0] ?? 0;
@@ -196,6 +199,7 @@ export function unpackNetwork(p: PackedNetwork): { cities: City[]; stations: Sta
       lon: (Math.round(c.lon * 1e5) + ps.dlon[s]!) / 1e5,
       lat: (Math.round(c.lat * 1e5) + ps.dlat[s]!) / 1e5,
       cats: ps.cats[s]!,
+      ...(ps.tpd && ps.tpd[s] ? { tpd: ps.tpd[s]! / 10 } : {}),
     });
   }
   const pk = p.corridors;

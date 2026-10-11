@@ -384,7 +384,9 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const cur = busCanon[s.city]!;
     if (cur < 0 || stations[cur]!.weight < s.weight) busCanon[s.city] = st;
   }
-  const isShared = (st: number) => stations[st]!.cats !== Cat.Bus;
+  const cityRail = new Uint8Array(cities.length);
+  for (const st of stations) if (st.rail) cityRail[st.city] = 1;
+  const cityHasRail = (c: number) => cityRail[c] === 1;
   const finalize = (tk: number, raw: RawStop[]) => {
     if (dropped.has(tk)) return;
     const rc = rclass.get(tRc[tk]!);
@@ -395,7 +397,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
         const c = busCanon[r.city]!;
         if (c >= 0 && stations[r.station]!.cats === Cat.Bus) r.station = c;
       }
-    const shape = processTripStops(raw, { cat, cityPop, stationWeight, isShared, minBusCityPop: cfg.minBusCityPop ?? 1000 });
+    const shape = processTripStops(raw, { cat, cityPop, stationWeight, cityHasRail, minBusCityPop: cfg.minBusCityPop ?? 1000 });
     if (!shape) {
       droppedTrips++;
       return;
@@ -610,6 +612,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   timer.start("output");
   const usedCity = new Int32Array(cities.length).fill(-1);
   const usedStation = new Int32Array(stations.length).fill(-1);
+  const stationDep = new Float64Array(stations.length);
   const cityTrips = new Float64Array(cities.length);
   const cityCats = new Uint8Array(cities.length);
   const stationCats = new Uint8Array(stations.length);
@@ -619,6 +622,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const cat = routes[pt.route]!.cat;
     const wCat = cat === Cat.LongDistance ? 3 : cat === Cat.Coach ? 1.5 : cat === Cat.Regional ? 1 : 0.3;
     const seen = new Set<number>();
+    for (let k = 0; k + 1 < pt.stations.length; k++) stationDep[pt.stations[k]!]! += patternDays[p]! / D;
     for (const s of pt.stations) {
       stationCats[s]! |= cat;
       const c = stations[s]!.city;
@@ -662,7 +666,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   for (const list of stationsByCity)
     for (const s of list) {
       const st = stations[s]!;
-      outStations.push({ id: usedStation[s]!, city: usedCity[st.city]!, name: st.name, lon: round5(st.lon), lat: round5(st.lat), cats: stationCats[s]! });
+      outStations.push({ id: usedStation[s]!, city: usedCity[st.city]!, name: st.name, lon: round5(st.lon), lat: round5(st.lat), cats: stationCats[s]!, tpd: Math.round(stationDep[s]! * 10) / 10 });
     }
   const outCities: City[] = cityOrder.map((c, i) => {
     const cr = cities[c]!;

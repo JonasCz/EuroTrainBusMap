@@ -86,6 +86,8 @@ export interface Station {
   lat: number;
   /** Union of Cat bits served at this station. */
   cats: number;
+  /** Average departures per day at this station (all categories), for level of detail. */
+  tpd?: number;
 }
 
 /**

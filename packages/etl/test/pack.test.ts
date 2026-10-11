@@ -20,7 +20,7 @@ describe("packNetwork", () => {
         { id: 1, name: "Potsdam", country: "DE", lon: 13.06566, lat: 52.39886, population: 184754, importance: 0.5, cats: 2, stations: [2], tz: 0 },
       ],
       stations: [
-        { id: 0, city: 0, name: "Berlin Hbf", lon: 13.36955, lat: 52.52508, cats: 7 },
+        { id: 0, city: 0, name: "Berlin Hbf", lon: 13.36955, lat: 52.52508, cats: 7, tpd: 812.4 },
         { id: 1, city: 0, name: "Zoo", lon: 13.33295, lat: 52.50675, cats: 2 },
         { id: 2, city: 1, name: "Potsdam Hbf", lon: 13.06664, lat: 52.39176, cats: 2 },
       ],
