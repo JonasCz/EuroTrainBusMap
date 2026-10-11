@@ -4,3 +4,5 @@ dist/
 /work/
 *.zip
 .DS_Store
+.env
+.env.*
