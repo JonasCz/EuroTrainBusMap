@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f7f5f0" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#192027" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="Map of direct intercity train and bus connections across Europe." />
+    <title>EuroTrainBusMap</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <main id="map" aria-label="Map of intercity rail and bus corridors"></main>
+    <aside id="side" class="side" aria-label="Search and details">
+      <header class="topbar card">
+        <div class="brand">
+          <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18C8 18 9 6 13 6s5 6 7 6" fill="none" stroke="var(--cat-1)" stroke-width="3" stroke-linecap="round"/><path d="M4 20c5 0 6-10 10-10s4 4 6 4" fill="none" stroke="var(--cat-2)" stroke-width="3" stroke-linecap="round"/><circle cx="13" cy="7" r="2.6" fill="var(--surface)" stroke="var(--text)" stroke-width="1.6"/></svg>
+          <h1>EuroTrainBusMap</h1>
+        </div>
+        <div class="search" role="search">
+          <svg class="icon search-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <input id="search" type="search" placeholder="Search a city…" autocomplete="off" spellcheck="false"
+            role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="search-list" aria-label="Search a city" />
+          <ul id="search-list" role="listbox" hidden></ul>
+        </div>
+        <div class="chips" role="group" aria-label="Transport modes"></div>
+      </header>
+      <section class="sheet card" aria-label="Details">
+        <button type="button" class="sheet-handle" aria-label="Expand panel"><span></span></button>
+        <div class="sheet-body" aria-live="polite"></div>
+      </section>
+    </aside>
+    <footer id="attribution" class="attribution"></footer>
+    <dialog id="sources" aria-label="Data sources"></dialog>
+    <div id="fatal" class="fatal" role="alert" hidden></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
