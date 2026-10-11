@@ -81,9 +81,10 @@ export class Panel {
     this.onLayout?.();
   }
 
-  /** Height of the bottom sheet on mobile (for map padding). */
+  /** Target height of the bottom sheet on mobile (for map padding; ignores the CSS transition). */
   sheetHeight(): number {
-    return this.sheet.getBoundingClientRect().height;
+    const vh = innerHeight;
+    return Math.min(this.mode === "peek" ? 150 : this.mode === "half" ? vh * 0.48 : vh * 0.86, vh * 0.88);
   }
 
   // ---- chips ------------------------------------------------------------------
@@ -471,7 +472,12 @@ export class Panel {
         ),
       ),
     );
-    const changes = legs.length - 1;
+    const isThrough = (i: number) => {
+      const p = legs[i - 1];
+      const l = legs[i]!;
+      return !!p && p.arrStation === l.depStation && p.route.name === l.route.name && p.number !== undefined && p.number === l.number;
+    };
+    const changes = legs.filter((_, i) => i > 0 && !isThrough(i)).length;
     const total = Math.round((last.arrUtc - first.depUtc) / 60000);
     const legList = h(
       "ol",
@@ -483,7 +489,15 @@ export class Panel {
           "li",
           null,
           xfer !== null
-            ? h("div", { class: "leg-xfer" }, prev!.arrStation === l.depStation ? `${fmtDuration(xfer)} at ${stationName(n, l.depStation)}` : [icon("walk", 14), ` ${fmtDuration(xfer)} · ${stationName(n, prev!.arrStation)} → ${stationName(n, l.depStation)}`])
+            ? h(
+                "div",
+                { class: "leg-xfer" },
+                isThrough(i)
+                  ? [icon("seat", 14), ` stay on board at ${stationName(n, l.depStation)} (${fmtDuration(xfer)})`]
+                  : prev!.arrStation === l.depStation
+                    ? `change at ${stationName(n, l.depStation)} · ${fmtDuration(xfer)}`
+                    : [icon("walk", 14), ` ${fmtDuration(xfer)} · ${stationName(n, prev!.arrStation)} → ${stationName(n, l.depStation)}`],
+              )
             : null,
           h(
             "div",

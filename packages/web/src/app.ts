@@ -136,7 +136,7 @@ export class App {
       const deps = timetable(cf, net.ctx, s.filters, dest, date);
       const corridors = pairCorridors(cf, net.ctx, s.filters, dest);
       const next = deps.length ? [] : nextServiceDates(cf, net.ctx, s.filters, dest, date);
-      await this.map.setHighlight({ emphasis: { focus: new Set([origin, dest]), active: true, origin, dest }, corridors });
+      await this.map.setHighlight({ emphasis: { focus: this.withCorridorEnds(new Set([origin, dest]), corridors), active: true, origin, dest }, corridors });
       document.title = `${originName} → ${net.cities[dest]!.name} – EuroTrainBusMap`;
       this.panel.show({
         kind: "timetable",
@@ -196,13 +196,21 @@ export class App {
       focus.add(i.to);
     }
     for (const c of conns) for (const st of c.stops) focus.add(st.city);
-    await this.map.setHighlight({ emphasis: { focus, active: true, origin, dest: last.to }, corridors });
+    await this.map.setHighlight({ emphasis: { focus: this.withCorridorEnds(focus, corridors), active: true, origin, dest: last.to }, corridors });
     document.title = `Connections from ${net.cities[last.to]!.name} – EuroTrainBusMap`;
     this.panel.show({ kind: "connections", legs: infos, conns, windowMin: CONNECTION_WINDOW_MIN });
     this.frame(
       [origin, ...infos.map((i) => i.to)],
       `j${infos.map((i) => i.to).join("-")}`,
     );
+  }
+
+  private withCorridorEnds(focus: Set<number>, corridors: Map<number, number>): Set<number> {
+    for (const cid of corridors.keys()) {
+      const c = this.net.corridors[cid];
+      if (c) focus.add(c.a).add(c.b);
+    }
+    return focus;
   }
 
   /** Re-frame only when the focus set changed (not on date/filter changes). */

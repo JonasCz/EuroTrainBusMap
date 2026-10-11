@@ -5,6 +5,7 @@
  */
 import { Cat } from "@etbm/shared";
 import type { ExpressionSpecification, LayerSpecification } from "maplibre-gl";
+import type * as GeoJSON from "geojson";
 import type { Net } from "../data/net.ts";
 import { CAT_ORDER, effectiveCats, type Filters } from "../logic/filters.ts";
 import { FONT_MEDIUM, FONT_REGULAR } from "./style.ts";
@@ -15,13 +16,13 @@ export const STATION_ZOOM = 10.5;
 
 /** Zoom → px per width unit. */
 const ZF: [number, number][] = [
-  [2, 0.4],
-  [4, 0.62],
-  [6, 0.9],
-  [8, 1.25],
-  [10, 1.75],
-  [12, 2.4],
-  [15, 3.4],
+  [2, 0.7],
+  [4, 1.05],
+  [6, 1.55],
+  [8, 2.0],
+  [10, 2.4],
+  [12, 2.9],
+  [15, 3.8],
 ];
 
 /** Level-of-detail tiers: [min importance, minzoom] */
@@ -224,10 +225,10 @@ export function networkLayers(t: Theme, dimmed: boolean): LayerSpecification[] {
   const dim: ExpressionSpecification = ["==", ["get", "dim"], 1];
   const hover: ExpressionSpecification = ["boolean", ["feature-state", "hover"], false];
   const markerBase = (z: number): ExpressionSpecification => {
-    const base = z <= 3 ? ["+", 1.6, ["*", 2.6, ["get", "imp"]]] : z <= 6 ? ["+", 2.3, ["*", 3.6, ["get", "imp"]]] : ["+", 3.6, ["*", 5, ["get", "imp"]]];
+    const base = z <= 3 ? ["+", 2.2, ["*", 3, ["get", "imp"]]] : z <= 6 ? ["+", 3, ["*", 4, ["get", "imp"]]] : ["+", 4.2, ["*", 5.5, ["get", "imp"]]];
     const f = ZF.reduce((acc, [zz, ff]) => (zz <= z ? ff : acc), ZF[0]![1]);
-    const cover = ["+", ["*", f / 2, ["get", "mw"]], 1.2];
-    return ["+", ["max", base, cover], ["case", hover, 1.5, 0], ["case", [">", ["get", "sel"], 0], 1.5, 0]] as ExpressionSpecification;
+    const cover = ["+", ["*", f / 2, ["get", "mw"]], 1.5];
+    return ["+", ["max", base, cover], ["case", hover, 1.5, 0], ["case", [">", ["get", "sel"], 0], 1.5, 0]] as unknown as ExpressionSpecification;
   };
   const cityRadius: ExpressionSpecification = ["interpolate", ["linear"], ["zoom"], 3, markerBase(3), 6, markerBase(6), 10, markerBase(10)];
   const strokeW: ExpressionSpecification = [
@@ -259,7 +260,7 @@ export function networkLayers(t: Theme, dimmed: boolean): LayerSpecification[] {
       layout: { "line-join": "round", "line-cap": "round" },
       paint: {
         "line-color": dimmed ? ["case", hl, catColor(t), t.dimLine] : catColor(t),
-        "line-width": zoomScaled(["get", "w"]),
+        "line-width": dimmed ? zoomScaled(["*", ["get", "w"], ["case", hl, 1, 0.6]]) : zoomScaled(["get", "w"]),
         "line-offset": zoomScaled(["get", "o"]),
       },
     },
@@ -277,13 +278,26 @@ export function networkLayers(t: Theme, dimmed: boolean): LayerSpecification[] {
       },
     },
   ];
+  layers.push({
+    id: "city-sel-ring",
+    type: "circle",
+    source: "cities",
+    maxzoom: STATION_ZOOM,
+    filter: [">", ["get", "sel"], 0],
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, ["+", markerBase(3), 6], 6, ["+", markerBase(6), 7], 10, ["+", markerBase(10), 9]],
+      "circle-color": t.accent,
+      "circle-opacity": 0.16,
+      "circle-pitch-alignment": "map",
+    },
+  });
   // city markers, coarse tiers last so hubs draw on top
   for (let i = TIERS.length - 1; i >= 0; i--) {
     layers.push({
       id: `city-c-${i}`,
       type: "circle",
       source: "cities",
-      minzoom: TIERS[i]![1],
+      minzoom: Math.max(0, TIERS[i]![1] - 0.9),
       maxzoom: STATION_ZOOM,
       filter: ["==", ["get", "tier"], i],
       layout: { "circle-sort-key": ["-", 0, ["get", "rank"]] },
@@ -337,7 +351,7 @@ export function networkLayers(t: Theme, dimmed: boolean): LayerSpecification[] {
     paint: {
       "text-color": labelColor,
       "text-halo-color": t.halo,
-      "text-halo-width": 1.6,
+      "text-halo-width": 2,
       "text-halo-blur": 0.4,
     },
   });
@@ -362,7 +376,7 @@ export function networkLayers(t: Theme, dimmed: boolean): LayerSpecification[] {
           ["+", 11.5, ["*", 5, ["get", "imp"]], ["case", [">", ["get", "sel"], 0], 2, 0]],
         ],
         "text-variable-anchor": ["left", "right", "top", "bottom", "top-left", "bottom-left", "top-right", "bottom-right"],
-        "text-radial-offset": ["interpolate", ["linear"], ["zoom"], 3, 0.55, 8, 0.8],
+        "text-radial-offset": ["interpolate", ["linear"], ["zoom"], 3, ["+", 0.55, ["*", 0.5, ["get", "imp"]]], 8, ["+", 0.75, ["*", 0.6, ["get", "imp"]]]],
         "text-justify": "auto",
         "text-max-width": 8,
         "text-padding": 2,
@@ -371,7 +385,7 @@ export function networkLayers(t: Theme, dimmed: boolean): LayerSpecification[] {
       paint: {
         "text-color": labelColor,
         "text-halo-color": t.halo,
-        "text-halo-width": 1.6,
+        "text-halo-width": 2,
         "text-halo-blur": 0.4,
       },
     });

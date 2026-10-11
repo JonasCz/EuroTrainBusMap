@@ -19,6 +19,18 @@ import { baseLayers, baseStyle } from "./style.ts";
 import { currentTheme, type Theme } from "./theme.ts";
 import { CAT_ORDER } from "../logic/filters.ts";
 
+const EUROPE_MOBILE: [[number, number], [number, number]] = [
+  [-5, 41],
+  [24, 56.5],
+];
+
+export interface Padding {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
 export interface MapCallbacks {
   onCity(id: number): void;
   onBackground(): void;
@@ -32,8 +44,8 @@ export interface Highlight {
 }
 
 const EUROPE: [[number, number], [number, number]] = [
-  [-9.5, 36],
-  [33.5, 59.5],
+  [-9.5, 36.5],
+  [35, 59],
 ];
 
 export class MapView {
@@ -50,17 +62,21 @@ export class MapView {
     container: HTMLElement,
     private net: Net,
     private cb: MapCallbacks,
-    padding: () => maplibregl.PaddingOptions,
+    padding: () => Padding,
   ) {
     this.theme = currentTheme();
     this.map = new maplibregl.Map({
       container,
       style: baseStyle(this.theme, (n) => net.ds.url(`basemap/${n}.json`)),
-      bounds: EUROPE,
-      fitBoundsOptions: { padding: { top: 20, bottom: 20, left: 20, right: 20, ...padding() } },
+      bounds: matchMedia("(max-width: 719px)").matches ? EUROPE_MOBILE : EUROPE,
+      fitBoundsOptions: { padding: (({ top, bottom, left, right }) => ({ top: top + 20, bottom: bottom + 20, left: left + 20, right: right + 20 }))(padding()) },
       attributionControl: false,
       maxZoom: 15,
-      minZoom: 2,
+      minZoom: 2.6,
+      maxBounds: [
+        [-45, 25],
+        [65, 78],
+      ],
       dragRotate: false,
       pitchWithRotate: false,
       renderWorldCopies: false,
@@ -178,8 +194,9 @@ export class MapView {
         if (cats & k) this.map.setFeatureState({ source: "corridors", id: cid * 4 + i }, { hl: true });
       });
     }
-    const layer = networkLayers(this.theme, em.active).find((l) => l.id === "corridors")!;
-    this.map.setPaintProperty("corridors", "line-color", (layer.paint as Record<string, unknown>)["line-color"]);
+    const paint = networkLayers(this.theme, em.active).find((l) => l.id === "corridors")!.paint as Record<string, unknown>;
+    this.map.setPaintProperty("corridors", "line-color", paint["line-color"]);
+    this.map.setPaintProperty("corridors", "line-width", paint["line-width"]);
     if (this.hovered !== null) this.map.setFeatureState({ source: "cities", id: this.hovered }, { hover: true });
   }
 
@@ -198,7 +215,7 @@ export class MapView {
   }
 
   /** Frame a set of cities, leaving room for the panel. */
-  fitCities(ids: number[], padding: maplibregl.PaddingOptions, maxZoom = 8): void {
+  fitCities(ids: number[], padding: Padding, maxZoom = 8): void {
     if (!ids.length) return;
     const b = new maplibregl.LngLatBounds();
     for (const id of ids) {
@@ -219,11 +236,11 @@ export class MapView {
       return this.isVisible(c.lon, c.lat, padding);
     });
     const z = this.map.getZoom();
-    if (allVisible && (cam.zoom ?? z) - z < 1.5) return;
+    if (allVisible && (cam.zoom ?? z) - z < 0.75) return;
     this.map.easeTo({ ...cam, duration: 800 });
   }
 
-  private isVisible(lon: number, lat: number, padding: maplibregl.PaddingOptions): boolean {
+  private isVisible(lon: number, lat: number, padding: Padding): boolean {
     const p = this.map.project([lon, lat]);
     const c = this.map.getCanvas();
     const w = c.clientWidth;

@@ -11,7 +11,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SRC = "https://raw.githubusercontent.com/protomaps/basemaps-assets/main/fonts";
-const FONTS = ["Noto Sans Regular", "Noto Sans Medium", "Noto Sans Italic"];
+const FONTS = ["Noto Sans Regular", "Noto Sans Medium"];
 /**
  * Unicode ranges needed for European + Turkish place names:
  * Latin-1, Latin Ext-A/B (Polish, Czech, Turkish, Romanian ș/ț), Greek,

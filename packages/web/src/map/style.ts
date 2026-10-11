@@ -5,7 +5,6 @@ import type { Theme } from "./theme.ts";
 
 export const FONT_REGULAR = ["Noto Sans Regular"];
 export const FONT_MEDIUM = ["Noto Sans Medium"];
-export const FONT_ITALIC = ["Noto Sans Italic"];
 
 export function glyphsUrl(): string {
   return absUrl("glyphs/") + "{fontstack}/{range}.pbf";

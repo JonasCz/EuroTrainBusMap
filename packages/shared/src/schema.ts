@@ -103,6 +103,11 @@ export interface Corridor {
   tpd: Partial<Record<CatBit, number>>;
   /** Whether geometry is snapped to real infrastructure (true) or synthesized (false). */
   snapped: boolean;
+  /** Cat bits on this corridor that carry Deutschlandticket-valid services (Flag.DTicket). */
+  dtCats?: number;
+  /** Most-used station at the `a` / `b` end (for drawing to the real station at high zoom). */
+  sa?: number;
+  sb?: number;
 }
 
 export interface NetworkFile {
