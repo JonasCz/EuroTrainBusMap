@@ -1,5 +1,6 @@
 /** Static data loading. All URLs are relative to Vite's BASE_URL. */
 import type { AttributionFile, CalendarsFile, CityFile, Manifest, NetworkFile, NetworkPart } from "@etbm/shared";
+import { expandNetwork } from "@etbm/shared";
 
 const BASE = import.meta.env.BASE_URL;
 
@@ -38,6 +39,7 @@ export async function loadDataSet(): Promise<DataSet> {
       for (const c of part.corridors ?? []) network.corridors.push(c);
     }
   }
+  expandNetwork(network);
   return { manifest, network, calendars, attribution, url };
 }
 

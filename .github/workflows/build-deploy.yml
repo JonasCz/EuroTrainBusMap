@@ -63,6 +63,7 @@ jobs:
             echo "rebuild=false" >> "$GITHUB_OUTPUT"; echo "subset=full" >> "$GITHUB_OUTPUT"
           fi
           echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+          echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
 
       # Latest successfully built data (restored on every run; push builds just redeploy it).
       - name: Restore built data
@@ -78,7 +79,7 @@ jobs:
         run: |
           if [ -f work/out/manifest.json ]; then echo "data=true" >> "$GITHUB_OUTPUT"; cat work/out/manifest.json; echo; else echo "data=false" >> "$GITHUB_OUTPUT"; fi
 
-      # Small, slow-changing downloads (GeoNames, Natural Earth, Overture rail extract) – keyed by ISO week.
+      # Small, slow-changing downloads (GeoNames, Natural Earth) – keyed by ISO week.
       - name: Restore ETL download cache
         if: steps.mode.outputs.rebuild == 'true' || steps.have.outputs.data != 'true'
         uses: actions/cache/restore@v4
@@ -86,9 +87,18 @@ jobs:
           path: |
             work/cache/geonames
             work/cache/basemap
-            work/geometry
           key: etl-cache-${{ steps.mode.outputs.week }}
           restore-keys: etl-cache-
+
+      # Overture rail extract (~220 MB, ~30 min to build) – Overture releases monthly.
+      - name: Restore Overture rail extract
+        if: steps.mode.outputs.rebuild == 'true' || steps.have.outputs.data != 'true'
+        id: overture-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: work/geometry
+          key: overture-rail-${{ steps.mode.outputs.month }}
+          restore-keys: overture-rail-
 
       - name: Build data
         if: steps.mode.outputs.rebuild == 'true' || steps.have.outputs.data != 'true'
@@ -120,8 +130,15 @@ jobs:
           path: |
             work/cache/geonames
             work/cache/basemap
-            work/geometry
           key: etl-cache-${{ steps.mode.outputs.week }}-${{ github.run_id }}
+
+      - name: Save Overture rail extract
+        if: (steps.mode.outputs.rebuild == 'true' || steps.have.outputs.data != 'true') && steps.overture-cache.outputs.cache-matched-key != format('overture-rail-{0}', steps.mode.outputs.month)
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: work/geometry
+          key: overture-rail-${{ steps.mode.outputs.month }}
 
       - name: Save built data
         if: steps.mode.outputs.rebuild == 'true' || steps.have.outputs.data != 'true'

@@ -47,7 +47,7 @@ export function resolveDuplicates(
     while (redirect.has(k)) k = redirect.get(k)!;
     return k;
   };
-  const sorted = [...pairs].sort((p, q) => q.shared - p.shared);
+  const sorted = [...pairs].sort((p, q) => q.shared - p.shared || p.a - q.a || p.b - q.b);
   for (const p of sorted) {
     if (p.shared < 2) continue;
     const ka = root(p.a), kb = root(p.b);

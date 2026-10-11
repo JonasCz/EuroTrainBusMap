@@ -691,7 +691,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const g = geomById.get(id);
     const A = cities[c.a]!, B = cities[c.b]!;
     const raw = g?.coords ?? greatCircle([A.lon, A.lat], [B.lon, B.lat]);
-    const coords = simplifyLine(raw, c.cats & RAIL ? 120 : c.cats & Cat.Coach ? 300 : 600).map(([x, y]) => [round5(x), round5(y)] as [number, number]);
+    const coords = simplifyLine(raw, c.cats & RAIL ? 150 : c.cats & Cat.Coach ? 400 : 800).map(([x, y]) => [round5(x), round5(y)] as [number, number]);
     // orient from new a to new b
     const flip = a > b;
     if (flip) coords.reverse();
