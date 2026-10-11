@@ -7,7 +7,10 @@
  * Every line is then attached to the city points a / b, smoothed (adaptive Chaikin) and
  * rounded to 5 decimals.
  */
+import { existsSync, readFileSync } from 'node:fs';
 import { ensureRailExtract, loadRailGraph } from './overture.ts';
+import { deserializeRailGraph } from './railbin.ts';
+import { RAIL_SIMPLIFY_TOL, railGraphPath } from './refresh-rail.ts';
 import { graphBytes, type RailGraph } from './graph.ts';
 import { Router, type RouteResult } from './route.ts';
 import { dedupe, dist, gentleCurve, mPerDeg, polylineLength, roundCoords, simplify, smooth, type LonLat } from './geo.ts';
@@ -23,28 +26,49 @@ export interface GeometryRequest {
 }
 export interface GeometryResult { id: number; coords: [number, number][]; snapped: boolean }
 
-export interface BuildOptions { workDir: string; log: (s: string) => void }
+export interface BuildOptions {
+  workDir: string;
+  log: (s: string) => void;
+  /** rail graph file (default: env ETBM_RAIL_GRAPH, else <workDir>/geometry/rail-graph-v<N>.bin) */
+  railGraph?: string;
+  /** if no rail graph file exists: true → unsnapped curves; false (default) → slow Overture extraction */
+  noExtract?: boolean;
+}
 
 /** Max routed track length relative to the station distance. */
 export const MAX_DETOUR = (gc: number) => 2.2 * gc + 5000;
 const ROAD_BULGE = 0.05;
 const SHAPE_TOL = 25;
 
-export async function buildGeometries(reqs: GeometryRequest[], opts: BuildOptions): Promise<GeometryResult[]> {
+/** Load the rail graph: prebuilt binary if present, else (unless noExtract) extract Overture. */
+export async function loadRouter(opts: BuildOptions): Promise<Router | null> {
   const { log } = opts;
-  let router: Router | null = null;
-  if (reqs.some((r) => r.mode === 'rail')) {
-    try {
-      const t0 = Date.now();
-      const parquet = await ensureRailExtract(opts.workDir, log);
-      const g = await loadRailGraph(parquet, opts.workDir, log);
-      log(`geometry: rail graph ready in ${((Date.now() - t0) / 1000).toFixed(0)} s, ${(graphBytes(g) / 1e6).toFixed(0)} MB`);
-      router = new Router(g);
-    } catch (e) {
-      log(`geometry: rail graph unavailable, using fallback lines (${String(e).slice(0, 300)})`);
+  const t0 = Date.now();
+  const file = opts.railGraph ?? process.env.ETBM_RAIL_GRAPH ?? railGraphPath(opts.workDir);
+  try {
+    if (existsSync(file)) {
+      const { graph, header } = deserializeRailGraph(readFileSync(file));
+      log(`geometry: rail graph ${file} (Overture ${header.release}, built ${header.created}) loaded in ${((Date.now() - t0) / 1000).toFixed(1)} s: ${graph.nodeCount} nodes, ${graph.edgeCount} edges, ${(graphBytes(graph) / 1e6).toFixed(0)} MB`);
+      return new Router(graph);
     }
+    if (opts.noExtract) {
+      log(`geometry: WARNING no rail graph at ${file} (set ETBM_RAIL_GRAPH or run rail:refresh) — rail corridors will be unsnapped curves`);
+      return null;
+    }
+    log(`geometry: WARNING no rail graph at ${file} — extracting Overture rail now (slow, ~15-30 min; run rail:refresh to prebuild)`);
+    const parquet = await ensureRailExtract(opts.workDir, log);
+    const g = await loadRailGraph(parquet, opts.workDir, log, RAIL_SIMPLIFY_TOL);
+    log(`geometry: rail graph ready in ${((Date.now() - t0) / 1000).toFixed(0)} s, ${(graphBytes(g) / 1e6).toFixed(0)} MB`);
+    return new Router(g);
+  } catch (e) {
+    log(`geometry: WARNING rail graph unavailable, rail corridors will be unsnapped curves (${String(e).slice(0, 300)})`);
+    return null;
   }
-  return buildWithRouter(reqs, router, log);
+}
+
+export async function buildGeometries(reqs: GeometryRequest[], opts: BuildOptions): Promise<GeometryResult[]> {
+  const router = reqs.some((r) => r.mode === 'rail') ? await loadRouter(opts) : null;
+  return buildWithRouter(reqs, router, opts.log);
 }
 
 /** Same as buildGeometries but with a ready router (tests / demo). */

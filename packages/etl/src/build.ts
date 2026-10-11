@@ -1,4 +1,4 @@
-import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -98,7 +98,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
 
   // ------------------------------------------------------------------ cities
   timer.start("cities");
-  const places = await loadPlaces(ctx.cacheDir, cfg.userAgent);
+  const places = await loadPlaces(ctx.cacheDir, cfg.userAgent, args.assets);
   resolveSatellites(places, { "TR:Istanbul": 50, "TR:Ankara": 30, "RU:Moscow": 40 });
   const stopRows = await db.all<{
     stop_key: number; feed: number; name: string; lat: number; lon: number; parent_key: number | null; tz: string | null; cats: number; rail: boolean; n: number;
@@ -600,7 +600,10 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   if (args.geometry && reqs.length) {
     try {
       const mod = await import("./geometry/index.ts");
-      geoms = await mod.buildGeometries(reqs, { workDir: join(args.work, "geometry"), log });
+      // Rail graph: env ETBM_RAIL_GRAPH or <work>/geometry/rail-graph-v1.bin (R2 asset). noExtract: the
+      // regular build never runs the slow Overture extraction (that is the asset refresh's job);
+      // without a graph, rail corridors become unsnapped curves.
+      geoms = await mod.buildGeometries(reqs, { workDir: args.work, log, noExtract: !args.extractRail });
     } catch (e) {
       warn(`geometry module failed, using straight lines: ${(e as Error).stack ?? e}`);
     }
@@ -730,7 +733,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const build = args.build ?? `${args.startDate.replace(/-/g, "")}-${new Date().toISOString().slice(11, 16).replace(":", "")}`;
   const outRoot = args.out;
   const outDir = join(outRoot, build);
-  await mkdir(join(outDir, "city"), { recursive: true });
+  await mkdir(join(outDir, "shard"), { recursive: true });
   // remove older builds
   if (existsSync(outRoot))
     for (const e of await readdir(outRoot)) {
@@ -765,7 +768,25 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   let totalBytes = 0;
   const sizes: { city: string; bytes: number }[] = [];
   let fileCount = 0;
-  for (let c = 0; c < cityOrder.length; c++) {
+  // City files are packed into shards of neighbouring cities (Hilbert order), so the
+  // destinations needed for onward connections usually arrive with the same request.
+  const SHARD_TARGET = 1_800_000, CITY_ALONE = 20_000_000;
+  const hilbertOrder = outCities.map((_, i) => i).sort((a, b) => hilbertKey(outCities[a]!) - hilbertKey(outCities[b]!));
+  const shardOf = new Int32Array(outCities.length).fill(-1);
+  let shardParts: string[] = [], shardBytes = 0, shardCities: number[] = [], nShards = 0;
+  const flushShard = async () => {
+    if (!shardParts.length) return;
+    const json = `{"cities":{${shardParts.join(",")}}}`;
+    await writeFile(join(outDir, "shard", `${nShards}.json`), json);
+    for (const c of shardCities) shardOf[c] = nShards;
+    nShards++;
+    fileCount++;
+    totalBytes += json.length;
+    shardParts = [];
+    shardBytes = 0;
+    shardCities = [];
+  };
+  for (const c of hilbertOrder) {
     const plist = patternsByCity[c]!;
     const localRoute = new Map<number, number>();
     const rOut: Route[] = [];
@@ -793,7 +814,9 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       pTz.push(pt.tz);
       for (let k = tStartIdx[p]!; k < tStartIdx[p + 1]!; k++) {
         const t = tOrder[k]!;
-        const num = tripN[t];
+        let num = tripN[t];
+        const rn = routes[pt.route]!.name;
+        if (num && rn && num.startsWith(rn + " ")) num = num.slice(rn.length + 1);
         tOut.push(num ? [li, tripS[t]!, tripC[t]!, num] : [li, tripS[t]!, tripC[t]!]);
       }
     }
@@ -810,12 +833,27 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const anyRail = stIds.some((s) => stations[s]!.rail);
     const cf: CityFile = { city: c, routes: rOut, patterns: pOut, patternTz: pTz, trips: tOut, transfers, minTransfer: anyRail ? 5 : 3 };
     const json = JSON.stringify(cf);
-    await writeFile(join(outDir, "city", `${c}.json`), json);
-    fileCount++;
-    totalBytes += json.length;
-    sizes.push({ city: `${outCities[c]!.name} (${c})`, bytes: Buffer.byteLength(json) });
+    const bytes = Buffer.byteLength(json);
+    sizes.push({ city: `${outCities[c]!.name} (${c})`, bytes });
+    if (bytes > CITY_ALONE) {
+      // too big for a shard: stand-alone city/<id>.json (City.shard stays undefined)
+      await mkdir(join(outDir, "city"), { recursive: true });
+      await writeFile(join(outDir, "city", `${c}.json`), json);
+      fileCount++;
+      totalBytes += json.length;
+      continue;
+    }
+    if (shardBytes && shardBytes + bytes > SHARD_TARGET) await flushShard();
+    shardParts.push(`"${c}":${json}`);
+    shardCities.push(c);
+    shardBytes += bytes;
   }
+  await flushShard();
+  outCities.forEach((city, i) => {
+    if (shardOf[i]! >= 0) city.shard = shardOf[i]!;
+  });
   sizes.sort((a, b) => b.bytes - a.bytes);
+  log(`${nShards} city shards`);
 
   // attribution
   const attribution = buildAttribution(ctx);
@@ -838,12 +876,20 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   if (args.basemap) {
     timer.start("basemap");
     try {
+      const bmOut = join(outDir, "basemap");
+      const bmAsset = join(args.assets, "basemap");
       const modPath = join(import.meta.dirname, "../../web/scripts/basemap.ts");
-      if (existsSync(modPath)) {
-        const mod = (await import(modPath)) as { buildBasemap: (o: { outDir: string; cacheDir?: string; log?: (s: string) => void }) => Promise<void> };
-        await mod.buildBasemap({ outDir: join(outDir, "basemap"), cacheDir: join(ctx.cacheDir, "basemap"), log });
-        for (const f of await readdir(join(outDir, "basemap"))) {
-          totalBytes += (await stat(join(outDir, "basemap", f))).size;
+      const have = BASEMAP_FILES.every((f) => existsSync(join(bmAsset, f)));
+      if (have || existsSync(modPath)) {
+        if (have) log(`basemap: using asset ${bmAsset}`);
+        else {
+          const mod = (await import(modPath)) as { buildBasemap: (o: { outDir: string; cacheDir?: string; log?: (s: string) => void }) => Promise<void> };
+          await mod.buildBasemap({ outDir: bmAsset, cacheDir: join(ctx.cacheDir, "basemap"), log });
+        }
+        await mkdir(bmOut, { recursive: true });
+        for (const f of BASEMAP_FILES) if (existsSync(join(bmAsset, f))) await copyFile(join(bmAsset, f), join(bmOut, f));
+        for (const f of await readdir(bmOut)) {
+          totalBytes += (await stat(join(bmOut, f))).size;
           fileCount++;
         }
       } else warn("basemap script not found, skipping");
@@ -891,7 +937,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const e = (byCountry[outCities[c0]!.country] ??= { cities: 0, trips: 0 });
     e.trips += cnt;
   }
-  const sanity = runSanity({ network, calendars, readCity: (id) => readCityCache(outDir, id) });
+  const sanity = runSanity({ network, calendars, readCity: (id) => readCityCache(outDir, id, outCities[id]?.shard) });
   for (const w of sanity.warnings) warn(`sanity: ${w}`);
   for (const e of sanity.errors) warn(`SANITY ERROR: ${e}`);
   timer.end();
@@ -908,7 +954,9 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     biggestCityFiles: sizes.slice(0, 25),
     sanity,
   });
-  await writeFile(join(outRoot, "build-report.json"), JSON.stringify(report, null, 1));
+  // The report goes to the work dir, not into the published data.
+  await writeFile(join(args.work, "build-report.json"), JSON.stringify(report, null, 1));
+  await rm(join(outRoot, "build-report.json"), { force: true });
   await writeFile(join(outRoot, "manifest.json"), JSON.stringify(manifest));
   log(`build ${build}: ${JSON.stringify(stats)}`);
   log(`biggest city files: ${sizes.slice(0, 8).map((s) => `${s.city} ${(s.bytes / 1e6).toFixed(1)}MB`).join(", ")}`);
@@ -919,12 +967,35 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
 }
 
 import { readFileSync } from "node:fs";
-function readCityCache(outDir: string, id: number): CityFile | null {
+let shardCache: { n: number; data: { cities: Record<string, CityFile> } } | null = null;
+function readCityCache(outDir: string, id: number, shard: number | undefined): CityFile | null {
   try {
-    return JSON.parse(readFileSync(join(outDir, "city", `${id}.json`), "utf8")) as CityFile;
+    if (shard === undefined) return JSON.parse(readFileSync(join(outDir, "city", `${id}.json`), "utf8")) as CityFile;
+    if (shardCache?.n !== shard) shardCache = { n: shard, data: JSON.parse(readFileSync(join(outDir, "shard", `${shard}.json`), "utf8")) };
+    return shardCache.data.cities[String(id)] ?? null;
   } catch {
     return null;
   }
+}
+
+/** Position on a 2^16×2^16 Hilbert curve over the map bounding box. */
+function hilbertKey(c: { lon: number; lat: number }): number {
+  const n = 1 << 16;
+  let x = Math.max(0, Math.min(n - 1, Math.floor(((c.lon - BBOX.minLon) / (BBOX.maxLon - BBOX.minLon)) * n)));
+  let y = Math.max(0, Math.min(n - 1, Math.floor(((c.lat - BBOX.minLat) / (BBOX.maxLat - BBOX.minLat)) * n)));
+  let d = 0;
+  for (let s = n >> 1; s > 0; s >>= 1) {
+    const rx = (x & s) > 0 ? 1 : 0, ry = (y & s) > 0 ? 1 : 0;
+    d += s * s * ((3 * rx) ^ ry);
+    if (ry === 0) {
+      if (rx === 1) {
+        x = n - 1 - x;
+        y = n - 1 - y;
+      }
+      [x, y] = [y, x];
+    }
+  }
+  return d;
 }
 
 interface LicenseEntry {
@@ -942,30 +1013,32 @@ function buildAttribution(ctx: BuildCtx): AttributionFile {
   for (const e of ctx.licenses as LicenseEntry[]) if (e.filename) lic.set(e.filename, e);
   const used = new Set(ctx.feedStats.filter((f) => f.trips > 0).map((f) => f.key));
   const sources: AttributionFile["sources"] = [];
+  const seen = new Set<string>();
   for (const rf of ctx.feeds) {
-    if (!used.has(rf.key)) continue;
+    // one entry per feed definition (multi-file feeds collapse into one line)
+    if (!used.has(rf.key) || seen.has(rf.def.id)) continue;
+    seen.add(rf.def.id);
     const e = rf.transitousFile ? lic.get(rf.transitousFile) : undefined;
-    if (e) {
-      sources.push({
-        name: `${rf.def.name}${e.human_name && !rf.def.name.includes(e.human_name) ? ` – ${e.human_name}` : ""}`,
-        license: e.spdx_license_identifier ?? (e.license_url ? "see license" : "unknown"),
-        url: e.license_url ?? e.publisher?.url ?? e.source,
-        attribution: e.publisher?.name ?? (e.operators ?? []).slice(0, 5).join(", "),
-      });
-    } else {
-      sources.push({
-        name: rf.def.name,
-        license: rf.def.license ?? "see source",
-        url: rf.def.licenseUrl ?? rf.urls[0],
-        attribution: rf.def.attribution,
-      });
-    }
+    const src: AttributionFile["sources"][number] = e
+      ? {
+          name: rf.def.name,
+          license: e.spdx_license_identifier ?? (e.license_url ? "see terms" : "unknown"),
+          url: e.license_url ?? e.publisher?.url ?? undefined,
+          attribution: e.publisher?.name,
+        }
+      : { name: rf.def.name, license: rf.def.license ?? "see source", url: rf.def.licenseUrl, attribution: rf.def.attribution };
+    if (!src.url) delete src.url;
+    if (!src.attribution || rf.def.name.toLowerCase().includes(src.attribution.toLowerCase())) delete src.attribution;
+    sources.push(src);
   }
   sources.push(
-    { name: "Transitous (feed mirror)", license: "various", url: "https://transitous.org/", attribution: "Feeds processed and mirrored by Transitous" },
-    { name: "GeoNames", license: "CC-BY-4.0", url: "https://www.geonames.org/", attribution: "GeoNames" },
+    { name: "Transitous (feed mirror)", license: "various", url: "https://transitous.org/" },
+    { name: "GeoNames", license: "CC-BY-4.0", url: "https://www.geonames.org/" },
     { name: "OpenStreetMap via Overture Maps (rail geometry)", license: "ODbL-1.0", url: "https://www.openstreetmap.org/copyright", attribution: "© OpenStreetMap contributors" },
     { name: "Natural Earth (basemap)", license: "Public Domain", url: "https://www.naturalearthdata.com/" },
   );
   return { sources };
 }
+
+export const BASEMAP_FILES = ["land.json", "borders.json", "lakes.json", "labels.json"];
+

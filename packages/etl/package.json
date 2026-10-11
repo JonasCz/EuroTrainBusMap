@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "build-data": "NODE_USE_ENV_PROXY=1 node --no-warnings --max-old-space-size=8192 --expose-gc --import tsx src/cli.ts",
+    "rail:refresh": "NODE_USE_ENV_PROXY=1 node --no-warnings --max-old-space-size=4096 --import tsx src/geometry/refresh-rail.ts",
     "test": "vitest run",
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p .",
+    "assets": "NODE_USE_ENV_PROXY=1 node --no-warnings --max-old-space-size=8192 --import tsx src/assets.ts"
   },
   "dependencies": {
     "@duckdb/node-api": "1.5.6-r.1",

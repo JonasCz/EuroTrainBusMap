@@ -129,5 +129,6 @@ export function weekdayNote(cal: CalIndex, calendar: number): string | null {
   const pos = set.map((wd) => WD_ORDER.indexOf(wd));
   const contiguous = pos.every((p, i) => i === 0 || p === pos[i - 1]! + 1);
   if (contiguous && set.length >= 3) return `${WD_SHORT[set[0]!]}–${WD_SHORT[set[set.length - 1]!]} only`;
+  if (set.length >= 5) return `not ${WD_ORDER.filter((wd) => !set.includes(wd)).map((wd) => WD_SHORT[wd]).join(", ")}`;
   return `${set.map((wd) => WD_SHORT[wd]).join(", ")} only`;
 }

@@ -1,13 +1,18 @@
 name: Build data & deploy
 
+# push:      web-only rebuild + redeploy with the cached data (rebuilds data only if the
+#            ETL/schema code changed since the cached data was built)
+# schedule:  weekly full data refresh (Mondays 03:17 UTC)
+# dispatch:  choose subset (full/core) and whether to rebuild data
 on:
   push:
     branches: [main]
     paths:
       - "packages/**"
+      - "pnpm-lock.yaml"
+      - "wrangler.jsonc"
       - ".github/workflows/build-deploy.yml"
   schedule:
-    # Mondays 03:17 UTC: weekly data refresh
     - cron: "17 3 * * 1"
   workflow_dispatch:
     inputs:
@@ -17,7 +22,7 @@ on:
         options: [full, core]
         default: full
       rebuild:
-        description: "Rebuild data even on a push-style run (ignored for schedule)"
+        description: "Rebuild data (otherwise reuse cached data if compatible)"
         type: boolean
         default: true
 
@@ -27,23 +32,29 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write # keepalive: re-enable this workflow so the weekly schedule never lapses
 
 env:
   WORK: ${{ github.workspace }}/work
   BASE_PATH: ${{ vars.BASE_PATH || '/' }}
+  ASSETS_BUCKET: eurotrainbusmap-assets
+  # Data built by different ETL/schema code is never reused.
+  DATA_KEY: data-out-${{ hashFiles('packages/etl/src/**', 'packages/etl/feeds.json', 'packages/shared/src/**') }}
 
 jobs:
   build-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
 
-      - name: Free disk space
-        run: |
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
-          df -h /
+      # GitHub disables scheduled workflows in public repos after 60 days without activity.
+      - name: Keep the schedule alive
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/build-deploy.yml/enable"
 
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -52,101 +63,81 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
+      - name: Restore built data
+        uses: actions/cache/restore@v4
+        with:
+          path: work/out
+          key: ${{ env.DATA_KEY }}-${{ github.run_id }}
+          restore-keys: ${{ env.DATA_KEY }}-
+
       - name: Decide whether to rebuild data
         id: mode
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "rebuild=true" >> "$GITHUB_OUTPUT"; echo "subset=full" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "rebuild=${{ inputs.rebuild }}" >> "$GITHUB_OUTPUT"; echo "subset=${{ inputs.subset }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "rebuild=false" >> "$GITHUB_OUTPUT"; echo "subset=full" >> "$GITHUB_OUTPUT"
-          fi
-          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
-          echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+          have=false; [ -f work/out/manifest.json ] && have=true
+          case "${{ github.event_name }}" in
+            schedule) rebuild=true; subset=full ;;
+            workflow_dispatch) rebuild=${{ inputs.rebuild || false }}; subset=${{ inputs.subset || 'full' }} ;;
+            *) rebuild=false; subset=full ;;
+          esac
+          [ "$have" = false ] && rebuild=true
+          echo "rebuild=$rebuild" >> "$GITHUB_OUTPUT"
+          echo "subset=$subset" >> "$GITHUB_OUTPUT"
+          echo "cached data: $have, rebuild: $rebuild, subset: $subset"
+          [ "$have" = true ] && cat work/out/manifest.json && echo || true
 
-      # Latest successfully built data (restored on every run; push builds just redeploy it).
-      - name: Restore built data
-        id: data-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: work/out
-          key: data-out-${{ hashFiles('packages/etl/src/**', 'packages/etl/feeds.json', 'packages/shared/src/**') }}-${{ github.run_id }}
-          # Only reuse data built by the same ETL/schema code; otherwise the push build rebuilds.
-          restore-keys: data-out-${{ hashFiles('packages/etl/src/**', 'packages/etl/feeds.json', 'packages/shared/src/**') }}-
-
-      - name: Check restored data
-        id: have
+      - name: Free disk space
+        if: steps.mode.outputs.rebuild == 'true'
         run: |
-          if [ -f work/out/manifest.json ]; then echo "data=true" >> "$GITHUB_OUTPUT"; cat work/out/manifest.json; echo; else echo "data=false" >> "$GITHUB_OUTPUT"; fi
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
 
-      # Small, slow-changing downloads (GeoNames, Natural Earth) – keyed by ISO week.
-      - name: Restore ETL download cache
-        if: steps.mode.outputs.rebuild == 'true' || steps.have.outputs.data != 'true'
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            work/cache/geonames
-            work/cache/basemap
-          key: etl-cache-${{ steps.mode.outputs.week }}
-          restore-keys: etl-cache-
-
-      # Overture rail extract (~220 MB, ~30 min to build) – Overture releases monthly.
-      - name: Restore Overture rail extract
-        if: steps.mode.outputs.rebuild == 'true' || steps.have.outputs.data != 'true'
-        id: overture-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: work/geometry
-          key: overture-rail-${{ steps.mode.outputs.month }}
-          restore-keys: overture-rail-
+      # Slow-changing inputs from R2 (built by refresh-assets.yml): GeoNames places, basemap,
+      # rail graph. Anything missing is computed/downloaded from source by the ETL (the rail
+      # graph is not: without it corridors are drawn as unsnapped curves).
+      - name: Download assets from R2
+        if: steps.mode.outputs.rebuild == 'true'
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          mkdir -p work/assets
+          if ! npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/manifest.json" --file work/assets/manifest.json --remote; then
+            echo "::warning::no asset manifest in R2 – the ETL will fetch inputs from source"; exit 0
+          fi
+          for key in $(node -e 'console.log(require(process.argv[1]).files.join("\n"))' "$PWD/work/assets/manifest.json"); do
+            mkdir -p "work/assets/$(dirname "$key")"
+            npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/$key" --file "work/assets/$key" --remote \
+              || echo "::warning::asset $key missing"
+          done
+          ls -laR work/assets
 
       - name: Build data
-        if: steps.mode.outputs.rebuild == 'true' || steps.have.outputs.data != 'true'
+        if: steps.mode.outputs.rebuild == 'true'
         run: |
-          # The runner may export AWS credentials; DuckDB must access the public Overture bucket anonymously.
           unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_REGION AWS_REGION
+          rail=$(ls work/assets/rail/rail-graph-v*.bin 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "$rail" ]; then export ETBM_RAIL_GRAPH="$PWD/$rail"; else echo "::warning::no rail graph asset – corridors will not be snapped"; fi
           rm -rf work/out-new
-          pnpm --filter @etbm/etl run build-data -- --out "$WORK/out-new" --work "$WORK" --subset "${{ steps.mode.outputs.subset }}"
+          pnpm --filter @etbm/etl run build-data -- --out "$WORK/out-new" --work "$WORK" --assets "$WORK/assets" --subset "${{ steps.mode.outputs.subset }}"
           rm -rf work/out && mv work/out-new work/out
-          rm -f work/etl.duckdb work/etl.duckdb.wal
-          rm -rf work/cache/feeds work/tmp
-          df -h /
-          du -sh work/out
-          find work/out -type f | wc -l
+          rm -rf work/etl.duckdb work/etl.duckdb.wal work/cache/feeds work/tmp
+          du -sh work/out; find work/out -type f | wc -l
 
       - name: Build report
-        if: always()
+        if: always() && steps.mode.outputs.rebuild == 'true'
         run: |
-          [ -f work/out/build-report.json ] && node -e '
+          [ -f work/build-report.json ] && node -e '
             const r = require(process.argv[1]);
-            console.log(JSON.stringify({ build: r.build, stats: r.stats, stageSeconds: r.stageSeconds, sanity: r.sanity && { errors: r.sanity.errors, warnings: r.sanity.warnings } }, null, 1));
-          ' "$PWD/work/out/build-report.json" || echo "no build report"
-
-      - name: Save ETL download cache
-        if: steps.mode.outputs.rebuild == 'true' || steps.have.outputs.data != 'true'
-        uses: actions/cache/save@v4
-        continue-on-error: true
-        with:
-          path: |
-            work/cache/geonames
-            work/cache/basemap
-          key: etl-cache-${{ steps.mode.outputs.week }}-${{ github.run_id }}
-
-      - name: Save Overture rail extract
-        if: (steps.mode.outputs.rebuild == 'true' || steps.have.outputs.data != 'true') && steps.overture-cache.outputs.cache-matched-key != format('overture-rail-{0}', steps.mode.outputs.month)
-        uses: actions/cache/save@v4
-        continue-on-error: true
-        with:
-          path: work/geometry
-          key: overture-rail-${{ steps.mode.outputs.month }}
+            console.log(JSON.stringify({ build: r.build, stats: r.stats, stageSeconds: r.stageSeconds, failedFeeds: r.failedFeeds, sanity: r.sanity }, null, 1));
+          ' "$PWD/work/build-report.json" || echo "no build report"
 
       - name: Save built data
-        if: steps.mode.outputs.rebuild == 'true' || steps.have.outputs.data != 'true'
+        if: steps.mode.outputs.rebuild == 'true'
         uses: actions/cache/save@v4
         with:
           path: work/out
-          key: data-out-${{ hashFiles('packages/etl/src/**', 'packages/etl/feeds.json', 'packages/shared/src/**') }}-${{ github.run_id }}
+          key: ${{ env.DATA_KEY }}-${{ github.run_id }}
 
       - name: Build web
         run: pnpm --filter @etbm/web build
@@ -157,12 +148,10 @@ jobs:
           site="dist/site"; target="$site${base:+/$base}"
           rm -rf "$site" && mkdir -p "$target"
           cp -r packages/web/dist/. "$target/"
-          rm -rf "$target/data"
-          mkdir -p "$target/data"
+          rm -rf "$target/data" && mkdir -p "$target/data"
           cp -r work/out/. "$target/data/"
-          rm -f "$target/data/build-report.json"
           echo "files: $(find "$site" -type f | wc -l)"; du -sh "$site"
-          # Cloudflare static assets: max 25 MiB per file
+          # Cloudflare static assets: max 25 MiB per file, 20k files (free plan)
           big=$(find "$site" -type f -size +25M); if [ -n "$big" ]; then echo "Files over 25 MiB:"; echo "$big"; exit 1; fi
 
       - name: Deploy to Cloudflare

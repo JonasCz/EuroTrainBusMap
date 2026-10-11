@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { RailGraphBuilder } from './graph.ts';
 import { Router } from './route.ts';
-import { attach, buildWithRouter, type GeometryRequest } from './index.ts';
+import { attach, buildGeometries, buildWithRouter, type GeometryRequest } from './index.ts';
+import { deserializeRailGraph, pruneGraph, readRailHeader, serializeRailGraph } from './railbin.ts';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { dist, gentleCurve, polylineLength, simplify, smooth, type LonLat } from './geo.ts';
 
 /** Densified line through the given points (vertex every ~100 m), as flat array. */
@@ -156,5 +160,34 @@ describe('geo helpers', () => {
     const out = attach([0, 50.001], path, [1, 50.001]);
     expect(out[0]).toEqual([0, 50.001]);
     expect(out.some((p) => p[0] < -0.01)).toBe(false);
+  });
+});
+
+describe('rail graph file', () => {
+  const g = synthetic();
+  it('prunes small components and round-trips through the binary format', () => {
+    const p = pruneGraph(g, 3000);
+    expect(p.edgeCount).toBe(4); // F-G fragment (2 km) dropped
+    const buf = serializeRailGraph(p, { release: 'test', bbox: [0, 0, 1, 1], simplifyTol: 15, minComponent: 3000 });
+    expect(readRailHeader(buf).header.release).toBe('test');
+    const { graph: q } = deserializeRailGraph(buf);
+    for (const k of ['nodeX', 'nodeY', 'edgeU', 'edgeV', 'edgeLen', 'edgeCost', 'geoStart', 'geoX', 'geoY'] as const) {
+      expect(Array.from(q[k])).toEqual(Array.from(p[k]));
+    }
+    const a = new Router(p).route([0.1, 50.003], [0.9, 49.998], 2e5)!;
+    const b = new Router(q).route([0.1, 50.003], [0.9, 49.998], 2e5)!;
+    expect(b.coords).toEqual(a.coords);
+  });
+  it('buildGeometries loads the file and falls back to curves with noExtract', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rail-'));
+    const file = join(dir, 'g.bin');
+    writeFileSync(file, serializeRailGraph(g, { release: 't', bbox: [0, 0, 1, 1], simplifyTol: 15, minComponent: 0 }));
+    const req: GeometryRequest = { id: 1, mode: 'rail', a: [0.11, 50.01], b: [0.89, 50.01], hops: [{ from: [0.1, 50.001], to: [0.9, 50.001] }] };
+    const logs: string[] = [];
+    const [r1] = await buildGeometries([req], { workDir: dir, log: (s) => logs.push(s), railGraph: file });
+    expect(r1!.snapped).toBe(true);
+    const [r2] = await buildGeometries([req], { workDir: dir, log: (s) => logs.push(s), railGraph: join(dir, 'missing.bin'), noExtract: true });
+    expect(r2!.snapped).toBe(false);
+    expect(logs.some((l) => l.includes('WARNING no rail graph'))).toBe(true);
   });
 });

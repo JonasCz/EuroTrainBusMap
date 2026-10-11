@@ -33,5 +33,7 @@ describe("calendar", () => {
   it("not-Saturday note", () => {
     const c = { ...cal, masks: [decodeMask(encodeMask(Array.from({ length: 28 }, (_, i) => (1 + i) % 7 !== 6)))], anyDay: [true] };
     expect(weekdayNote(c, 0)).toBe("not Sat");
+    const c2 = { ...cal, masks: [decodeMask(encodeMask(Array.from({ length: 28 }, (_, i) => ![2, 3].includes((1 + i) % 7))))], anyDay: [true] };
+    expect(weekdayNote(c2, 0)).toBe("not Tue, Wed");
   });
 });

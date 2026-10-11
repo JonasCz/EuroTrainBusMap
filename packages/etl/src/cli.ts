@@ -25,6 +25,10 @@ export interface CliArgs {
   basemap: boolean;
   maxAgeH?: number;
   build?: string;
+  /** Directory mirroring the R2 asset bucket (GeoNames places, basemap, rail graph). */
+  assets: string;
+  /** Allow the slow Overture rail extraction when no rail asset is present. */
+  extractRail: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -40,7 +44,7 @@ function parseArgs(argv: string[]): CliArgs {
   if (!out) {
     console.error(
       "usage: build-data --out <dir> [--feeds id1,id2] [--work <dir>] [--subset full|core] [--days 60] [--start YYYY-MM-DD]\n" +
-        "                  [--reuse-db] [--no-geometry] [--no-basemap] [--max-age-h N]",
+        "                  [--reuse-db] [--no-geometry] [--no-basemap] [--max-age-h N] [--assets <dir>] [--extract-rail]",
     );
     process.exit(2);
   }
@@ -56,6 +60,8 @@ function parseArgs(argv: string[]): CliArgs {
     basemap: !has("--no-basemap"),
     maxAgeH: get("--max-age-h") ? Number(get("--max-age-h")) : undefined,
     build: get("--build"),
+    assets: resolve(get("--assets") ?? join(resolve(get("--work") ?? join(repoRoot, "work")), "assets")),
+    extractRail: has("--extract-rail"),
   };
 }
 

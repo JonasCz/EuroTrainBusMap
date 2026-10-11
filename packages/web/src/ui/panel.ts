@@ -9,6 +9,7 @@ import type { Reach } from "../logic/reach.ts";
 import type { Departure } from "../logic/timetable.ts";
 import { fmtDuration, localDate } from "../logic/tz.ts";
 import { h, icon } from "./dom.ts";
+import { shortStationName } from "../map/features.ts";
 import { catDot, routeBadge, timeEl } from "./format.ts";
 
 export type View =
@@ -311,36 +312,89 @@ export class Panel {
     const n = this.net;
     const c = n.cities[city]!;
     const dests = [...r.dests.values()].sort((a, b) => n.cities[b.city]!.importance - n.cities[a.city]!.importance || a.minutes - b.minutes);
-    const stations = c.stations.map((s) => stationName(n, s));
-    const out: Node[] = [
-      this.header(c.name, `${dests.length} direct destination${dests.length === 1 ? "" : "s"} · ${countryName(c.country)}`),
-    ];
-    if (stations.length > 1) out.push(h("p", { class: "stations-line" }, `${stations.length} stations: `, stations.join(" · ")));
+    const out: Node[] = [this.header(c.name, `${dests.length} direct destination${dests.length === 1 ? "" : "s"} · ${countryName(c.country)}`)];
+    if (c.stations.length > 1) out.push(this.stationsLine(city));
     if (!dests.length) {
       out.push(h("p", { class: "pad muted" }, "No direct services from here with the selected modes."));
       return out;
     }
-    out.push(
+    const row = (d: (typeof dests)[number]) => {
+      const dc = n.cities[d.city]!;
+      return h(
+        "li",
+        { "data-q": slugify(dc.name) },
+        h(
+          "button",
+          { type: "button", class: "dest", onclick: () => this.actions.set({ dest: d.city, legs: [] }) },
+          h("span", { class: "dest-cats" }, CAT_ORDER.filter((k) => d.cats & k).map((k) => catDot(k, CAT_LABEL[k]))),
+          h("span", { class: "dest-name" }, dc.name, dc.country !== c.country ? h("span", { class: "cc" }, dc.country) : null),
+          h("span", { class: "dest-time" }, h("span", { class: "muted small" }, "from "), fmtDuration(d.minutes)),
+        ),
+      );
+    };
+    // group: major places first, then everything else (still by importance)
+    const major = dests.filter((d) => n.cities[d.city]!.importance >= 0.6);
+    const minor = dests.filter((d) => n.cities[d.city]!.importance < 0.6);
+    const groups: [string, typeof dests][] = major.length && minor.length && dests.length > 20 ? [["Major destinations", major], [`Other places (${minor.length})`, minor]] : [["", dests]];
+    const lists = groups.map(([title, items]) =>
       h(
-        "ul",
-        { class: "dest-list", "aria-label": `Direct destinations from ${c.name}` },
-        dests.map((d) => {
-          const dc = n.cities[d.city]!;
-          return h(
-            "li",
-            null,
-            h(
-              "button",
-              { type: "button", class: "dest", onclick: () => this.actions.set({ dest: d.city, legs: [] }) },
-              h("span", { class: "dest-cats" }, CAT_ORDER.filter((k) => d.cats & k).map((k) => catDot(k, CAT_LABEL[k]))),
-              h("span", { class: "dest-name" }, dc.name, dc.country !== c.country ? h("span", { class: "cc" }, dc.country) : null),
-              h("span", { class: "dest-time" }, h("span", { class: "muted small" }, "from "), fmtDuration(d.minutes)),
-            ),
-          );
-        }),
+        "section",
+        { class: "dest-group" },
+        title ? h("h3", { class: "section" }, title) : null,
+        h("ul", { class: "dest-list", "aria-label": title || `Direct destinations from ${c.name}` }, items.map(row)),
       ),
     );
+    const empty = h("p", { class: "pad muted", hidden: true }, "No destination matches.");
+    if (dests.length > 12) {
+      const input = h("input", {
+        type: "search",
+        class: "dest-filter",
+        placeholder: `Filter ${dests.length} destinations…`,
+        "aria-label": "Filter destinations",
+        oninput: (e: Event) => {
+          const q = slugify((e.target as HTMLInputElement).value);
+          let shown = 0;
+          for (const li of this.body.querySelectorAll<HTMLLIElement>(".dest-list li")) {
+            const hit = !q || li.dataset.q!.includes(q);
+            li.hidden = !hit;
+            if (hit) shown++;
+          }
+          for (const sec of this.body.querySelectorAll<HTMLElement>(".dest-group")) sec.hidden = !sec.querySelector("li:not([hidden])");
+          empty.hidden = shown > 0;
+        },
+      });
+      out.push(h("div", { class: "dest-filter-wrap" }, input));
+    }
+    out.push(...lists, empty);
     return out;
+  }
+
+  /** Top stations of a city (rail first, by service), with "+N more". */
+  private stationsLine(city: number): HTMLElement {
+    const n = this.net;
+    const c = n.cities[city]!;
+    const rail = (s: number) => ((n.file.stations[s]!.cats & (Cat.LongDistance | Cat.Regional)) !== 0 ? 0 : 1);
+    const order = [...c.stations].sort((a, b) => rail(a) - rail(b) || n.ctx.stationRank[a]! - n.ctx.stationRank[b]!);
+    const names = order.map((s) => shortStationName(stationName(n, s), c.name));
+    const TOP = 8;
+    const p = h("p", { class: "stations-line" }, h("span", { class: "muted" }, `${names.length} stations: `), names.slice(0, TOP).join(" · "));
+    if (names.length > TOP) {
+      const more = h(
+        "button",
+        {
+          type: "button",
+          class: "link small",
+          "aria-expanded": "false",
+          onclick: () => {
+            more.remove();
+            p.append(" · ", names.slice(TOP).join(" · "));
+          },
+        },
+        `+${names.length - TOP} more`,
+      );
+      p.append(" ", more);
+    }
+    return p;
   }
 
   private timetable(v: Extract<View, { kind: "timetable" }>): Node[] {

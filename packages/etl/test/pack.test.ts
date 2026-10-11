@@ -16,7 +16,7 @@ describe("packNetwork", () => {
       build: "x",
       timezones: ["Europe/Berlin"],
       cities: [
-        { id: 0, name: "Berlin", country: "DE", lon: 13.41053, lat: 52.52437, population: 3426354, importance: 1, cats: 7, stations: [0, 1], tz: 0 },
+        { id: 0, name: "Berlin", country: "DE", lon: 13.41053, lat: 52.52437, population: 3426354, importance: 1, cats: 7, stations: [0, 1], tz: 0, shard: 3 },
         { id: 1, name: "Potsdam", country: "DE", lon: 13.06566, lat: 52.39886, population: 184754, importance: 0.5, cats: 2, stations: [2], tz: 0 },
       ],
       stations: [

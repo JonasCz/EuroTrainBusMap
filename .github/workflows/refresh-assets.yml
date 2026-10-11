@@ -1,0 +1,91 @@
+name: Refresh build assets (R2)
+
+# Rebuilds the slow-changing inputs of the weekly data build and uploads them to the
+# R2 bucket `eurotrainbusmap-assets`:
+#   geonames/places-europe.tsv.gz   basemap/*.json   rail/rail-graph-v1.bin   manifest.json
+# Overture publishes monthly; GeoNames / Natural Earth change rarely.
+on:
+  schedule:
+    - cron: "41 1 4 * *" # 4th of each month, 01:41 UTC
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Comma-separated subset to rebuild (geonames,basemap,rail); others are kept from R2"
+        default: "geonames,basemap,rail"
+
+concurrency:
+  group: refresh-assets
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+env:
+  WORK: ${{ github.workspace }}/work
+  ASSETS_BUCKET: eurotrainbusmap-assets
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Keep the schedule alive
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/refresh-assets.yml/enable"
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Create bucket (idempotent)
+        run: |
+          out=$(npx -y wrangler@4 r2 bucket create "$ASSETS_BUCKET" 2>&1) && echo "$out" || {
+            echo "$out"
+            echo "$out" | grep -qi "already exists" || exit 1
+          }
+
+      - name: Fetch current assets (kept for parts not rebuilt)
+        continue-on-error: true
+        run: |
+          mkdir -p work/assets
+          npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/manifest.json" --file work/assets/manifest.json --remote || exit 0
+          for key in $(node -e 'console.log(require(process.argv[1]).files.join("\n"))' "$PWD/work/assets/manifest.json"); do
+            mkdir -p "work/assets/$(dirname "$key")"
+            npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/$key" --file "work/assets/$key" --remote || true
+          done
+
+      # The Overture rail extract (~220 MB) is cached per month so re-runs take ~1 min instead of ~30.
+      - name: Restore Overture extract
+        uses: actions/cache@v4
+        with:
+          path: work/overture
+          key: overture-rail-${{ github.run_id }}
+          restore-keys: overture-rail-
+
+      - name: Build assets
+        run: |
+          unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_REGION AWS_REGION
+          pnpm --filter @etbm/etl run assets -- --out "$WORK/assets" --work "$WORK" --only "${{ inputs.only || 'geonames,basemap,rail' }}"
+          cat work/assets/manifest.json
+          du -ah work/assets
+
+      - name: Upload to R2
+        run: |
+          for key in $(node -e 'console.log(require(process.argv[1]).files.join("\n"))' "$PWD/work/assets/manifest.json"); do
+            echo "upload $key"
+            npx -y wrangler@4 r2 object put "$ASSETS_BUCKET/$key" --file "work/assets/$key" --remote
+          done
+          # manifest last, so the weekly build never sees keys that are not uploaded yet
+          npx -y wrangler@4 r2 object put "$ASSETS_BUCKET/manifest.json" --file work/assets/manifest.json --content-type application/json --remote

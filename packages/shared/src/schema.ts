@@ -76,6 +76,11 @@ export interface City {
   stations: number[];
   /** IANA timezone. Index into NetworkFile.timezones. */
   tz: number;
+  /**
+   * Shard holding this city's CityFile: `<build>/shard/<shard>.json` is a
+   * CityShardFile. Undefined → stand-alone file `<build>/city/<id>.json`.
+   */
+  shard?: number;
 }
 
 export interface Station {
@@ -211,6 +216,12 @@ export interface CityFile {
    */
   transfers: [number, number, number][];
   minTransfer: number;
+}
+
+/** Several neighbouring cities' CityFiles in one file (see City.shard). */
+export interface CityShardFile {
+  /** Keyed by city id (as string). */
+  cities: Record<string, CityFile>;
 }
 
 export interface AttributionFile {

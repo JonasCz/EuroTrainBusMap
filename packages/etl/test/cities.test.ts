@@ -66,3 +66,13 @@ describe("city names", () => {
     expect(townFromStopName("Musterhausen (Kr. X)")).toBe("Musterhausen");
   });
 });
+
+import { parsePlaces, serializePlaces } from "../src/geonames.ts";
+describe("places asset", () => {
+  it("round-trips the compact places file", () => {
+    const p = [{ ...places[0]!, parent: undefined, altNames: ["Berlin", "Berlín"] }, { ...places[2]!, parent: undefined }];
+    const back = parsePlaces(serializePlaces(p));
+    expect(back[0]).toEqual({ id: 1, name: "Berlin", lat: 52.52437, lon: 13.41053, population: 3426354, fcode: "PPLC", admin: ["16", "00", "11000", "11000000"], country: "DE", tz: "Europe/Berlin", altNames: ["Berlin", "Berlín"] });
+    expect(back[1]!.altNames).toBeUndefined();
+  });
+});

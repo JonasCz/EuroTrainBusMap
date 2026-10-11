@@ -93,7 +93,7 @@ export class App {
     const net = this.net;
     if (!this.lastFilters || !sameFilters(this.lastFilters, s.filters)) {
       this.lastFilters = s.filters;
-      await this.map.setFilters(s.filters);
+      void this.map.setFilters(s.filters); // base network builds in a worker; UI does not wait
     }
     this.panel.setFilters(s.filters);
     const stale = () => tok !== this.token;
@@ -109,8 +109,10 @@ export class App {
     const originName = net.cities[origin]!.name;
     this.panel.show({ kind: "loading", title: originName });
     let cf: CityFile;
+    const tLoad = performance.now();
     try {
       cf = await loadCity(net.ds, origin);
+      if (import.meta.env.DEV) console.debug(`[perf] city file ${originName} ${Math.round(performance.now() - tLoad)} ms`);
     } catch (e) {
       if (!stale()) this.panel.show({ kind: "error", message: `Could not load timetable data for ${originName}. ${(e as Error).message}` });
       return;
@@ -119,12 +121,16 @@ export class App {
 
     // ---- one city: reachable destinations
     if (s.dest === undefined) {
+      const tReach = performance.now();
       const reach = computeReach(cf, net.ctx, s.filters);
+      if (import.meta.env.DEV) console.debug(`[perf] reach ${reach.dests.size} dests ${Math.round(performance.now() - tReach)} ms`);
       const focus = new Set([origin, ...reach.dests.keys()]);
       await this.map.setHighlight({ emphasis: { focus, active: true, origin }, corridors: reach.corridors });
       document.title = `${originName} – EuroTrainBusMap`;
       this.panel.show({ kind: "reach", city: origin, reach });
-      this.frame([...focus], `r${origin}`);
+      // frame the origin and its most important destinations (not every bus stop)
+      const top = [...reach.dests.keys()].sort((a, b) => net.cities[b]!.importance - net.cities[a]!.importance).slice(0, 25);
+      this.frame([origin, ...top], `r${origin}`);
       return;
     }
 

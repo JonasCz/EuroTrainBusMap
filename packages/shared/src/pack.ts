@@ -22,6 +22,8 @@ export interface PackedNetwork {
     tz: number[];
     /** Stations are ordered by city: city i owns the next nStations[i] station ids. */
     nStations: number[];
+    /** City.shard, −1 when undefined. */
+    shard?: number[];
   };
   stations: {
     /** A leading "~" stands for the city name ("~ Hbf" in Berlin → "Berlin Hbf"). */
@@ -129,6 +131,7 @@ export function packNetwork(n: Pick<NetworkFile, "cities" | "stations" | "corrid
     p.cities.cats.push(c.cats);
     p.cities.tz.push(c.tz);
     p.cities.nStations.push(c.stations.length);
+    (p.cities.shard ??= []).push(c.shard ?? -1);
     c.stations.forEach((s, k) => {
       if (s !== nextStation + k) throw new Error(`packNetwork: stations must be ordered by city (city ${c.id})`);
     });
@@ -183,6 +186,7 @@ export function unpackNetwork(p: PackedNetwork): { cities: City[]; stations: Sta
       cats: pc.cats[i]!,
       stations: ids,
       tz: pc.tz[i]!,
+      ...(pc.shard && pc.shard[i]! >= 0 ? { shard: pc.shard[i]! } : {}),
     });
   }
   const ps = p.stations;

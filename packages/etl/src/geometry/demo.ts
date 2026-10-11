@@ -4,16 +4,16 @@
  *
  *   node --experimental-strip-types src/geometry/demo.ts [workDir] [outDir]
  *
- * workDir defaults to ./work (rail extract cached in workDir/overture), outDir to workDir/geom-demo.
+ * workDir defaults to ./work (uses workDir/geometry/rail-graph-v<N>.bin or ETBM_RAIL_GRAPH; else extracts
+ * Overture into workDir/overture), outDir to workDir/geom-demo.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
-import { ensureRailExtract, loadRailGraph } from './overture.ts';
 import { graphBytes, Q, querySegments, type RailGraph } from './graph.ts';
-import { Router } from './route.ts';
-import { buildWithRouter, MAX_DETOUR, type GeometryRequest, type GeometryResult } from './index.ts';
+import type { Router } from './route.ts';
+import { buildWithRouter, loadRouter, MAX_DETOUR, type GeometryRequest, type GeometryResult } from './index.ts';
 import { dist, polylineLength, type LonLat } from './geo.ts';
 
 interface Pair { name: string; from: LonLat; to: LonLat; a: LonLat; b: LonLat; alt?: [LonLat, LonLat]; mode?: 'rail' | 'road'; expect?: LonLat[] }
@@ -43,12 +43,11 @@ async function main() {
   const log = (s: string) => console.log(s);
 
   const t0 = Date.now();
-  const parquet = await ensureRailExtract(workDir, log);
-  const tExtract = Date.now() - t0;
-  const g = await loadRailGraph(parquet, workDir, log);
-  const tGraph = Date.now() - t0 - tExtract;
-  const router = new Router(g);
-  log(`extract ${(tExtract / 1000).toFixed(1)} s, graph ${(tGraph / 1000).toFixed(1)} s, ${g.nodeCount} nodes, ${g.edgeCount} edges, ${(graphBytes(g) / 1e6).toFixed(0)} MB typed arrays, rss ${(process.memoryUsage().rss / 1e6).toFixed(0)} MB`);
+  // prebuilt graph (ETBM_RAIL_GRAPH or <workDir>/geometry/rail-graph-v<N>.bin), else extraction
+  const router = await loadRouter({ workDir, log });
+  if (!router) throw new Error('no rail graph');
+  const g = router.g;
+  log(`graph ready in ${((Date.now() - t0) / 1000).toFixed(1)} s, ${g.nodeCount} nodes, ${g.edgeCount} edges, ${(graphBytes(g) / 1e6).toFixed(0)} MB typed arrays, rss ${(process.memoryUsage().rss / 1e6).toFixed(0)} MB`);
 
   const reqs: GeometryRequest[] = PAIRS.map((p, id) => ({
     id, mode: p.mode ?? 'rail', a: p.a, b: p.b,

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { join } from "node:path";
 import { downloadCached, mapLimit } from "./download.ts";
 import type { Place } from "./core/cities.ts";
@@ -22,7 +23,73 @@ function unzipText(zip: string, entry: string): string {
   return execFileSync("unzip", ["-p", zip, entry], { maxBuffer: 1 << 30 }).toString("utf8");
 }
 
-export async function loadPlaces(cacheDir: string, ua: string): Promise<Place[]> {
+/** R2 asset key of the compact places file. */
+export const PLACES_ASSET = "geonames/places-europe.tsv.gz";
+
+/**
+ * Compact pruned places file (Europe only, used columns only):
+ * id, name, lat, lon, country, population, tz, fcode, admin1..4, altNames ("|"-joined).
+ */
+export function serializePlaces(places: Place[]): Buffer {
+  const clean = (x: string) => x.replace(/[\t\n|]/g, " ");
+  const lines = places.map((p) =>
+    [p.id, clean(p.name), p.lat, p.lon, p.country, p.population, p.tz, p.fcode, ...p.admin, (p.altNames ?? []).map(clean).join("|")].join("\t"),
+  );
+  return gzipSync(lines.join("\n") + "\n", { level: 9 });
+}
+
+export function parsePlaces(buf: Buffer): Place[] {
+  const out: Place[] = [];
+  for (const line of gunzipSync(buf).toString("utf8").split("\n")) {
+    if (!line) continue;
+    const c = line.split("\t");
+    const p: Place = {
+      id: Number(c[0]),
+      name: c[1]!,
+      lat: Number(c[2]),
+      lon: Number(c[3]),
+      country: c[4]!,
+      population: Number(c[5]),
+      tz: c[6]!,
+      fcode: c[7]!,
+      admin: [c[8] ?? "", c[9] ?? "", c[10] ?? "", c[11] ?? ""],
+    };
+    if (c[12]) p.altNames = c[12].split("|");
+    out.push(p);
+  }
+  return out;
+}
+
+/**
+ * European places with local names. Uses the pre-built asset `<assetsDir>/geonames/places-europe.tsv.gz`
+ * when present (downloaded from R2 in CI); otherwise builds it from download.geonames.org and
+ * writes it there (so it can be uploaded as the asset).
+ */
+export async function loadPlaces(cacheDir: string, ua: string, assetsDir?: string): Promise<Place[]> {
+  if (assetsDir) {
+    const f = join(assetsDir, PLACES_ASSET);
+    if (existsSync(f)) {
+      try {
+        const places = parsePlaces(await readFile(f));
+        if (places.length > 10_000) {
+          log(`geonames: ${places.length} places from asset ${f}`);
+          return places;
+        }
+        warn(`geonames asset ${f} looks truncated (${places.length} places), rebuilding from source`);
+      } catch (e) {
+        warn(`geonames asset ${f} unreadable: ${(e as Error).message}`);
+      }
+    }
+  }
+  const places = await loadPlacesFromSource(cacheDir, ua);
+  if (assetsDir) {
+    await mkdir(join(assetsDir, "geonames"), { recursive: true });
+    await writeFile(join(assetsDir, PLACES_ASSET), serializePlaces(places));
+  }
+  return places;
+}
+
+async function loadPlacesFromSource(cacheDir: string, ua: string): Promise<Place[]> {
   const dir = join(cacheDir, "geonames");
   await mkdir(dir, { recursive: true });
   const get = (f: string, sub = "") => downloadCached(BASE + sub + f, join(dir, sub.replace(/\//g, "_") + f), ua, { maxAgeH: 24 * 6 });

@@ -44,3 +44,19 @@ cd packages/etl
 npx vitest run src/geometry
 node --experimental-strip-types src/geometry/demo.ts <workDir> <outDir>
 ```
+
+## Prebuilt rail graph (R2)
+
+Extraction is slow, so the routing graph is built rarely, by the refresh-assets workflow (monthly or manual), with
+`buildRailAsset(workDir, outFile, log)` from `refresh-rail.ts` (CLI: `pnpm rail:refresh [workDir] [outFile]`).
+It runs extract → graph (20 m geometry) → drop fragments < 3 km of track → `railbin.ts` binary.
+
+- R2: bucket `eurotrainbusmap-assets`, key `rail/rail-graph-v1.bin` (`RAIL_GRAPH_KEY`).
+- Local default: `<workDir>/geometry/rail-graph-v1.bin` (`railGraphPath(workDir)`), or env `ETBM_RAIL_GRAPH`.
+- `buildGeometries(reqs, { workDir, log, railGraph?, noExtract? })` loads it. If it is missing, the module
+  extracts Overture (slow), or with `noExtract: true` uses unsnapped curves, and logs a WARNING either way.
+- File: `ETBM` magic + JSON header (format, Overture release, bbox, created, counts, sections), then a
+  zstd (or gzip) payload. The payload holds int32/float32 sections: edgeU, edgeV, edgeLen, edgeCost, geoCount, and geoDX/geoDY
+  (1e-6° deltas). Node coordinates come from edge end vertices. Size is about 19 MB (0.92 M nodes, 1.15 M edges).
+  Loading takes about 1.2 s and uses about 110 MB of arrays (process RSS about 0.3 GB).
+- Skill: `.claude/skills/refresh-rail-data/SKILL.md`.
