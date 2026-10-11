@@ -1,0 +1,23 @@
+{
+  "name": "@etbm/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p . && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p .",
+    "test": "vitest run",
+    "fixture": "node --experimental-strip-types scripts/make-fixture.ts",
+    "basemap": "node --experimental-strip-types scripts/basemap.ts",
+    "glyphs": "node --experimental-strip-types scripts/fetch-glyphs.ts"
+  },
+  "dependencies": {
+    "@etbm/shared": "workspace:*",
+    "maplibre-gl": "^5.24.0"
+  },
+  "devDependencies": {
+    "vite": "^7.3.7"
+  }
+}
