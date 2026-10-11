@@ -65,6 +65,13 @@ export function runSanity(inp: SanityInput): SanityResult {
     if (!n.cities[c.a] || !n.cities[c.b]) errors.push(`corridor ${i} bad city`);
     if (c.coords.length < 2) errors.push(`corridor ${i} has < 2 coords`);
   });
+  if (n.segments) {
+    n.corridors.forEach((c, i) => {
+      for (const code of c.segs ?? []) if (!n.segments![code >= 0 ? code : -code - 1]) errors.push(`corridor ${i} bad segment ${code}`);
+      if (c.segs && !c.segs.length) errors.push(`corridor ${i} has no segments`);
+    });
+    checks.segments = n.segments.length;
+  }
   const sampleIds = [...new Set([0, 1, 2, 3, 4, 5, Math.floor(n.cities.length / 2), n.cities.length - 1].filter((x) => x >= 0 && x < n.cities.length))];
   for (const id of sampleIds) {
     const cf = inp.readCity(id);

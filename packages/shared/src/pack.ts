@@ -3,10 +3,11 @@
  * writes `packed` and leaves `cities`/`stations`/`corridors` empty; clients
  * call `unpackNetwork(file)` once after loading to get the usual objects.
  */
-import type { CatBit, City, Corridor, NetworkFile, Station } from "./schema.ts";
+import type { CatBit, City, Corridor, NetworkFile, Segment, Station } from "./schema.ts";
 
 export interface PackedNetwork {
-  v: 1;
+  /** 1: corridors carry their own polylines; 2: geometry lives in `segments`. */
+  v: 1 | 2;
   /** Country codes referenced by cities.country. */
   countries: string[];
   cities: {
@@ -49,17 +50,34 @@ export interface PackedNetwork {
     /** Index of the station within city a's / b's station list, or −1. */
     sa: number[];
     sb: number[];
-    /** Google encoded polyline (precision 5) from a to b. */
+    /** Google encoded polyline (precision 5) from a to b; v2: only for corridors without segments (segN 0), in order. */
     poly: string[];
+    /**
+     * v2: number of segments per corridor, and their codes concatenated: code = 2·id (+1 when
+     * reversed), stored zigzag delta-encoded against the previous code (across corridors).
+     */
+    segN?: number[];
+    segs?: number[];
   };
+  /**
+   * v2: line-graph segment geometry. Chained polylines: each starts relative to the previous
+   * segment's last point. Segment cats/tpd/dtCats/snapped are not stored: they are the
+   * aggregate of the corridors listing the segment (computed by unpackNetwork).
+   */
+  segments?: { poly: string[] };
 }
 
 const CATS: CatBit[] = [1, 2, 4, 8];
 
 // ---------------------------------------------------------------- polyline
-export function encodePolyline(coords: [number, number][]): string {
+/**
+ * Google polyline (precision 5). `ref` (optional, mutated) carries the previous
+ * point across calls, so consecutive polylines can be chained (first point
+ * stored relative to the previous polyline's last point).
+ */
+export function encodePolyline(coords: [number, number][], ref?: { lat: number; lon: number }): string {
   let out = "";
-  let plat = 0, plon = 0;
+  let plat = ref?.lat ?? 0, plon = ref?.lon ?? 0;
   const enc = (v: number) => {
     let x = v < 0 ? ~(v << 1) : v << 1;
     while (x >= 0x20) {
@@ -75,12 +93,16 @@ export function encodePolyline(coords: [number, number][]): string {
     plat = ilat;
     plon = ilon;
   }
+  if (ref) {
+    ref.lat = plat;
+    ref.lon = plon;
+  }
   return out;
 }
 
-export function decodePolyline(s: string): [number, number][] {
+export function decodePolyline(s: string, ref?: { lat: number; lon: number }): [number, number][] {
   const out: [number, number][] = [];
-  let i = 0, lat = 0, lon = 0;
+  let i = 0, lat = ref ? Math.round(ref.lat) : 0, lon = ref ? Math.round(ref.lon) : 0;
   const dec = () => {
     let shift = 0, res = 0, b: number;
     do {
@@ -95,13 +117,17 @@ export function decodePolyline(s: string): [number, number][] {
     lon += dec();
     out.push([lon / 1e5, lat / 1e5]);
   }
+  if (ref) {
+    ref.lat = lat;
+    ref.lon = lon;
+  }
   return out;
 }
 
 // ---------------------------------------------------------------- pack / unpack
 const i5 = (x: number) => Math.round(x * 1e5);
 
-export function packNetwork(n: Pick<NetworkFile, "cities" | "stations" | "corridors">): PackedNetwork {
+export function packNetwork(n: Pick<NetworkFile, "cities" | "stations" | "corridors" | "segments">): PackedNetwork {
   const countries: string[] = [];
   const cIdx = new Map<string, number>();
   const p: PackedNetwork = {
@@ -148,7 +174,7 @@ export function packNetwork(n: Pick<NetworkFile, "cities" | "stations" | "corrid
     p.stations.cats.push(s.cats);
     (p.stations.tpd ??= []).push(Math.round((s.tpd ?? 0) * 10));
   }
-  let pa = 0;
+  let pa = 0, prevCode = 0;
   const first = (city: number) => n.cities[city]!.stations[0] ?? 0;
   for (const co of n.corridors) {
     p.corridors.a.push(co.a - pa);
@@ -160,12 +186,50 @@ export function packNetwork(n: Pick<NetworkFile, "cities" | "stations" | "corrid
     p.corridors.snapped.push(co.snapped ? 1 : 0);
     p.corridors.sa.push(co.sa != null ? co.sa - first(co.a) : -1);
     p.corridors.sb.push(co.sb != null ? co.sb - first(co.b) : -1);
-    p.corridors.poly.push(encodePolyline(co.coords));
+    if (n.segments && co.segs) {
+      (p.corridors.segN ??= []).push(co.segs.length);
+      for (const c of co.segs) {
+        const code = c >= 0 ? 2 * c : 2 * (-c - 1) + 1;
+        const d = code - prevCode;
+        (p.corridors.segs ??= []).push(d >= 0 ? 2 * d : -2 * d - 1);
+        prevCode = code;
+      }
+    } else {
+      p.corridors.poly.push(encodePolyline(co.coords));
+      if (n.segments) (p.corridors.segN ??= []).push(0);
+    }
+  }
+  if (n.segments) {
+    p.v = 2;
+    const ps: NonNullable<PackedNetwork["segments"]> = { poly: [] };
+    const ref = { lat: 0, lon: 0 };
+    n.segments.forEach((sg, i) => {
+      if (sg.id !== i) throw new Error("packNetwork: segment ids must be dense");
+      ps.poly.push(encodePolyline(sg.coords, ref));
+    });
+    p.segments = ps;
   }
   return p;
 }
 
-export function unpackNetwork(p: PackedNetwork): { cities: City[]; stations: Station[]; corridors: Corridor[] } {
+/** Concatenate segment polylines along a signed segment list (−(id+1) = reversed). */
+export function segmentPath(segs: number[], segments: { coords: [number, number][] }[]): [number, number][] {
+  const out: [number, number][] = [];
+  for (const code of segs) {
+    const s = segments[code >= 0 ? code : -code - 1];
+    if (!s) continue;
+    const co = s.coords;
+    const n = co.length;
+    for (let i = 0; i < n; i++) {
+      const pt = co[code >= 0 ? i : n - 1 - i]!;
+      const q = out[out.length - 1];
+      if (!q || q[0] !== pt[0] || q[1] !== pt[1]) out.push(pt);
+    }
+  }
+  return out;
+}
+
+export function unpackNetwork(p: PackedNetwork): { cities: City[]; stations: Station[]; corridors: Corridor[]; segments?: Segment[] } {
   const cities: City[] = [];
   const stations: Station[] = [];
   let lon = 0, lat = 0, sid = 0;
@@ -206,8 +270,14 @@ export function unpackNetwork(p: PackedNetwork): { cities: City[]; stations: Sta
       ...(ps.tpd && ps.tpd[s] ? { tpd: ps.tpd[s]! / 10 } : {}),
     });
   }
+  let segments: Segment[] | undefined;
+  if (p.segments) {
+    const ref = { lat: 0, lon: 0 };
+    segments = p.segments.poly.map((poly, i) => ({ id: i, coords: decodePolyline(poly, ref), cats: 0, tpd: {}, snapped: false }));
+  }
   const pk = p.corridors;
   const corridors: Corridor[] = [];
+  let segPos = 0, prevCode = 0, polyPos = 0;
   let a = 0;
   for (let i = 0; i < pk.a.length; i++) {
     a += pk.a[i]!;
@@ -217,11 +287,21 @@ export function unpackNetwork(p: PackedNetwork): { cities: City[]; stations: Sta
       const v = pk.tpd[k]![i]!;
       if (v) tpd[cat] = v / 10;
     });
+    let segs: number[] | undefined;
+    const ns = pk.segN?.[i] ?? 0;
+    if (segments && ns > 0) {
+      segs = [];
+      for (let k = 0; k < ns; k++) {
+        const z = pk.segs![segPos++]!;
+        prevCode += z & 1 ? -(z + 1) / 2 : z / 2;
+        segs.push(prevCode & 1 ? -((prevCode - 1) / 2) - 1 : prevCode / 2);
+      }
+    }
     const co: Corridor = {
       id: i,
       a,
       b,
-      coords: decodePolyline(pk.poly[i]!),
+      coords: segs ? segmentPath(segs, segments!) : decodePolyline(pk.poly[pk.segN ? polyPos++ : i]!),
       cats: pk.cats[i]!,
       tpd,
       snapped: pk.snapped[i] === 1,
@@ -229,9 +309,11 @@ export function unpackNetwork(p: PackedNetwork): { cities: City[]; stations: Sta
     if (pk.dtCats[i]) co.dtCats = pk.dtCats[i];
     if (pk.sa[i]! >= 0) co.sa = cities[a]!.stations[0]! + pk.sa[i]!;
     if (pk.sb[i]! >= 0) co.sb = cities[b]!.stations[0]! + pk.sb[i]!;
+    if (segs) co.segs = segs;
     corridors.push(co);
   }
-  return { cities, stations, corridors };
+  if (segments) aggregateSegments(corridors, segments);
+  return segments ? { cities, stations, corridors, segments } : { cities, stations, corridors };
 }
 
 /** Fill cities/stations/corridors of a loaded NetworkFile from `packed` (no-op if not packed). */
@@ -241,6 +323,39 @@ export function expandNetwork(n: NetworkFile): NetworkFile {
   n.cities = u.cities;
   n.stations = u.stations;
   n.corridors = u.corridors;
+  if (u.segments) n.segments = u.segments;
   delete n.packed;
   return n;
+}
+
+/**
+ * Segment attributes from the corridors using them: union of cats / dtCats, any snapped,
+ * sum of trips per day per category (rounded to 0.1).
+ */
+export function aggregateSegments(corridors: Corridor[], segments: Segment[]): void {
+  for (const s of segments) {
+    s.cats = 0;
+    s.tpd = {};
+    s.snapped = false;
+    delete s.dtCats;
+  }
+  for (const c of corridors) {
+    if (!c.segs) continue;
+    const seen = new Set<number>();
+    for (const code of c.segs) {
+      const id = code >= 0 ? code : -code - 1;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const s = segments[id];
+      if (!s) continue;
+      s.cats |= c.cats;
+      if (c.dtCats) s.dtCats = (s.dtCats ?? 0) | c.dtCats;
+      if (c.snapped) s.snapped = true;
+      for (const cat of CATS) {
+        const v = c.tpd[cat];
+        if (v) s.tpd[cat] = (s.tpd[cat] ?? 0) + v;
+      }
+    }
+  }
+  for (const s of segments) for (const cat of CATS) if (s.tpd[cat] !== undefined) s.tpd[cat] = Math.round(s.tpd[cat]! * 10) / 10;
 }

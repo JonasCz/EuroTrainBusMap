@@ -3,7 +3,7 @@
  * property) into one layer per level with the matching minzoom.
  */
 import { Cat } from "@etbm/shared";
-import type { ExpressionSpecification, LayerSpecification } from "maplibre-gl";
+import type { ExpressionSpecification, FilterSpecification, LayerSpecification } from "maplibre-gl";
 import type * as GeoJSON from "geojson";
 import { LEVELS, STATION_LEVELS, STATION_ZOOM } from "./lod.ts";
 import { FONT_MEDIUM, FONT_REGULAR } from "./style.ts";
@@ -124,7 +124,6 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
     type: "line",
     source: "hops",
     minzoom: 6.5,
-    maxzoom: STATION_ZOOM,
     layout: { "line-cap": "round" },
     paint: {
       "line-color": dim ? t.dimLine : catColor(t),
@@ -150,7 +149,32 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
       },
     });
   }
-  // ---- station-level network (viewport only)
+  // ---- station zoom: interior segments from the base network; segments touching a city point
+  // ("term") are replaced by end pieces drawn to the actual stations (st-* sources)
+  const notTerm: FilterSpecification = ["!=", ["get", "term"], 1];
+  layers.push({
+    id: "corr-st-cas",
+    type: "line",
+    source: "casing",
+    minzoom: STATION_ZOOM,
+    filter: notTerm,
+    layout: lineLayout,
+    paint: { "line-color": t.land, "line-width": scaledByLevel("t", { add: 2 }) },
+  });
+  layers.push({
+    id: "corr-st",
+    type: "line",
+    source: "corridors",
+    minzoom: STATION_ZOOM,
+    filter: notTerm,
+    layout: { ...lineLayout, "line-sort-key": ["get", "k"] },
+    paint: {
+      "line-color": dim ? t.dimLine : catColor(t),
+      "line-width": scaledByLevel("w", dim ? { mul: E(0.6) } : {}),
+      "line-offset": scaledByLevel("o", dim ? { mul: E(0.6) } : {}),
+      "line-opacity": dim ? 1 : ["case", ["==", ["get", "cat"], Cat.Bus], 0.65, ["==", ["get", "u"], 1], 0.8, 1],
+    },
+  });
   layers.push({
     id: "st-casing",
     type: "line",

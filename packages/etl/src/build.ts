@@ -12,7 +12,10 @@ import {
   type Corridor,
   type Manifest,
   type NetworkFile,
+  type Segment,
   packNetwork,
+  segmentPath,
+  aggregateSegments,
   type Pattern,
   type Route,
   type Station,
@@ -32,6 +35,7 @@ import { resolveDuplicates, type DupPair, type DupTrip } from "./core/dedup.ts";
 import { PatternStore, localizeStart, processTripStops, type RawStop } from "./core/patterns.ts";
 import { displayName } from "./core/classify.ts";
 import { sliceShape } from "./core/shapes.ts";
+import { buildSegments } from "./core/segments.ts";
 import { GridIndex, fastDist, greatCircle, haversine, round5, simplifyLine, type LonLat } from "./util/geo.ts";
 import { log, warn, type StageTimer } from "./util/log.ts";
 import { runSanity } from "./sanity.ts";
@@ -692,6 +696,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   // corridors
   const corrNew = new Int32Array(corrs.length).fill(-1);
   const outCorr: Corridor[] = [];
+  const corrTol = new Map<Corridor, number>();
   let snappedN = 0;
   corrs.forEach((c, id) => {
     if (!c.cats) return;
@@ -702,7 +707,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const raw = g?.coords ?? greatCircle([A.lon, A.lat], [B.lon, B.lat]);
     // road-routed coach/bus lines follow roads: finer tolerance than for unsnapped curves
     const tol = c.cats & RAIL ? 150 : g?.snapped ? (c.cats & Cat.Coach ? ROAD_TOL_COACH : ROAD_TOL_BUS) : c.cats & Cat.Coach ? 400 : 800;
-    const coords = simplifyLine(raw, tol).map(([x, y]) => [round5(x), round5(y)] as [number, number]);
+    // full-resolution geometry; simplified per line-graph segment below
+    const coords = raw.map(([x, y]) => [round5(x), round5(y)] as [number, number]);
     // orient from new a to new b
     const flip = a > b;
     if (flip) coords.reverse();
@@ -720,6 +726,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     if (ea !== undefined) cor.sa = ea;
     if (eb !== undefined) cor.sb = eb;
     if (cor.snapped) snappedN++;
+    corrTol.set(cor, tol);
     corrNew[id] = outCorr.length;
     outCorr.push(cor);
   });
@@ -728,11 +735,51 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const order = outCorr.map((_, i) => i).sort((x, y) => outCorr[x]!.a - outCorr[y]!.a || outCorr[x]!.b - outCorr[y]!.b);
     const newIdOfOld = new Int32Array(outCorr.length);
     order.forEach((old, i) => (newIdOfOld[old] = i));
-    const sorted = order.map((old, i) => ({ ...outCorr[old]!, id: i }));
+    const sorted = order.map((old, i) => {
+      const c = outCorr[old]!;
+      c.id = i;
+      return c;
+    });
     outCorr.length = 0;
     for (const c of sorted) outCorr.push(c);
     for (let k = 0; k < corrNew.length; k++) if (corrNew[k]! >= 0) corrNew[k] = newIdOfOld[corrNew[k]!]!;
   }
+  // Line graph: shared track/road geometry is stored and drawn once (NetworkFile.segments).
+  timer.start("segments");
+  const segRes = buildSegments(
+    outCorr.map((c) => ({
+      coords: c.coords,
+      cats: c.cats,
+      dtCats: c.dtCats ?? 0,
+      tpd: c.tpd as Record<number, number>,
+      snapped: c.snapped,
+      tol: corrTol.get(c) ?? 150,
+      rail: (c.cats & RAIL) !== 0,
+    })),
+  );
+  const outSegs: Segment[] = segRes.segments.map((sg, i) => {
+    const tpd: Partial<Record<CatBit, number>> = {};
+    for (const k of CAT_BITS) if (sg.tpd[k]) tpd[k] = Math.round(sg.tpd[k]! * 10) / 10;
+    const o: Segment = { id: i, coords: sg.coords.map(([x, y]) => [round5(x), round5(y)] as [number, number]), cats: sg.cats, tpd, snapped: sg.snapped };
+    if (sg.dtCats) o.dtCats = sg.dtCats;
+    return o;
+  });
+  let noSeg = 0;
+  outCorr.forEach((c, i) => {
+    const l = segRes.corrSegs[i]!;
+    if (!l.length) {
+      // tiny corridor absorbed entirely into a junction: keeps its own polyline
+      noSeg++;
+      c.coords = simplifyLine(c.coords, corrTol.get(c) ?? 150).map(([x, y]) => [round5(x), round5(y)] as [number, number]);
+      return;
+    }
+    c.segs = l;
+    c.coords = segmentPath(l, outSegs);
+  });
+  if (noSeg) log(`${noSeg} corridors without segments (own polyline)`);
+  aggregateSegments(outCorr, outSegs);
+  log(`${outSegs.length} line-graph segments for ${outCorr.length} corridors`);
+  timer.start("output");
 
   const build = args.build ?? `${args.startDate.replace(/-/g, "")}-${new Date().toISOString().slice(11, 16).replace(":", "")}`;
   const outRoot = args.out;
@@ -744,7 +791,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       if (e !== build && e !== "manifest.json" && /^\d{8}-\d{4}/.test(e)) await rm(join(outRoot, e), { recursive: true, force: true });
     }
 
-  const network: NetworkFile = { schema: SCHEMA_VERSION, build, timezones, cities: outCities, stations: outStations, corridors: outCorr };
+  const network: NetworkFile = { schema: SCHEMA_VERSION, build, timezones, cities: outCities, stations: outStations, corridors: outCorr, segments: outSegs };
   const calendars: CalendarsFile = { startDate: args.startDate, days: D, masks: masks.masks };
 
   // city files
@@ -917,6 +964,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     cities: outCities.length,
     stations: outStations.length,
     corridors: outCorr.length,
+    segments: outSegs.length,
     corridorsSnapped: snappedN,
     patterns: patterns.length,
     trips: tripP.length,

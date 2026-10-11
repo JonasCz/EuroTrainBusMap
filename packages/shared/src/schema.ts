@@ -117,6 +117,28 @@ export interface Corridor {
   /** Most-used station at the `a` / `b` end (for drawing to the real station at high zoom). */
   sa?: number;
   sb?: number;
+  /**
+   * Line-graph segments covered by this corridor, in travel order from a to b
+   * (see NetworkFile.segments). A reversed traversal is encoded as −(id+1).
+   * When present, `coords` is the concatenation of these segments.
+   */
+  segs?: number[];
+}
+
+/**
+ * A drawable piece of track/road shared by one or more corridors (line graph):
+ * each piece of geometry exists once, with the traffic of all corridors on it.
+ * Segments are oriented so that straight continuations keep their direction.
+ */
+export interface Segment {
+  id: number;
+  coords: [number, number][];
+  /** Union of Cat bits of the corridors using the segment (cats, tpd, dtCats, snapped are aggregates). */
+  cats: number;
+  /** Sum of trips per day (both directions) of all corridors using it, per Cat bit. */
+  tpd: Partial<Record<CatBit, number>>;
+  dtCats?: number;
+  snapped: boolean;
 }
 
 export interface NetworkFile {
@@ -126,6 +148,8 @@ export interface NetworkFile {
   cities: City[];
   stations: Station[];
   corridors: Corridor[];
+  /** Line-graph segments (see Segment, Corridor.segs); filled by expandNetwork. */
+  segments?: Segment[];
   /**
    * Optional continuation files (paths relative to the build directory, e.g.
    * "network-1.json"), each a NetworkPart. Used when the network would exceed

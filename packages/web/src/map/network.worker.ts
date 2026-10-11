@@ -6,7 +6,7 @@
 import type { CorridorExt } from "../data/net.ts";
 import { fetchNetwork } from "../data/load.ts";
 import type { Filters } from "../logic/filters.ts";
-import { baseCityData, baseCorridorData, buildNetIndex, type MapNet, type NetIndex } from "./features.ts";
+import { baseCityData, baseCorridorData, buildNetIndex, netSegments, type MapNet, type NetIndex } from "./features.ts";
 
 export interface BaseRequest {
   id: number;
@@ -30,7 +30,7 @@ let ready: Promise<{ net: MapNet; idx: NetIndex }> | null = null;
 function init(dataUrl: string) {
   ready ??= fetchNetwork((p) => dataUrl + p).then((file) => {
     const corridors = file.corridors as CorridorExt[];
-    const net: MapNet = { cities: file.cities, corridors, hasDtCats: corridors.some((c) => c.dtCats !== undefined), file };
+    const net: MapNet = { cities: file.cities, corridors, segments: netSegments(file), hasDtCats: corridors.some((c) => c.dtCats !== undefined), file };
     return { net, idx: buildNetIndex(net) };
   });
   return ready;

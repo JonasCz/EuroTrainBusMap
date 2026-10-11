@@ -36,3 +36,29 @@ describe("packNetwork", () => {
     expect(back.packed).toBeUndefined();
   });
 });
+
+describe("packNetwork v2 (segments)", () => {
+  it("round-trips segments and rebuilds corridor geometry from them", () => {
+    const cities = [
+      { id: 0, name: "A", country: "DE", lon: 10, lat: 50, population: 1, importance: 1, cats: 1, stations: [0], tz: 0 },
+      { id: 1, name: "B", country: "DE", lon: 10.1, lat: 50, population: 1, importance: 1, cats: 1, stations: [1], tz: 0 },
+      { id: 2, name: "C", country: "DE", lon: 10.2, lat: 50.1, population: 1, importance: 1, cats: 1, stations: [2], tz: 0 },
+    ];
+    const stations = cities.map((c) => ({ id: c.id, city: c.id, name: c.name, lon: c.lon, lat: c.lat, cats: 1 }));
+    const segments = [
+      { id: 0, coords: [[10, 50], [10.05, 50.01], [10.1, 50]] as [number, number][], cats: 3, tpd: { 1: 3, 2: 10 }, snapped: true, dtCats: 1 },
+      { id: 1, coords: [[10.2, 50.1], [10.1, 50]] as [number, number][], cats: 1, tpd: { 1: 3 }, snapped: true, dtCats: 1 },
+    ];
+    const corridors = [
+      { id: 0, a: 0, b: 1, coords: segments[0]!.coords, cats: 3, tpd: { 2: 10 }, snapped: true, segs: [0] },
+      { id: 1, a: 0, b: 2, coords: [[10, 50], [10.05, 50.01], [10.1, 50], [10.2, 50.1]] as [number, number][], cats: 1, tpd: { 1: 3 }, snapped: true, dtCats: 1, segs: [0, -2] },
+      { id: 2, a: 1, b: 2, coords: [[10.1, 50], [10.2, 50.1]] as [number, number][], cats: 1, tpd: { 1: 1 }, snapped: false },
+    ];
+    const net: NetworkFile = { schema: 1, build: "x", timezones: ["UTC"], cities, stations, corridors, segments };
+    const packed = packNetwork(net);
+    expect(packed.v).toBe(2);
+    const back = expandNetwork(JSON.parse(JSON.stringify({ ...net, cities: [], stations: [], corridors: [], segments: undefined, packed })) as NetworkFile);
+    expect(back.segments).toEqual(segments);
+    expect(back.corridors).toEqual(corridors);
+  });
+});

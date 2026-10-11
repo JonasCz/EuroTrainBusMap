@@ -43,7 +43,12 @@ Pipeline in short:
 7. **Corridors** – undirected edges between consecutive cities, with trips/day per category and
    geometry routed on the rail graph (trains) or the major-road graph (coaches/buses; ferries and
    islands stay curves), simplified to city-level detail.
-8. **Output** (`data/<build>/`): `network.json` (packed, ~9 MB raw / ~3.5 MB compressed),
+8. **Line graph** (`src/core/segments.ts`) – corridor geometries are conflated onto shared
+   reference lines (resampled every 100 m, matched within 80 m with a similar direction, rail with
+   rail, road with road) and cut where the set of corridors using them changes. Each piece of
+   track/road is stored and drawn once (`NetworkFile.segments`, `Corridor.segs`) with the summed
+   traffic of all corridors on it, so an express A–C no longer draws a second line beside A–B–C.
+9. **Output** (`data/<build>/`): `network.json` (packed, ~10.6 MB raw / ~4.5 MB gzip),
    `calendars.json`, `attribution.json`, `basemap/*.json` and `shard/<n>.json` – the per-city
    timetables, grouped into ~600 shards of spatially neighbouring cities (`City.shard`).
    `data/manifest.json` points to the current build.

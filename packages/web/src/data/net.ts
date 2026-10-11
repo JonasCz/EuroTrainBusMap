@@ -1,5 +1,6 @@
 /** In-memory indexes over the network file. */
-import type { City, Corridor, NetworkFile } from "@etbm/shared";
+import type { City, Corridor, NetworkFile, Segment } from "@etbm/shared";
+import { netSegments } from "../map/features.ts";
 import { buildCalIndex, type CalIndex } from "../logic/calendar.ts";
 import { buildNetCtx, type NetCtx } from "../logic/context.ts";
 import type { DataSet } from "./load.ts";
@@ -17,6 +18,8 @@ export interface Net {
   ctx: NetCtx;
   cities: City[];
   corridors: CorridorExt[];
+  /** Line-graph segments (drawing). */
+  segments: Segment[];
   slug: string[];
   bySlug: Map<string, number>;
   /** Whether the data has `dtCats` on corridors; otherwise a DE-only heuristic is used. */
@@ -62,6 +65,7 @@ export function buildNet(ds: DataSet): Net {
     ctx: buildNetCtx(file, cal),
     cities: file.cities,
     corridors,
+    segments: netSegments(file as { corridors: CorridorExt[]; segments?: Segment[] }),
     slug,
     bySlug,
     hasDtCats: corridors.some((c) => c.dtCats !== undefined),
