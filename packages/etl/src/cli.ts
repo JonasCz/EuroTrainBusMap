@@ -57,7 +57,9 @@ function parseArgs(argv: string[]): CliArgs {
     feeds: get("--feeds")?.split(",").map((s) => s.trim()).filter(Boolean),
     tiers,
     days: Number(get("--days") ?? 60),
-    startDate: get("--start") ?? todayIn("Europe/Berlin"),
+    // Start one day before "today in Berlin" so viewers west of Berlin (still on the
+    // previous date) and trains running past midnight stay inside the timetable.
+    startDate: get("--start") ?? todayIn("Europe/Berlin", new Date(Date.now() - 86_400_000)),
     reuseDb: has("--reuse-db"),
     geometry: !has("--no-geometry"),
     basemap: !has("--no-basemap"),

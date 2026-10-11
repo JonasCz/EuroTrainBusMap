@@ -39,7 +39,7 @@ Pipeline in short:
 4. **Stations** – stops merged by parent station, proximity + name similarity and across feeds.
 5. **Dedup** – the same train/coach present in several feeds (DE+AT+CH+CZ…) is detected by matching
    (city, time) sequences and kept once, with merged calendars.
-6. **Patterns & trips** – station sequences with offsets, deduplicated; calendars as 60-day bitmasks.
+6. **Patterns & trips** – station sequences with offsets, deduplicated; calendars as 60-day bitmasks starting the day before the build (Berlin date), so viewers in earlier timezones stay covered.
 7. **Corridors** – undirected edges between consecutive cities, with trips/day per category and
    geometry routed on the rail graph (trains) or the major-road graph (coaches/buses; ferries and
    islands stay curves), simplified to city-level detail. A city's point is its main station
