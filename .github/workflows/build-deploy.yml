@@ -71,8 +71,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: work/out
-          key: data-out-${{ github.run_id }}
-          restore-keys: data-out-
+          key: data-out-${{ hashFiles('packages/etl/src/**', 'packages/etl/feeds.json', 'packages/shared/src/**') }}-${{ github.run_id }}
+          # Only reuse data built by the same ETL/schema code; otherwise the push build rebuilds.
+          restore-keys: data-out-${{ hashFiles('packages/etl/src/**', 'packages/etl/feeds.json', 'packages/shared/src/**') }}-
 
       - name: Check restored data
         id: have
@@ -145,7 +146,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: work/out
-          key: data-out-${{ github.run_id }}
+          key: data-out-${{ hashFiles('packages/etl/src/**', 'packages/etl/feeds.json', 'packages/shared/src/**') }}-${{ github.run_id }}
 
       - name: Build web
         run: pnpm --filter @etbm/web build
