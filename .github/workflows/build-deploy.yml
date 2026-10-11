@@ -48,7 +48,7 @@ jobs:
 
       # Data built by different ETL/schema code is never reused (hashFiles is not allowed in workflow-level env).
       - name: Data cache key
-        run: echo "DATA_KEY=data-out-${{ hashFiles('packages/etl/src/**', 'packages/etl/feeds.json', 'packages/shared/src/**') }}" >> "$GITHUB_ENV"
+        run: echo "DATA_KEY=data-out-${{ hashFiles('packages/etl/src/**', 'packages/etl/data/**', 'packages/etl/feeds.json', 'packages/shared/src/**') }}" >> "$GITHUB_ENV"
 
       # GitHub disables scheduled workflows in public repos after 60 days without activity.
       - name: Keep the schedule alive
