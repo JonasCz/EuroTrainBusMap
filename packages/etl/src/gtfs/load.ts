@@ -8,6 +8,7 @@ import type { FeedsConfig, ResolvedFeed } from "../feeds.ts";
 import { classifyRoute, type ClassifyContext } from "../core/classify.ts";
 import { sqlGtfsTime, isUtcLike, validTz } from "../core/time.ts";
 import { log, warn } from "../util/log.ts";
+import { BBOX } from "../geonames.ts";
 
 export interface LoadContext {
   db: Db;
@@ -314,14 +315,14 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
                 AND rowid NOT IN (SELECT min(rowid) FROM t_stops_all GROUP BY stop_id)`);
   // Drop stop_times at stops without valid coordinates.
   await db.run(`DELETE FROM t_st WHERE stop_id NOT IN (
-      SELECT stop_id FROM t_stops_all WHERE lat BETWEEN 25 AND 75 AND lon BETWEEN -35 AND 60 AND NOT (abs(lat) < 0.01 AND abs(lon) < 0.01))`);
+      SELECT stop_id FROM t_stops_all WHERE lat BETWEEN ${BBOX.minLat} AND ${BBOX.maxLat} AND lon BETWEEN ${BBOX.minLon} AND ${BBOX.maxLon})`);
 
-  // ---------- bus filter: drop short (urban) bus trips ----------
+  // ---------- bus filter: drop short (urban) bus/coach trips ----------
   const minKm = opts.minBusKm ?? cfg.minBusKm;
   const nBefore = await db.scalar(`SELECT count(DISTINCT trip_key) FROM t_st`);
   await db.run(`DELETE FROM t_st WHERE trip_key IN (
       SELECT st.trip_key FROM t_st st JOIN t_kt kt USING (trip_key) JOIN t_stops_all s USING (stop_id)
-      WHERE kt.cls = 'bus'
+      WHERE kt.cls IN ('bus', 'coach')
       GROUP BY st.trip_key
       HAVING sqrt(pow((max(s.lat) - min(s.lat)) * 111.2, 2) + pow((max(s.lon) - min(s.lon)) * 111.2 * cos(radians(avg(s.lat))), 2)) < ${minKm})`);
   // Trips with fewer than 2 stops are useless.

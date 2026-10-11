@@ -25,12 +25,15 @@ export interface ProcessOptions {
   minBusCityPop?: number;
   /** Bus: collapse consecutive stops in towns below this population to one stop. */
   collapseBusBelowPop?: number;
+  /** Bus: whether a station is also served by rail/coach (kept inside big-city runs). */
+  isShared?: (station: number) => boolean;
 }
 
 /**
  * Turn a trip's raw stop sequence into the station sequence used in patterns:
- *  - (Bus) drop stops in tiny places except first/last,
- *  - (Bus) collapse runs of stops in the same small town to its main stop,
+ *  - (Bus) drop stops in places below ~1000 inhabitants,
+ *  - (Bus) collapse runs of stops in the same small town to its main stop; in big
+ *    cities keep only the entry/exit stops of the run and stops shared with rail/coach,
  *  - collapse consecutive stops at the same station (arr of first, dep of last),
  *  - require ≥ 2 distinct cities.
  * Returns null if the trip should be dropped.
@@ -39,9 +42,10 @@ export function processTripStops(raw: RawStop[], o: ProcessOptions): TripShape |
   if (raw.length < 2) return null;
   let stops = raw;
   if (o.cat === Cat.Bus) {
+    // Buses only serve real towns on the map: stops in places below minPop (incl. synthetic
+    // places without population) are dropped, termini included.
     const minPop = o.minBusCityPop ?? 1000;
-    const last = stops.length - 1;
-    stops = stops.filter((s, i) => i === 0 || i === last || o.cityPop(s.city) >= minPop);
+    stops = stops.filter((s) => o.cityPop(s.city) >= minPop);
     const collapseBelow = o.collapseBusBelowPop ?? 100_000;
     const out: RawStop[] = [];
     for (let i = 0; i < stops.length; ) {
@@ -52,7 +56,9 @@ export function processTripStops(raw: RawStop[], o: ProcessOptions): TripShape |
         let best = i;
         for (let k = i; k <= j; k++) if (o.stationWeight(stops[k]!.station) > o.stationWeight(stops[best]!.station)) best = k;
         out.push({ station: stops[best]!.station, city: stops[i]!.city, arr: stops[i]!.arr, dep: stops[j]!.dep });
-      } else for (let k = i; k <= j; k++) out.push(stops[k]!);
+      } else
+        // big city: keep where the bus enters and leaves the city plus stops shared with rail/coach
+        for (let k = i; k <= j; k++) if (k === i || k === j || o.isShared?.(stops[k]!.station) !== false) out.push(stops[k]!);
       i = j + 1;
     }
     stops = out;

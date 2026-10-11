@@ -21,11 +21,28 @@ const DROP_FLAGS = ['is_abandoned', 'is_disused', 'is_under_construction'];
 
 type Log = (s: string) => void;
 
+const instances = new WeakMap<DuckDBConnection, DuckDBInstance>();
+/** Close a connection from openDuckDB and its database (frees DuckDB's memory). */
+export function closeDuckDB(c: DuckDBConnection): void {
+  try { c.closeSync(); } catch { /* ignore */ }
+  try { instances.get(c)?.closeSync(); } catch { /* ignore */ }
+  instances.delete(c);
+}
+
 export async function openDuckDB(workDir: string, log: Log, exts: string[]): Promise<DuckDBConnection> {
   const extDir = join(workDir, 'duckdb-ext');
   mkdirSync(extDir, { recursive: true });
-  const db = await DuckDBInstance.create(':memory:', { extension_directory: extDir });
+  const tmpDir = join(workDir, 'duckdb-tmp');
+  mkdirSync(tmpDir, { recursive: true });
+  // The ETL process already holds several GB when geometry runs: cap DuckDB and let it spill.
+  const db = await DuckDBInstance.create(':memory:', {
+    extension_directory: extDir,
+    memory_limit: process.env.ETBM_GEOMETRY_DUCKDB_MEMORY || '4GB',
+    threads: '4',
+    temp_directory: tmpDir,
+  });
   const c = await db.connect();
+  instances.set(c, db);
   await c.run(`SET autoinstall_known_extensions=false`);
   const row = (await c.runAndReadAll(`SELECT version(), (SELECT platform FROM pragma_platform())`)).getRows()[0]!;
   const [ver, platform] = [String(row[0]), String(row[1])];
@@ -115,6 +132,14 @@ export async function ensureRailExtract(workDir: string, log: Log): Promise<stri
 
 async function extract(dir: string, cached: string[], workDir: string, log: Log): Promise<string> {
   const c = await openDuckDB(workDir, log, ['httpfs', 'spatial']);
+  try {
+    return await extractWith(c, dir, cached, workDir, log);
+  } finally {
+    closeDuckDB(c);
+  }
+}
+
+async function extractWith(c: DuckDBConnection, dir: string, cached: string[], workDir: string, log: Log): Promise<string> {
   let release = await resolveRelease(c, log);
   if (!release) {
     if (cached.length) { log(`  overture: using cached ${cached[cached.length - 1]}`); return join(dir, cached[cached.length - 1]!); }
@@ -129,7 +154,6 @@ async function extract(dir: string, cached: string[], workDir: string, log: Log)
   const t0 = Date.now();
   // Anonymous S3 access: an explicit secret without keys, so DuckDB doesn't send the AWS_* env credentials.
   await c.run(`CREATE OR REPLACE SECRET overture (TYPE s3, PROVIDER config, KEY_ID '', SECRET '', REGION 'us-west-2')`);
-  await c.run(`SET threads=8`);
   const [x0, y0, x1, y1] = EUROPE_BBOX;
   const src = `s3://overturemaps-us-west-2/release/${release}/theme=transportation/type=segment/*.parquet`;
   const tmp = file + '.tmp';
@@ -147,7 +171,7 @@ async function extract(dir: string, cached: string[], workDir: string, log: Log)
     if (release !== FALLBACK_RELEASE) {
       log(`  overture: release ${release} failed (${String(e).slice(0, 160)}); trying ${FALLBACK_RELEASE}`);
       process.env.ETBM_OVERTURE_RELEASE = FALLBACK_RELEASE;
-      try { return await extract(dir, cached, workDir, log); } finally { delete process.env.ETBM_OVERTURE_RELEASE; }
+      try { return await extractWith(c, dir, cached, workDir, log); } finally { delete process.env.ETBM_OVERTURE_RELEASE; }
     }
     throw e;
   }
@@ -214,6 +238,7 @@ export async function loadRailGraph(parquet: string, workDir: string, log: Log, 
       }
     }
   }
+  closeDuckDB(c);
   log(`  graph: read ${b.lineCount} lines / ${b.vertexCount} vertices in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
   const t1 = Date.now();
   const g = b.build({ simplifyTol, log });

@@ -26,7 +26,7 @@ describe("processTripStops", () => {
       processTripStops([{ station: 1, city: 1, arr: 0, dep: 0 }, { station: 2, city: 1, arr: 5, dep: 5 }], { ...base, cat: Cat.Regional }),
     ).toBeNull();
   });
-  it("bus: drops tiny places except ends and collapses small-town runs", () => {
+  it("bus: drops tiny places and collapses small-town runs", () => {
     const t = processTripStops(
       [
         { station: 1, city: 1, arr: 0, dep: 0 },
@@ -37,9 +37,22 @@ describe("processTripStops", () => {
       ],
       { ...base, cat: Cat.Bus },
     )!;
-    expect(t.stations).toEqual([5, 3, 8]);
+    expect(t.stations).toEqual([5, 3]);
     expect(t.start).toBe(2);
-    expect(t.arr).toEqual([0, 18, 28]);
+    expect(t.arr).toEqual([0, 18]);
+  });
+  it("bus: in big cities keeps entry/exit and shared stops only", () => {
+    const t = processTripStops(
+      [
+        { station: 1, city: 1, arr: 0, dep: 0 },
+        { station: 2, city: 1, arr: 2, dep: 2 },
+        { station: 3, city: 1, arr: 4, dep: 4 },
+        { station: 4, city: 1, arr: 6, dep: 6 },
+        { station: 5, city: 2, arr: 20, dep: 20 },
+      ],
+      { ...base, cityPop: () => 500_000, cat: Cat.Bus, isShared: (s) => s === 3 },
+    )!;
+    expect(t.stations).toEqual([1, 3, 4, 5]);
   });
   it("keeps times after midnight", () => {
     const t = processTripStops([{ station: 1, city: 1, arr: 1430, dep: 1430 }, { station: 2, city: 2, arr: 1500, dep: 1500 }], { ...base, cat: Cat.LongDistance })!;

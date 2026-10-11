@@ -101,7 +101,7 @@ async function main() {
     await rm(dbPath, { force: true });
     await rm(dbPath + ".wal", { force: true });
   }
-  const db = await Db.open(dbPath, { threads: 4, memoryLimit: process.env.ETL_DUCKDB_MEMORY ?? "6GB", tempDir: join(tmpDir, "duckdb") });
+  const db = await Db.open(dbPath, { threads: 4, memoryLimit: process.env.ETL_DUCKDB_MEMORY ?? "4GB", tempDir: join(tmpDir, "duckdb") });
 
   if (!reuse) {
     timer.start("download+load");

@@ -117,6 +117,19 @@ export interface NetworkFile {
   cities: City[];
   stations: Station[];
   corridors: Corridor[];
+  /**
+   * Optional continuation files (paths relative to the build directory, e.g.
+   * "network-1.json"), each a NetworkPart. Used when the network would exceed
+   * the static host's per-file size limit. Load them all and append their
+   * arrays, in order, to `stations` / `corridors` (ids stay dense and global).
+   */
+  parts?: string[];
+}
+
+/** Continuation of NetworkFile.stations / .corridors (see NetworkFile.parts). */
+export interface NetworkPart {
+  stations?: Station[];
+  corridors?: Corridor[];
 }
 
 export interface CalendarsFile {

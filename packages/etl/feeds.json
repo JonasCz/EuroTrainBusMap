@@ -2,6 +2,7 @@
  "userAgent": "EuroTrainBusMap/1.0 (+https://github.com/JonasCz/EuroTrainBusMap)",
  "transitousBase": "https://api.transitous.org/gtfs/",
  "minBusKm": 15,
+ "minBusCityPop": 2000,
  "dedicatedOperators": [
   {
    "pattern": "flix",
@@ -30,7 +31,7 @@
    ]
   }
  ],
- "coachOperators": "\\b(flix ?bus|flixtrain|blablacar|ouibus|alsa|national express|megabus|ecolines|lux express|regiojet|student agency|vy (buss)?ekspress|vy bus4you|bus4you|nor-way|bussekspress|swebus|eurolines|scottish citylink|citylink|expressway|aircoach|dublin coach|gobus|jj kavanagh|leo express|sindbad|marino ?bus|itabus|baltour|avanza|socibus|monbus|ember|simple express|arriva express|polonus|kautra|nettbuss ekspress|timjan|tide ekspress|kystbussen|lavprisekspressen|matkahuolto|onnibus|pohjolan liikenne|kaugliinid|hansabuss|eurobus|union ivkoni|orange ways|globtour|niš ekspres|nis ekspres|lasta|arriva.*(express|intercity)|bus ?eireann.*express)\\b",
+ "coachOperators": "\\b(flix ?bus|flixtrain|blablacar|ouibus|alsa|national express(?! (west midlands|coventry|dundee|bus))|megabus|ecolines|lux express|regiojet|student agency|vy (buss)?ekspress|vy bus4you|bus4you|nor-way|bussekspress|swebus|eurolines|scottish citylink|citylink|expressway|aircoach|dublin coach|gobus|jj kavanagh|leo express|sindbad|marino ?bus|itabus|baltour|socibus|monbus|ember|simple express|arriva express|polonus|kautra|nettbuss ekspress|timjan|tide ekspress|kystbussen|lavprisekspressen|matkahuolto|onnibus|kaugliinid|hansabuss|eurobus|union ivkoni|orange ways|globtour|niš ekspres|nis ekspres|lasta|arriva.*(express|intercity)|bus ?eireann.*express)\\b",
  "urbanAgencies": "\\b(bvg|berliner verkehrsbetriebe|mvg|münchner verkehrsgesellschaft|hochbahn|wiener linien|ratp|london buses|tfl|gvb|ret|htm|dpp|dopravní podnik|mpk|ztm|bkv|bkk|atm milano|atac|tmb|emt madrid|emt valencia|stib|mivb|tpg|vbz|bernmobil|kvb|rheinbahn|üstra|ssb|vag nürnberg|lvb|dvb|hsl|sl stockholm|ruter|movia|iett)\\b",
  "feeds": [
   {

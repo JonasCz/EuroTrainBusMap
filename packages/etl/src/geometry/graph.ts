@@ -99,41 +99,56 @@ export class RailGraphBuilder {
     const X = this.xs.a, Y = this.ys.a, nv = this.xs.n;
     const LS = this.lineStart.a, nl = this.lineStart.n - 1, LM = this.lineMult.a;
 
-    // ---- 1. hash vertices, count incidences (interior 2, endpoint 1)
+    // ---- 1. hash line end points; count incidences (end 1, interior 2). Interior vertices are
+    // only looked up, not inserted: a junction always involves some segment's end point
+    // (Overture splits at connectors), and this keeps the table small (~2 entries per line).
     let cap = 1;
-    while (cap < nv * 1.6) cap <<= 1;
+    while (cap < nl * 2 * 1.5) cap <<= 1;
     const mask = cap - 1;
     const hx = new Int32Array(cap), hy = new Int32Array(cap), hcnt = new Int32Array(cap);
-    const vslot = new Int32Array(nv);
+    const slotOf = (x: number, y: number, insert: boolean): number => {
+      let h = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663)) & mask;
+      while (hcnt[h] !== 0 && (hx[h] !== x || hy[h] !== y)) h = (h + 1) & mask;
+      if (hcnt[h] === 0) {
+        if (!insert) return -1;
+        hx[h] = x; hy[h] = y;
+      }
+      return h;
+    };
     for (let l = 0; l < nl; l++) {
-      const s = LS[l]!, e = LS[l + 1]!;
-      for (let i = s; i < e; i++) {
-        const x = X[i]!, y = Y[i]!;
-        let h = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663)) & mask;
-        while (hcnt[h] !== 0 && (hx[h] !== x || hy[h] !== y)) h = (h + 1) & mask;
-        if (hcnt[h] === 0) { hx[h] = x; hy[h] = y; }
-        hcnt[h]! += i === s || i === e - 1 ? 1 : 2;
-        vslot[i] = h;
+      const s = LS[l]!, e = LS[l + 1]! - 1;
+      hcnt[slotOf(X[s]!, Y[s]!, true)]!++;
+      hcnt[slotOf(X[e]!, Y[e]!, true)]!++;
+    }
+    for (let l = 0; l < nl; l++) {
+      const e = LS[l + 1]! - 1;
+      for (let i = LS[l]! + 1; i < e; i++) {
+        const h = slotOf(X[i]!, Y[i]!, false);
+        if (h >= 0) hcnt[h]! += 2;
       }
     }
-    // ---- 2. stage-1 nodes: incidence != 2 or line end
+    // ---- 2. stage-1 nodes: line ends and junction vertices (incidence != 2)
     const sid = new Int32Array(cap).fill(-1);
     let n1 = 0;
-    const isNode1 = (i: number, s: number, e: number) => i === s || i === e - 1 || hcnt[vslot[i]!] !== 2;
-    for (let l = 0; l < nl; l++) {
-      const s = LS[l]!, e = LS[l + 1]!;
-      for (let i = s; i < e; i++) if (isNode1(i, s, e) && sid[vslot[i]!] === -1) sid[vslot[i]!] = n1++;
-    }
+    /** stage-1 node id of vertex i of a line [s, e), or -1 */
+    const node1 = (i: number, s: number, e: number): number => {
+      const end = i === s || i === e - 1;
+      const h = slotOf(X[i]!, Y[i]!, false);
+      if (h < 0 || (!end && hcnt[h] === 2)) return -1;
+      if (sid[h] === -1) sid[h] = n1++;
+      return sid[h]!;
+    };
     // stage-1 pieces
     const pu = new GrowI32(), pv = new GrowI32(), pa = new GrowI32(), pb = new GrowI32();
     const pmult = new GrowF32();
     for (let l = 0; l < nl; l++) {
       const s = LS[l]!, e = LS[l + 1]!;
-      let last = s;
+      let last = s, lastId = node1(s, s, e);
       for (let i = s + 1; i < e; i++) {
-        if (!isNode1(i, s, e)) continue;
-        pu.push(sid[vslot[last]!]!); pv.push(sid[vslot[i]!]!); pa.push(last); pb.push(i); pmult.push(LM[l]!);
-        last = i;
+        const id = node1(i, s, e);
+        if (id < 0) continue;
+        pu.push(lastId); pv.push(id); pa.push(last); pb.push(i); pmult.push(LM[l]!);
+        last = i; lastId = id;
       }
     }
     const np = pu.n;

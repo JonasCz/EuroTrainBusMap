@@ -12,6 +12,7 @@ import {
   type Corridor,
   type Manifest,
   type NetworkFile,
+  type NetworkPart,
   type Pattern,
   type Route,
   type Station,
@@ -22,7 +23,7 @@ import type { Db } from "./db.ts";
 import type { FeedsConfig, ResolvedFeed } from "./feeds.ts";
 import type { FeedLoadStats } from "./gtfs/load.ts";
 import type { CliArgs } from "./cli.ts";
-import { loadPlaces } from "./geonames.ts";
+import { BBOX, loadPlaces } from "./geonames.ts";
 import { assignStops, chooseCityName, resolveSatellites, townFromStopName, type Place } from "./core/cities.ts";
 import { describeStation, mergeStations, walkMinutes, type StopIn } from "./core/stations.ts";
 import { MaskStore, getBit, newMask, popcount, setBit } from "./core/calendar.ts";
@@ -31,7 +32,7 @@ import { resolveDuplicates, type DupPair, type DupTrip } from "./core/dedup.ts";
 import { PatternStore, localizeStart, processTripStops, type RawStop } from "./core/patterns.ts";
 import { displayName } from "./core/classify.ts";
 import { sliceShape } from "./core/shapes.ts";
-import { GridIndex, fastDist, greatCircle, haversine, round5, type LonLat } from "./util/geo.ts";
+import { GridIndex, fastDist, greatCircle, haversine, round5, simplifyLine, type LonLat } from "./util/geo.ts";
 import { log, warn, type StageTimer } from "./util/log.ts";
 import { runSanity } from "./sanity.ts";
 
@@ -105,7 +106,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       FROM stops s JOIN (
         SELECT st.stop_key, bit_or(t.cat) AS cats, bool_or(rc.cls = 'rail') AS rail, count(*)::INTEGER AS n
         FROM stop_times st JOIN trips t USING (trip_key) JOIN rclass rc USING (rc) GROUP BY st.stop_key
-      ) u USING (stop_key)`);
+      ) u USING (stop_key)
+      WHERE s.lat BETWEEN ${BBOX.minLat} AND ${BBOX.maxLat} AND s.lon BETWEEN ${BBOX.minLon} AND ${BBOX.maxLon}`);
   // Use the parent station's coordinates for city assignment when available (keeps platforms together).
   const parentPos = new Map<number, { lat: number; lon: number }>();
   for (const r of await db.all<{ stop_key: number; lat: number; lon: number }>(
@@ -373,12 +375,27 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const cityPop = (c: number) => cities[c]!.population;
   let droppedTrips = 0;
 
+  // Bus-only stops in towns below 100k inhabitants are represented by one station per town
+  // (the most served one) to keep the network small; big cities keep their individual stops.
+  const busCanon = new Int32Array(cities.length).fill(-1);
+  for (let st = 0; st < stations.length; st++) {
+    const s = stations[st]!;
+    if (s.cats !== Cat.Bus || cities[s.city]!.population >= 100_000) continue;
+    const cur = busCanon[s.city]!;
+    if (cur < 0 || stations[cur]!.weight < s.weight) busCanon[s.city] = st;
+  }
+  const isShared = (st: number) => stations[st]!.cats !== Cat.Bus;
   const finalize = (tk: number, raw: RawStop[]) => {
     if (dropped.has(tk)) return;
     const rc = rclass.get(tRc[tk]!);
     if (!rc) return;
     const cat = tCat[tk]!;
-    const shape = processTripStops(raw, { cat, cityPop, stationWeight });
+    if (cat === Cat.Bus)
+      for (const r of raw) {
+        const c = busCanon[r.city]!;
+        if (c >= 0 && stations[r.station]!.cats === Cat.Bus) r.station = c;
+      }
+    const shape = processTripStops(raw, { cat, cityPop, stationWeight, isShared, minBusCityPop: cfg.minBusCityPop ?? 1000 });
     if (!shape) {
       droppedTrips++;
       return;
@@ -543,23 +560,6 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   }
   log(`${shapePts.size} feed shapes loaded for geometry`);
 
-  // The database is not needed any more: close it and release big JS structures
-  // before geometry (which runs its own DuckDB instance on a large extract).
-  await db.run("CHECKPOINT");
-  db.close();
-  stopRows.length = 0;
-  stopIns.length = 0;
-  members.length = 0;
-  svcMask.clear();
-  tHead.length = 0;
-  tShort.length = 0;
-  dupInfo.clear();
-  freq.clear();
-  extraMask.clear();
-  shapePts.clear();
-  places.length = 0;
-  (globalThis as { gc?: () => void }).gc?.();
-
   // ------------------------------------------------------------------ geometry
   timer.start("geometry");
   const RAIL = Cat.LongDistance | Cat.Regional;
@@ -577,6 +577,23 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     });
     return { id, mode: (c.cats & RAIL ? "rail" : "road") as "rail" | "road", hops, a: [A.lon, A.lat] as [number, number], b: [B.lon, B.lat] as [number, number] };
   });
+  // The database is not needed any more: close it and release big JS structures
+  // before geometry (which runs its own DuckDB instance on a large extract).
+  await db.run("CHECKPOINT");
+  db.close();
+  stopRows.length = 0;
+  stopIns.length = 0;
+  members.length = 0;
+  svcMask.clear();
+  tHead.length = 0;
+  tShort.length = 0;
+  dupInfo.clear();
+  freq.clear();
+  extraMask.clear();
+  places.length = 0;
+  (globalThis as { gc?: () => void }).gc?.();
+
+  shapePts.clear();
   let geoms: { id: number; coords: [number, number][]; snapped: boolean }[] | null = null;
   if (args.geometry && reqs.length) {
     try {
@@ -673,7 +690,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     if (a < 0 || b < 0) return;
     const g = geomById.get(id);
     const A = cities[c.a]!, B = cities[c.b]!;
-    const coords = (g?.coords ?? greatCircle([A.lon, A.lat], [B.lon, B.lat])).map(([x, y]) => [round5(x), round5(y)] as [number, number]);
+    const raw = g?.coords ?? greatCircle([A.lon, A.lat], [B.lon, B.lat]);
+    const coords = simplifyLine(raw, c.cats & RAIL ? 40 : c.cats & Cat.Coach ? 200 : 500).map(([x, y]) => [round5(x), round5(y)] as [number, number]);
     // orient from new a to new b
     const flip = a > b;
     if (flip) coords.reverse();
@@ -787,11 +805,44 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
 
   // attribution
   const attribution = buildAttribution(ctx);
-  const files: [string, unknown][] = [
-    ["network.json", network],
+  // Split the network into continuation parts if it would exceed the per-file limit.
+  const files: [string, unknown][] = [];
+  {
+    const LIMIT = 18_000_000;
+    const size = (x: unknown) => Buffer.byteLength(JSON.stringify(x));
+    const main: NetworkFile = { ...network, stations: [], corridors: [] };
+    let used = size(main);
+    const parts: NetworkPart[] = [];
+    let cur: NetworkPart | null = null;
+    let curSize = 0;
+    const place = (kind: "stations" | "corridors", item: Station | Corridor) => {
+      const sz = Buffer.byteLength(JSON.stringify(item)) + 1;
+      if (!cur && used + sz <= LIMIT) {
+        (main[kind] as (Station | Corridor)[]).push(item);
+        used += sz;
+        return;
+      }
+      if (!cur || curSize + sz > LIMIT) {
+        cur = {};
+        parts.push(cur);
+        curSize = 30;
+      }
+      ((cur[kind] ??= []) as (Station | Corridor)[]).push(item);
+      curSize += sz;
+    };
+    for (const st of network.stations) place("stations", st);
+    for (const co of network.corridors) place("corridors", co);
+    if (parts.length) {
+      main.parts = parts.map((_, i) => `network-${i + 1}.json`);
+      parts.forEach((p, i) => files.push([`network-${i + 1}.json`, p]));
+      log(`network split into network.json + ${parts.length} part(s)`);
+    }
+    files.unshift(["network.json", main]);
+  }
+  files.push(
     ["calendars.json", calendars],
     ["attribution.json", attribution],
-  ];
+  );
   for (const [name, obj] of files) {
     const json = JSON.stringify(obj);
     await writeFile(join(outDir, name), json);

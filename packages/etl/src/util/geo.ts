@@ -87,3 +87,34 @@ export function greatCircle(a: LonLat, b: LonLat, maxSegKm = 25): LonLat[] {
   }
   return out;
 }
+
+/** Douglas–Peucker simplification with tolerance in metres (equirectangular). */
+export function simplifyLine(pts: LonLat[], tolM: number): LonLat[] {
+  if (pts.length <= 2) return pts;
+  const lat0 = (pts[0]![1] * Math.PI) / 180;
+  const kx = 111_320 * Math.cos(lat0), ky = 110_540;
+  const keep = new Uint8Array(pts.length);
+  keep[0] = keep[pts.length - 1] = 1;
+  const stack: [number, number][] = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop()!;
+    const ax = pts[a]![0] * kx, ay = pts[a]![1] * ky, bx = pts[b]![0] * kx, by = pts[b]![1] * ky;
+    const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+    let best = -1, bestD = tolM;
+    for (let i = a + 1; i < b; i++) {
+      const px = pts[i]![0] * kx, py = pts[i]![1] * ky;
+      let t = len2 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      const d = Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+      if (d > bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    if (best >= 0) {
+      keep[best] = 1;
+      stack.push([a, best], [best, b]);
+    }
+  }
+  return pts.filter((_, i) => keep[i]);
+}

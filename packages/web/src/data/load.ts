@@ -1,5 +1,5 @@
 /** Static data loading. All URLs are relative to Vite's BASE_URL. */
-import type { AttributionFile, CalendarsFile, CityFile, Manifest, NetworkFile } from "@etbm/shared";
+import type { AttributionFile, CalendarsFile, CityFile, Manifest, NetworkFile, NetworkPart } from "@etbm/shared";
 
 const BASE = import.meta.env.BASE_URL;
 
@@ -30,6 +30,14 @@ export async function loadDataSet(): Promise<DataSet> {
     getJson<CalendarsFile>(url("calendars.json")),
     getJson<AttributionFile>(url("attribution.json")).catch(() => ({ sources: [] }) as AttributionFile),
   ]);
+  // Large networks are split into parts (Cloudflare caps asset size); append in order.
+  if (network.parts?.length) {
+    const parts = await Promise.all(network.parts.map((p) => getJson<NetworkPart>(url(p))));
+    for (const part of parts) {
+      for (const s of part.stations ?? []) network.stations.push(s);
+      for (const c of part.corridors ?? []) network.corridors.push(c);
+    }
+  }
   return { manifest, network, calendars, attribution, url };
 }
 
