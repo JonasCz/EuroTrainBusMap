@@ -1,0 +1,25 @@
+name: Set workers.dev subdomain
+on:
+  workflow_dispatch:
+    inputs:
+      candidates:
+        description: "Space-separated subdomain candidates, tried in order"
+        required: true
+jobs:
+  set:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Change account workers.dev subdomain
+        env:
+          T: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          A: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CANDIDATES: ${{ inputs.candidates }}
+        run: |
+          api="https://api.cloudflare.com/client/v4/accounts/$A/workers/subdomain"
+          echo "current: $(curl -sS -H "Authorization: Bearer $T" "$api" | jq -r .result.subdomain)"
+          for s in $CANDIDATES; do
+            r=$(curl -sS -X PUT -H "Authorization: Bearer $T" -H "Content-Type: application/json" --data "{\"subdomain\":\"$s\"}" "$api")
+            echo "$s: $(echo "$r" | jq -c '{success, errors, result}')"
+            if [ "$(echo "$r" | jq -r .success)" = "true" ]; then echo "subdomain set to $s"; exit 0; fi
+          done
+          echo "no candidate available"; exit 1
