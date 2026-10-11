@@ -36,6 +36,8 @@ import { PatternStore, localizeStart, processTripStops, type RawStop } from "./c
 import { displayName } from "./core/classify.ts";
 import { sliceShape } from "./core/shapes.ts";
 import { buildSegments } from "./core/segments.ts";
+import { applyStopNames, stopAltKey, stopKey } from "./core/stopnames.ts";
+import { loadStopNames, writeStopCandidates } from "./stopnames-io.ts";
 import { GridIndex, fastDist, greatCircle, haversine, round5, simplifyLine, type LonLat } from "./util/geo.ts";
 import { log, warn, type StageTimer } from "./util/log.ts";
 import { runSanity } from "./sanity.ts";
@@ -105,12 +107,13 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const places = await loadPlaces(ctx.cacheDir, cfg.userAgent, args.assets);
   resolveSatellites(places, { "TR:Istanbul": 50, "TR:Ankara": 30, "RU:Moscow": 40 });
   const stopRows = await db.all<{
-    stop_key: number; feed: number; name: string; lat: number; lon: number; parent_key: number | null; tz: string | null; cats: number; rail: boolean; n: number;
-  }>(`SELECT s.stop_key, s.feed, s.name, s.lat, s.lon, s.parent_key, s.tz, u.cats, u.rail, u.n
+    stop_key: number; feed: number; stop_id: string; feed_key: string; agency: string | null; name: string; lat: number; lon: number; parent_key: number | null; tz: string | null; cats: number; rail: boolean; n: number;
+  }>(`SELECT s.stop_key, s.feed, s.stop_id, f.key AS feed_key, u.agency, s.name, s.lat, s.lon, s.parent_key, s.tz, u.cats, u.rail, u.n
       FROM stops s JOIN (
-        SELECT st.stop_key, bit_or(t.cat) AS cats, bool_or(rc.cls = 'rail') AS rail, count(*)::INTEGER AS n
+        SELECT st.stop_key, bit_or(t.cat) AS cats, bool_or(rc.cls = 'rail') AS rail, count(*)::INTEGER AS n, mode(rc.agency) AS agency
         FROM stop_times st JOIN trips t USING (trip_key) JOIN rclass rc USING (rc) GROUP BY st.stop_key
       ) u USING (stop_key)
+      JOIN (SELECT DISTINCT ON (feed) feed, key FROM feeds) f ON f.feed = s.feed
       WHERE s.lat BETWEEN ${BBOX.minLat} AND ${BBOX.maxLat} AND s.lon BETWEEN ${BBOX.minLon} AND ${BBOX.maxLon}`);
   // Use the parent station's coordinates for city assignment when available (keeps platforms together).
   const parentPos = new Map<number, { lat: number; lon: number }>();
@@ -227,22 +230,49 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     weight: s.n,
   }));
   const { stationOf, count: nStations } = mergeStations(stopIns);
-  const members: number[][] = Array.from({ length: nStations }, () => []);
-  for (let i = 0; i < stopIns.length; i++) members[stationOf[i]!]!.push(i);
-  const stations: StationRec[] = members.map((m) => {
-    const ms = m.map((i) => stopIns[i]!);
-    const d = describeStation(ms, cities[ms[0]!.city]!.name);
-    return {
-      city: ms[0]!.city,
-      name: d.name,
-      lon: d.lon,
-      lat: d.lat,
-      cats: ms.reduce((a, s, k) => a | stopRows[m[k]!]!.cats, 0),
-      rail: ms.some((s) => s.rail),
-      weight: ms.reduce((a, s) => a + s.weight, 0),
-    };
-  });
+  const describeAll = () => {
+    const members: number[][] = Array.from({ length: nStations }, () => []);
+    for (let i = 0; i < stopIns.length; i++) members[stationOf[i]!]!.push(i);
+    return members.map((m): StationRec => {
+      if (!m.length) return { city: 0, name: "", lon: 0, lat: 0, cats: 0, rail: false, weight: 0 }; // emptied by a merge
+      const ms = m.map((i) => stopIns[i]!);
+      const d = describeStation(ms, cities[ms[0]!.city]!.name);
+      return {
+        city: ms[0]!.city,
+        name: d.name,
+        lon: d.lon,
+        lat: d.lat,
+        cats: ms.reduce((a, s, k) => a | stopRows[m[k]!]!.cats, 0),
+        rail: ms.some((s) => s.rail),
+        weight: ms.reduce((a, s) => a + s.weight, 0),
+      };
+    });
+  };
+  let stations = describeAll();
+  // reviewed coach/bus stop names (data/stop-names.json): forced merges and display names
+  const stopNames = await loadStopNames(join(import.meta.dirname, "..", "data", "stop-names.json"));
+  const stopKeys = stopRows.map((r) => ({ key: stopKey(r.feed_key, r.stop_id), altKey: stopAltKey(r.name, r.lon, r.lat), lon: r.lon, lat: r.lat }));
+  const sn = applyStopNames(stopNames, stopKeys, stationOf, stations);
+  if (sn.merged) {
+    // merged stops join the target station's city
+    for (let i = 0; i < stopIns.length; i++) {
+      const c = stations[stationOf[i]!]!.city;
+      if (stopIns[i]!.city !== c) stopIns[i]!.city = stopCity[i] = c;
+    }
+    stations = describeAll();
+  }
+  for (const [st, name] of sn.renames) if (stations[st]!.name) stations[st]!.name = name;
+  for (const m of sn.missing.slice(0, 20)) warn(`stop-names: ${m}`);
+  if (stopNames) log(`stop-names: ${Object.keys(stopNames.entries).length} entries, ${sn.merged} merges, ${sn.renames.size} renames, ${sn.missing.length} merge targets not found`);
+  stats.stopNameMerges = sn.merged;
+  stats.stopNameRenames = sn.renames.size;
   log(`${nStations} stations from ${stopIns.length} stops`);
+  if (args.stopCandidates) {
+    const n = await writeStopCandidates(args.stopCandidates, { stopRows, stopKeys, stopCity, stationOf, stations, cities, mapping: stopNames, minBusCityPop: cfg.minBusCityPop ?? 1000 });
+    log(`stop candidates: ${n} written to ${args.stopCandidates}`);
+    timer.end();
+    return;
+  }
   await db.run(`DROP TABLE IF EXISTS stop_map`);
   await db.insertRows(
     "stop_map",
@@ -591,7 +621,6 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   db.close();
   stopRows.length = 0;
   stopIns.length = 0;
-  members.length = 0;
   svcMask.clear();
   tHead.length = 0;
   tShort.length = 0;

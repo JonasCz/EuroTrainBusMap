@@ -29,6 +29,8 @@ export interface CliArgs {
   assets: string;
   /** Allow the slow Overture rail extraction when no rail asset is present. */
   extractRail: boolean;
+  /** Only export coach/bus stop-name review candidates (JSONL) and stop. */
+  stopCandidates?: string;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -40,7 +42,8 @@ function parseArgs(argv: string[]): CliArgs {
   const has = (name: string) => a.includes(name);
   const subset = get("--subset") ?? "full";
   const tiers = (get("--tiers")?.split(",") ?? (subset === "core" ? ["core"] : ["core", "bus"])) as Tier[];
-  const out = get("--out");
+  const stopCandidates = get("--stop-candidates");
+  const out = get("--out") ?? (stopCandidates ? join(repoRoot, "work", "out-unused") : undefined);
   if (!out) {
     console.error(
       "usage: build-data --out <dir> [--feeds id1,id2] [--work <dir>] [--subset full|core] [--days 60] [--start YYYY-MM-DD]\n" +
@@ -62,6 +65,7 @@ function parseArgs(argv: string[]): CliArgs {
     build: get("--build"),
     assets: resolve(get("--assets") ?? join(resolve(get("--work") ?? join(repoRoot, "work")), "assets")),
     extractRail: has("--extract-rail"),
+    stopCandidates: stopCandidates ? resolve(stopCandidates) : undefined,
   };
 }
 
