@@ -40,6 +40,8 @@ export async function openDuckDB(workDir: string, log: Log, exts: string[]): Pro
     memory_limit: process.env.ETBM_GEOMETRY_DUCKDB_MEMORY || '4GB',
     threads: '4',
     temp_directory: tmpDir,
+    // don't keep fetched remote parquet blocks in the buffer pool
+    enable_external_file_cache: 'false',
   });
   const c = await db.connect();
   instances.set(c, db);

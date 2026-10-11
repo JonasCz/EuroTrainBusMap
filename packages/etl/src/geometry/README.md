@@ -27,7 +27,9 @@ funicular, monorail dropped); segments flagged `is_abandoned` / `is_disused` /
 tuned by name: high-speed line names (LGV, alta velocità, HS1, …) ×0.85, German
 Schnellfahrstrecke/Neubaustrecke ×0.93, freight-only ×1.4, unknown gauge ×1.05.
 
-Env: `ETBM_RAIL_PARQUET` (use a given extract), `ETBM_OVERTURE_RELEASE` (pin a release).
+Env: `ETBM_RAIL_PARQUET` (use a given extract), `ETBM_OVERTURE_RELEASE` (pin a release),
+`ETBM_GEOMETRY_DUCKDB_MEMORY` (DuckDB memory_limit, default 4GB; 4 threads, spills to
+`<workDir>/duckdb-tmp`, external file cache off — extraction RSS ≈ 2.5–2.8 GB, ~28 min via proxy).
 AWS_* env vars are hidden from DuckDB during extraction (the bucket is public; sending
 credentials gives 403). DuckDB extensions are cached in `<workDir>/duckdb-ext`; if `INSTALL`
 fails (DuckDB fetches extensions over plain http), they are downloaded over https.
