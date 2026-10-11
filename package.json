@@ -1,0 +1,18 @@
+{
+  "name": "eurotrainbusmap",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "build:data": "pnpm --filter @etbm/etl run build-data",
+    "build:web": "pnpm --filter @etbm/web run build",
+    "dev": "pnpm --filter @etbm/web run dev",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4",
+    "@types/node": "^22.18.0"
+  }
+}

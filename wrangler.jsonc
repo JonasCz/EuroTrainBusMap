@@ -1,0 +1,15 @@
+{
+  // Static-assets-only Worker: no server code, just serves the built site.
+  // The same dist/site directory can be hosted on any static host.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "eurotrainbusmap",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./dist/site",
+    "not_found_handling": "404-page"
+  },
+  "workers_dev": true
+  // To serve under a path on your own domain, add e.g.:
+  // "routes": [{ "pattern": "example.com/transit/*", "zone_name": "example.com" }]
+  // and build with BASE_PATH=/transit/
+}
