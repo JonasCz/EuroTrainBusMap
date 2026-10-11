@@ -112,7 +112,7 @@ export class RailGraphBuilder {
         let h = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663)) & mask;
         while (hcnt[h] !== 0 && (hx[h] !== x || hy[h] !== y)) h = (h + 1) & mask;
         if (hcnt[h] === 0) { hx[h] = x; hy[h] = y; }
-        hcnt[h] += i === s || i === e - 1 ? 1 : 2;
+        hcnt[h]! += i === s || i === e - 1 ? 1 : 2;
         vslot[i] = h;
       }
     }
@@ -158,12 +158,24 @@ export class RailGraphBuilder {
     const eLen = new GrowF32(), eCost = new GrowF32();
     const chainX: number[] = [], chainY: number[] = [];
     let flat = new Float64Array(1024);
+    // piece boundaries along the current chain: node, chain index, cumulative length / cost
+    const bNode: number[] = [], bIdx: number[] = [], bLen: number[] = [], bCost: number[] = [];
+    const emit = (u: number, v: number, from: number, to: number, len: number, cost: number) => {
+      for (const nn of [u, v]) if (fid[nn] === -1) fid[nn] = nf++;
+      eU.push(fid[u]!); eV.push(fid[v]!); eLen.push(len); eCost.push(cost);
+      gS.push(gX.n);
+      const m = to - from;
+      if (flat.length < 2 * m) flat = new Float64Array(4 * m);
+      for (let i = 0; i < m; i++) { flat[2 * i] = chainX[from + i]!; flat[2 * i + 1] = chainY[from + i]!; }
+      for (const i of simplifyIndices(flat, m, tol, 1 / Q)) { gX.push(chainX[from + i]!); gY.push(chainY[from + i]!); }
+    };
     for (let s0 = 0; s0 < n1; s0++) {
       if (!isFinal(s0)) continue;
       for (let k = adj1Start[s0]!; k < adj1Start[s0 + 1]!; k++) {
         const p0 = adj1[k]!;
         if (visited[p0]) continue;
         chainX.length = 0; chainY.length = 0;
+        bNode.length = 0; bIdx.length = 0; bLen.length = 0; bCost.length = 0;
         let cur = s0, p = p0, len = 0, cost = 0;
         for (;;) {
           visited[p] = 1;
@@ -179,6 +191,7 @@ export class RailGraphBuilder {
           }
           len += plen; cost += plen * pmult.a[p]!;
           cur = fwd ? pv.a[p]! : pu.a[p]!;
+          bNode.push(cur); bIdx.push(chainX.length - 1); bLen.push(len); bCost.push(cost);
           if (isFinal(cur)) break;
           // degree-2 pass-through: take the other piece
           const k0 = adj1Start[cur]!;
@@ -186,15 +199,14 @@ export class RailGraphBuilder {
           if (visited[q]) break; // closed ring through a degree-2 node, shouldn't happen
           p = q;
         }
-        if (cur === s0 || len < 0.01) continue; // loops are useless for shortest paths
-        for (const nn of [s0, cur]) if (fid[nn] === -1) fid[nn] = nf++;
-        eU.push(fid[s0]!); eV.push(fid[cur]!); eLen.push(len); eCost.push(cost);
-        gS.push(gX.n);
-        const m = chainX.length;
-        if (flat.length < 2 * m) flat = new Float64Array(4 * m);
-        for (let i = 0; i < m; i++) { flat[2 * i] = chainX[i]!; flat[2 * i + 1] = chainY[i]!; }
-        const keep = simplifyIndices(flat, m, tol, 1 / Q);
-        for (const i of keep) { gX.push(chainX[i]!); gY.push(chainY[i]!); }
+        if (len < 0.01) continue;
+        if (cur !== s0) { emit(s0, cur, 0, chainX.length, len, cost); continue; }
+        // a loop back to s0 through degree-2 nodes: split it at the middle boundary node
+        if (bNode.length < 2) continue; // single closed piece: useless for routing
+        let mid = 0;
+        for (let i = 0; i < bNode.length - 1; i++) if (Math.abs(bLen[i]! - len / 2) < Math.abs(bLen[mid]! - len / 2)) mid = i;
+        emit(s0, bNode[mid]!, 0, bIdx[mid]! + 1, bLen[mid]!, bCost[mid]!);
+        emit(bNode[mid]!, s0, bIdx[mid]!, chainX.length, len - bLen[mid]!, cost - bCost[mid]!);
       }
     }
     gS.push(gX.n);

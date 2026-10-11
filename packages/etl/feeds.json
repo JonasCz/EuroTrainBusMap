@@ -1,0 +1,1653 @@
+{
+ "userAgent": "EuroTrainBusMap/1.0 (+https://github.com/JonasCz/EuroTrainBusMap)",
+ "transitousBase": "https://api.transitous.org/gtfs/",
+ "minBusKm": 15,
+ "dedicatedOperators": [
+  {
+   "pattern": "flix",
+   "feeds": [
+    "eu-flixbus",
+    "gb-flixbus",
+    "tr-flixbus"
+   ]
+  },
+  {
+   "pattern": "blablacar|ouibus",
+   "feeds": [
+    "eu-blablacar-bus"
+   ]
+  },
+  {
+   "pattern": "eurostar|thalys",
+   "feeds": [
+    "eu-eurostar"
+   ]
+  },
+  {
+   "pattern": "european sleeper",
+   "feeds": [
+    "eu-european-sleeper"
+   ]
+  }
+ ],
+ "coachOperators": "\\b(flix ?bus|flixtrain|blablacar|ouibus|alsa|national express|megabus|ecolines|lux express|regiojet|student agency|vy (buss)?ekspress|vy bus4you|bus4you|nor-way|bussekspress|swebus|eurolines|scottish citylink|citylink|expressway|aircoach|dublin coach|gobus|jj kavanagh|leo express|sindbad|marino ?bus|itabus|baltour|avanza|socibus|monbus|ember|simple express|arriva express|polonus|kautra|nettbuss ekspress|timjan|tide ekspress|kystbussen|lavprisekspressen|matkahuolto|onnibus|pohjolan liikenne|kaugliinid|hansabuss|eurobus|union ivkoni|orange ways|globtour|niš ekspres|nis ekspres|lasta|arriva.*(express|intercity)|bus ?eireann.*express)\\b",
+ "urbanAgencies": "\\b(bvg|berliner verkehrsbetriebe|mvg|münchner verkehrsgesellschaft|hochbahn|wiener linien|ratp|london buses|tfl|gvb|ret|htm|dpp|dopravní podnik|mpk|ztm|bkv|bkk|atm milano|atac|tmb|emt madrid|emt valencia|stib|mivb|tpg|vbz|bernmobil|kvb|rheinbahn|üstra|ssb|vag nürnberg|lvb|dvb|hsl|sl stockholm|ruter|movia|iett)\\b",
+ "feeds": [
+  {
+   "id": "eu-flixbus",
+   "country": "EU",
+   "name": "FlixBus Europe (generic EU feed)",
+   "tier": "core",
+   "keep": [
+    "coach",
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "eu_flixbus.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/tdg-11681/latest.zip"
+    }
+   ],
+   "notes": "route_type 3 (1142 routes) + 3 rail. Origin URL needs a browser-like User-Agent (403 otherwise). Transitous copy is shapes-stripped (2 MB).",
+   "approxMB": 30,
+   "options": {
+    "allCoach": true,
+    "priority": 5
+   }
+  },
+  {
+   "id": "gb-flixbus",
+   "country": "GB",
+   "name": "FlixBus UK",
+   "tier": "core",
+   "keep": [
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "gb_flixbus.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-2900/latest.zip"
+    }
+   ],
+   "notes": "Separate from EU feed.",
+   "approxMB": 2,
+   "options": {
+    "allCoach": true
+   }
+  },
+  {
+   "id": "tr-flixbus",
+   "country": "TR",
+   "name": "FlixBus Türkiye",
+   "tier": "core",
+   "keep": [
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "tr_flixbus.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-2922/latest.zip"
+    }
+   ],
+   "approxMB": 9,
+   "options": {
+    "allCoach": true
+   }
+  },
+  {
+   "id": "eu-blablacar-bus",
+   "country": "EU",
+   "name": "BlaBlaCar Bus",
+   "tier": "core",
+   "keep": [
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "eu_blablacar-bus.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/tdg-52605/latest.zip"
+    }
+   ],
+   "notes": "route_type 3.",
+   "approxMB": 0.3,
+   "options": {
+    "allCoach": true
+   }
+  },
+  {
+   "id": "eu-eurostar",
+   "country": "EU",
+   "name": "Eurostar (incl. ex-Thalys)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "url": "https://files.mobilitydatabase.org/tdg-82199/latest.zip"
+    },
+    {
+     "transitous": "eu_eurostar.gtfs.zip"
+    }
+   ],
+   "notes": "route_type 2; Transitous skips its own copy.",
+   "approxMB": 0.6,
+   "options": {
+    "railCat": "LongDistance",
+    "priority": 5
+   },
+   "license": "ODbL-1.0",
+   "licenseUrl": "https://transport.data.gouv.fr/datasets/eurostar-gtfs",
+   "attribution": "Eurostar"
+  },
+  {
+   "id": "eu-european-sleeper",
+   "country": "EU",
+   "name": "European Sleeper",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "eu_european-sleeper.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-3107/latest.zip"
+    }
+   ],
+   "notes": "route_type 105.",
+   "approxMB": 4,
+   "options": {
+    "railCat": "LongDistance",
+    "night": true,
+    "priority": 5
+   }
+  },
+  {
+   "id": "eu-optima-express",
+   "country": "EU",
+   "name": "Optima Express (motorail AT-TR)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "eu_optimaexpress.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-3123/latest.zip"
+    }
+   ],
+   "approxMB": 0.3,
+   "options": {
+    "railCat": "LongDistance",
+    "night": true
+   }
+  },
+  {
+   "id": "fr-renfe-ave",
+   "country": "FR",
+   "name": "Renfe AVE France",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "url": "https://files.mobilitydatabase.org/tdg-82386/latest.zip"
+    }
+   ],
+   "approxMB": 0.02,
+   "license": "ODbL-1.0",
+   "licenseUrl": "https://transport.data.gouv.fr/",
+   "options": {
+    "railCat": "LongDistance"
+   }
+  },
+  {
+   "id": "fr-trenitalia",
+   "country": "FR",
+   "name": "Trenitalia France",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "url": "https://files.mobilitydatabase.org/tdg-81653/latest.zip"
+    }
+   ],
+   "approxMB": 0.04,
+   "license": "ODbL-1.0",
+   "licenseUrl": "https://transport.data.gouv.fr/",
+   "options": {
+    "railCat": "LongDistance"
+   }
+  },
+  {
+   "id": "de-gtfsde-fv",
+   "country": "DE",
+   "name": "gtfs.de long-distance (DB FV + others)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "url": "https://download.gtfs.de/germany/fv_free/latest.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-768/latest.zip"
+    }
+   ],
+   "notes": "route_type 2, 95 routes. No shapes.",
+   "approxMB": 0.4,
+   "license": "CC-BY-4.0",
+   "attribution": "GTFS.DE / DELFI e.V.",
+   "licenseUrl": "https://gtfs.de/",
+   "options": {
+    "railCat": "LongDistance",
+    "priority": 4
+   }
+  },
+  {
+   "id": "de-gtfsde-rv",
+   "country": "DE",
+   "name": "gtfs.de regional rail",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "url": "https://download.gtfs.de/germany/rv_free/latest.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-1089/latest.zip"
+    }
+   ],
+   "notes": "route_type 2, ~950 routes. No shapes.",
+   "approxMB": 11,
+   "license": "CC-BY-4.0",
+   "attribution": "GTFS.DE / DELFI e.V.",
+   "licenseUrl": "https://gtfs.de/",
+   "options": {
+    "railCatDefault": "Regional",
+    "dticket": true,
+    "priority": 2
+   }
+  },
+  {
+   "id": "de-delfi",
+   "country": "DE",
+   "name": "DELFI Germany-wide (all modes)",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "de_DELFI.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-3215/latest.zip"
+    }
+   ],
+   "notes": "Use only for regional/intercity buses (filter out city buses, rail comes from gtfs.de). Extended route types (700/715/3...). stop_times ~2.7 GB uncompressed. MDB copy 530 MB incl. shapes. Alternative: gtfs.de nv_free 278 MB.",
+   "approxMB": 328,
+   "options": {
+    "dticket": true
+   }
+  },
+  {
+   "id": "at-rail",
+   "country": "AT",
+   "name": "Austria rail reference data (ÖBB, WESTbahn, private rail)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitousMatch": "^at_Railway-Current-Reference-Data-\\d{4}\\.gtfs\\.zip$"
+    }
+   ],
+   "notes": "Origin data.mobilitaetsverbuende.at needs registration; Transitous mirror only. File name contains timetable year (2026) -> resolve via listing / license.json. route_type 2.",
+   "approxMB": 4,
+   "options": {
+    "priority": 3
+   }
+  },
+  {
+   "id": "at-pta-regional",
+   "country": "AT",
+   "name": "Austria regional buses (7 PTA feeds: Eastern, Upper AT, Styria, Carinthia, Salzburg, Tyrol, Vorarlberg)",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitousMatch": "^at_PTA-.*\\.gtfs\\.zip$"
+    }
+   ],
+   "notes": "7 files totalling ~800 MB (with shapes); include city buses -> filter. Year in filename. Consider bus-only optional tier.",
+   "approxMB": 806
+  },
+  {
+   "id": "ch-national",
+   "country": "CH",
+   "name": "Switzerland aggregate (opentransportdata.swiss)",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitousMatch": "^ch_opentransportdataswiss\\d\\d\\.gtfs\\.zip$"
+    }
+   ],
+   "notes": "Extended route types (100-117 rail, 700 bus, 900 tram, 1000 ship, 1300/1400 cable). Year-based dataset: switch to ...27 at December timetable change. MDB mdb-2898 copy stale (May).",
+   "approxMB": 270,
+   "options": {
+    "priority": 3
+   }
+  },
+  {
+   "id": "nl-openov",
+   "country": "NL",
+   "name": "Netherlands aggregate (OpenOV, ex-OVapi)",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "nl_OpenOV.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-1077/latest.zip"
+    }
+   ],
+   "notes": "route_type 2 (174) + 3. Includes city transit -> filter.",
+   "approxMB": 200
+  },
+  {
+   "id": "be-sncb",
+   "country": "BE",
+   "name": "SNCB/NMBS",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "be_sncb.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-686/latest.zip"
+    }
+   ],
+   "notes": "Route types 100/103/700(replacement bus).",
+   "approxMB": 25
+  },
+  {
+   "id": "be-tec",
+   "country": "BE",
+   "name": "TEC (Wallonia buses)",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "be_tec.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-1212/latest.zip"
+    }
+   ],
+   "notes": "Origin needs API key; Transitous mirrors decrypted copy. Mostly regional bus.",
+   "approxMB": 75
+  },
+  {
+   "id": "be-delijn",
+   "country": "BE",
+   "name": "De Lijn (Flanders buses)",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "be_delijn.gtfs.zip"
+    }
+   ],
+   "notes": "Origin needs API key; Transitous mirror. Mix of city/regional.",
+   "approxMB": 172
+  },
+  {
+   "id": "lu-national",
+   "country": "LU",
+   "name": "Luxembourg national (ATP)",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "lu_administration-des-transports-publics.gtfs.zip"
+    }
+   ],
+   "notes": "CFL rail (route_type 2) + RGTR buses.",
+   "approxMB": 15
+  },
+  {
+   "id": "fr-sncf-national",
+   "country": "FR",
+   "name": "SNCF TGV INOUI/OUIGO, Intercités, TER (national)",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "url": "https://files.mobilitydatabase.org/tdg-83582/latest.zip"
+    },
+    {
+     "transitous": "fr_horaires-sncf.gtfs.zip"
+    }
+   ],
+   "notes": "route_type 2 (606) + 3 (TER coaches). No shapes.",
+   "approxMB": 5.6,
+   "license": "ODbL-1.0",
+   "licenseUrl": "https://transport.data.gouv.fr/datasets/horaires-sncf",
+   "options": {
+    "tripPrefixRegex": "_[A-Z]:([^:]+):",
+    "headsignIsNumber": true,
+    "prefixNames": {
+     "OUI": "TGV INOUI",
+     "OGO": "OUIGO",
+     "LYR": "TGV Lyria",
+     "IC": "Intercités",
+     "ICN": "Intercités de Nuit",
+     "TER": "TER",
+     "TT": "Tram-train",
+     "ICE": "ICE",
+     "TRN": "Train",
+     "CRE": "TER"
+    }
+   }
+  },
+  {
+   "id": "fr-transilien",
+   "country": "FR",
+   "name": "SNCF Transilien / RER (IdF suburban rail)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "url": "https://files.mobilitydatabase.org/tdg-67595/latest.zip"
+    }
+   ],
+   "notes": "Optional: suburban.",
+   "approxMB": 12,
+   "license": "ODbL-1.0",
+   "licenseUrl": "https://transport.data.gouv.fr/",
+   "options": {
+    "railCat": "Regional"
+   }
+  },
+  {
+   "id": "fr-ara-aggregate",
+   "country": "FR",
+   "name": "Auvergne-Rhône-Alpes aggregate (OùRA)",
+   "tier": "bus",
+   "keep": [
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitous": "fr_agregat-oura.gtfs.zip"
+    }
+   ],
+   "notes": "Includes urban networks -> filter by agency/route length.",
+   "approxMB": 97
+  },
+  {
+   "id": "fr-bretagne",
+   "country": "FR",
+   "name": "Bretagne multimodal (Korrigo / BreizhGo)",
+   "tier": "bus",
+   "keep": [
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitous": "fr_base-de-donnees-multimodale-transports-publics-en-bretagne-korrigo-gtfs.gtfs.zip"
+    }
+   ],
+   "notes": "Includes urban networks.",
+   "approxMB": 55
+  },
+  {
+   "id": "fr-normandie",
+   "country": "FR",
+   "name": "Normandie multimodal",
+   "tier": "bus",
+   "keep": [
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitous": "fr_base-de-donnees-multimodale-des-reseaux-de-transport-public-normands.gtfs.zip"
+    }
+   ],
+   "approxMB": 35
+  },
+  {
+   "id": "fr-grand-est-fluo",
+   "country": "FR",
+   "name": "Fluo Grand Est interurbain",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "fr_offre-du-reseau-de-transport-interurbain-fluo-grand-est.gtfs.zip"
+    }
+   ],
+   "approxMB": 37
+  },
+  {
+   "id": "fr-nouvelle-aquitaine",
+   "country": "FR",
+   "name": "Nouvelle-Aquitaine Mobilités aggregate",
+   "tier": "bus",
+   "keep": [
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitous": "fr_arrets-horaires-et-parcours-theoriques-des-reseaux-nva-mobilite-agreges-1.gtfs.zip"
+    }
+   ],
+   "approxMB": 67
+  },
+  {
+   "id": "fr-pdl-aleop",
+   "country": "FR",
+   "name": "Pays de la Loire Aléop",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "fr_arrets-horaires-et-circuits-des-lignes-de-transports-aleop-1.gtfs.zip"
+    }
+   ],
+   "approxMB": 10
+  },
+  {
+   "id": "fr-occitanie-lio",
+   "country": "FR",
+   "name": "Occitanie liO",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "fr_reseau-lio-occitanie.gtfs.zip"
+    }
+   ],
+   "approxMB": 20
+  },
+  {
+   "id": "fr-paca-zou-express",
+   "country": "FR",
+   "name": "ZOU! Express (PACA)",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "fr_lignes-des-reseaux-transport-zou-provence-alpes-cote-d-azur-express-3-3.gtfs.zip"
+    }
+   ],
+   "notes": "Also ZOU proximité (7 MB).",
+   "approxMB": 7.5
+  },
+  {
+   "id": "fr-bfc-mobigo",
+   "country": "FR",
+   "name": "Mobigo Bourgogne-Franche-Comté",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitousMatch": "^fr_reseau-de-transport-interurbain-mobigo-en-bourgogne-franche-comte--\\d+\\.gtfs\\.zip$"
+    }
+   ],
+   "notes": "Split into several files (--84072..84078).",
+   "approxMB": 17
+  },
+  {
+   "id": "fr-cvl-remi",
+   "country": "FR",
+   "name": "Rémi Centre-Val de Loire",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "fr_remi-offre-theorique-mobilite-reseau-interurbain-regional.gtfs.zip"
+    }
+   ],
+   "approxMB": 12.5
+  },
+  {
+   "id": "fr-hdf",
+   "country": "FR",
+   "name": "Hauts-de-France regional coach (Aisne/Oise/Somme/Pas-de-Calais/Nord)",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitousMatch": "^fr_arrets-horaires-et-parcours-theoriques-(gtfs-)?du-reseau-routier-regional-de-transport-(scolaire-et-)?interurbain-.*\\.gtfs\\.zip$"
+    }
+   ],
+   "notes": "Several per-département files; school-only files can be skipped.",
+   "approxMB": 40
+  },
+  {
+   "id": "gb-great-britain",
+   "country": "GB",
+   "name": "Great Britain all modes (rail from ATOC/NR + BODS buses, by aubin.app)",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitous": "gb_great-britain.gtfs.zip"
+    },
+    {
+     "url": "https://beta.aubin.app/gtfs/great_britain_gtfs.zip"
+    }
+   ],
+   "notes": "Heaviest feed: stop_times.txt 5.2 GB uncompressed -> stream/filter, never fully load. route_type 2 (28 rail routes, grouped per TOC), 3 (12.7k), 200 coach (257). No shapes.",
+   "approxMB": 562
+  },
+  {
+   "id": "gb-northern-ireland",
+   "country": "GB",
+   "name": "Northern Ireland (Translink)",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "gb_northern-ireland.gtfs.zip"
+    }
+   ],
+   "approxMB": 3.5
+  },
+  {
+   "id": "ie-tfi",
+   "country": "IE",
+   "name": "Transport for Ireland (all operators incl. Irish Rail)",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitous": "ie_transport-for-ireland.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-2364/latest.zip"
+    }
+   ],
+   "notes": "Irish Rail-only alternative: mdb-2637 (7.7 MB, shapes incl.).",
+   "approxMB": 173
+  },
+  {
+   "id": "dk-rejseplanen",
+   "country": "DK",
+   "name": "Denmark aggregate (Rejseplanen)",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-1292/latest.zip"
+    },
+    {
+     "transitous": "dk_rejseplanen.gtfs.zip"
+    }
+   ],
+   "notes": "route_type 2 + 3 + 715.",
+   "approxMB": 51,
+   "license": "see source",
+   "licenseUrl": "https://rejseplanen.dk/"
+  },
+  {
+   "id": "no-entur",
+   "country": "NO",
+   "name": "Norway aggregate (Entur)",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitous": "no_Entur.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-1078/latest.zip"
+    }
+   ],
+   "notes": "Extended types (701/704 bus, 712 school, 100-10x rail, 1000+ ferry). Big shapes.txt (2.3 GB) -> skip when unzipping.",
+   "approxMB": 468,
+   "options": {
+    "shapes": false
+   }
+  },
+  {
+   "id": "se-trafiklab",
+   "country": "SE",
+   "name": "Sweden aggregate (Trafiklab GTFS Sverige)",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitous": "se_Trafiklab.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-2939/latest.zip"
+    }
+   ],
+   "notes": "Origin needs Trafiklab API key; Transitous mirror (shapes stripped, 44 MB) or MDB mirror of Sweden 3 (821 MB with shapes, no key needed).",
+   "approxMB": 44
+  },
+  {
+   "id": "fi-fintraffic",
+   "country": "FI",
+   "name": "Finland national aggregate (Fintraffic)",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitous": "fi_fintraffic.gtfs.zip"
+    }
+   ],
+   "notes": "Mostly buses (3/701/704) incl. city networks; for rail use fi-vr-rail.",
+   "approxMB": 148
+  },
+  {
+   "id": "fi-vr-rail",
+   "country": "FI",
+   "name": "VR trains (Digitraffic)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "fi_digitraffic.gtfs.zip"
+    }
+   ],
+   "notes": "route_type 102/109, shapes incl.",
+   "approxMB": 3
+  },
+  {
+   "id": "ee-unified",
+   "country": "EE",
+   "name": "Estonia unified (Ühistranspordiregister)",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-3235/latest.zip"
+    }
+   ],
+   "notes": "Alternative: elron (rail, mdb-3153) + kaugliinid (intercity bus, mdb-3383).",
+   "approxMB": 49
+  },
+  {
+   "id": "lv-national",
+   "country": "LV",
+   "name": "Latvia national (pieturas)",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "lv_pieturas.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-2337/latest.zip"
+    }
+   ],
+   "notes": "route_type 2 (371) + 3.",
+   "approxMB": 30
+  },
+  {
+   "id": "lt-ltg-link",
+   "country": "LT",
+   "name": "LTG Link (rail)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "lt_LTG-Link.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-2991/latest.zip"
+    }
+   ],
+   "approxMB": 0.6
+  },
+  {
+   "id": "lt-visimarsrutai",
+   "country": "LT",
+   "name": "Lithuania all routes (visimarsrutai)",
+   "tier": "bus",
+   "keep": [
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitous": "lt_visimarsrutai.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/tld-4477/latest.zip"
+    }
+   ],
+   "notes": "Includes intercity buses; kautra (6 MB) is Kaunas-region intercity.",
+   "approxMB": 51
+  },
+  {
+   "id": "pl-pkp-ic",
+   "country": "PL",
+   "name": "PKP Intercity",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "pl_PKP-Intercity.gtfs.zip"
+    },
+    {
+     "url": "https://gtfs.kasznia.net/static/pkp-ic.zip"
+    }
+   ],
+   "notes": "Mostly shapes (384 MB uncompressed); timetable small.",
+   "approxMB": 126,
+   "options": {
+    "railCat": "LongDistance",
+    "priority": 3
+   }
+  },
+  {
+   "id": "pl-polish-trains",
+   "country": "PL",
+   "name": "Polish regional trains (Polregio, KM, KS, SKM, KD, ŁKA, etc.)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "pl_Polish-Trains.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-3191/latest.zip"
+    }
+   ],
+   "notes": "route_type 106/103/109 + 3 (replacement buses).",
+   "approxMB": 4.3
+  },
+  {
+   "id": "cz-czptt",
+   "country": "CZ",
+   "name": "Czech rail (CIS JŘ / CZPTT converted)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "cz_CZPTT.gtfs.zip"
+    },
+    {
+     "url": "https://motis.obehy.cz/get-feeds/cz-czptt-gtfs.zip"
+    }
+   ],
+   "notes": "route_type 106/103/102 + 714 (rail replacement). CC0.",
+   "approxMB": 8,
+   "options": {
+    "priority": 3
+   }
+  },
+  {
+   "id": "cz-jdf",
+   "country": "CZ",
+   "name": "Czech national bus (JDF merged, filtered)",
+   "tier": "bus",
+   "keep": [
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitous": "cz_JDF-merged.gtfs.zip"
+    },
+    {
+     "url": "https://motis.obehy.cz/get-feeds/cz-jdf-filtered-gtfs.zip"
+    }
+   ],
+   "notes": "701/704 regional bus, 202 national coach.",
+   "approxMB": 17
+  },
+  {
+   "id": "sk-zsr",
+   "country": "SK",
+   "name": "Slovak rail (ŽSR, all operators)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "sk_zsr.gtfs.zip"
+    }
+   ],
+   "approxMB": 0.3
+  },
+  {
+   "id": "sk-regional-bus",
+   "country": "SK",
+   "name": "Slovak regional buses (~15 operator feeds via Transitous: SAD-*, ARRIVA-*)",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitousMatch": "^sk_(SAD-|ARRIVA-|idsbk-regional-buses).*\\.gtfs\\.zip$"
+    }
+   ],
+   "notes": "No national aggregate; take the sk_SAD-* / sk_ARRIVA-* / sk_idsbk-regional-buses files from the listing.",
+   "approxMB": 45
+  },
+  {
+   "id": "hu-mav",
+   "country": "HU",
+   "name": "MÁV-START (rail)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "hu_mav.gtfs.zip"
+    },
+    {
+     "url": "https://www.mavcsoport.hu/gtfs/gtfsMavMenetrend.zip"
+    }
+   ],
+   "notes": "route_type 2 (8.9k) + 3 replacement.",
+   "approxMB": 2
+  },
+  {
+   "id": "hu-volanbusz",
+   "country": "HU",
+   "name": "Volánbusz (national intercity/regional bus)",
+   "tier": "bus",
+   "keep": [
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitous": "hu_volanbusz.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/tld-5862/latest.zip"
+    }
+   ],
+   "notes": "route_type 200 (2.8k) + 3.",
+   "approxMB": 92,
+   "options": {
+    "coachTypesAsBus": true
+   }
+  },
+  {
+   "id": "si-nap",
+   "country": "SI",
+   "name": "Slovenia NAP national (SŽ rail + intercity bus)",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "si_nap.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-2940/latest.zip"
+    }
+   ],
+   "notes": "route_type 2 (726) + 3.",
+   "approxMB": 40
+  },
+  {
+   "id": "it-trenitalia",
+   "country": "IT",
+   "name": "Trenitalia (national, incl. regional)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "it_trenitalia.gtfs.zip"
+    }
+   ],
+   "notes": "Origin proxy.busone.app needs key (encrypted in Transitous); mirror only. route_type 2 (2.7k) + 3. Italo, Trenord, FNM, EAV, FCE etc. separate. NeTEx also available (it_trenitalia.netex.zip).",
+   "approxMB": 22.5
+  },
+  {
+   "id": "it-trenord",
+   "country": "IT",
+   "name": "Trenord (Lombardy regional rail)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "it_Lombardia-Trenord.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-855/latest.zip"
+    }
+   ],
+   "approxMB": 1.6
+  },
+  {
+   "id": "it-regional-bus",
+   "country": "IT",
+   "name": "Italian regional bus operators (Cotral, Piemonte-Bus, Autolinee Toscane, ARST, Bolzano STA, Trentino...)",
+   "tier": "bus",
+   "keep": [
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitousMatch": "^it_(Lazio-Cotral|Piemonte-Bus|Sardegna-ARST|Sardegna-Contributate|Toscana-Autolinee-LineeRegionali|Bolzano-STA|Trentino-Trasporti|Sicilia-intercity-coaches|Calabria-CORE|Puglia-Brindisi-Extraurbano|liguria-riviera-transporti|Veneto-Mobilita-di-Marca|Lombardia-Autolinee-Varesine|Lombardia-Movibus)\\.gtfs\\.zip$"
+    }
+   ],
+   "notes": "No national aggregate; ~10 regional files from Transitous listing.",
+   "approxMB": 330
+  },
+  {
+   "id": "es-renfe-ld",
+   "country": "ES",
+   "name": "Renfe Larga Distancia / AVE / MD",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "es_RENFE-Larga-Distancia-y-AVE.gtfs.zip"
+    },
+    {
+     "url": "https://nap.transportes.gob.es/api/Fichero/download/1098"
+    }
+   ],
+   "notes": "route_type 2 (660). Origin NAP may need registration.",
+   "approxMB": 0.6
+  },
+  {
+   "id": "es-renfe-cercanias",
+   "country": "ES",
+   "name": "Renfe Cercanías",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "es_Cercanías-Renfe.gtfs.zip"
+    },
+    {
+     "url": "https://nap.transportes.gob.es/api/Fichero/download/1130"
+    }
+   ],
+   "approxMB": 9,
+   "options": {
+    "railCat": "Regional"
+   }
+  },
+  {
+   "id": "es-ouigo",
+   "country": "ES",
+   "name": "OUIGO España",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "es_Ouigo.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-2785/latest.zip"
+    }
+   ],
+   "approxMB": 0.05
+  },
+  {
+   "id": "es-feve",
+   "country": "ES",
+   "name": "Renfe Cercanías AM / FEVE (narrow gauge)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "es_Feve.gtfs.zip"
+    }
+   ],
+   "approxMB": 0.2
+  },
+  {
+   "id": "es-alsa",
+   "country": "ES",
+   "name": "ALSA (national coach)",
+   "tier": "core",
+   "keep": [
+    "coach"
+   ],
+   "sources": [
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-2825/latest.zip"
+    },
+    {
+     "transitous": "es_ALSA-autobuses.gtfs.zip"
+    }
+   ],
+   "notes": "route_type 3 (1735).",
+   "approxMB": 7,
+   "options": {
+    "allCoach": true
+   }
+  },
+  {
+   "id": "es-regional-bus",
+   "country": "ES",
+   "name": "Spanish regional bus (Xunta Galicia, Catalunya interurbà, C. Valenciana, Madrid CRTM interurbanos, Andalucía, Asturias...)",
+   "tier": "bus",
+   "keep": [
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitousMatch": "^es_(Autobuses-Xunta-de-Galicia|Autobús-interurbano-de-Cataluña|Autobús-interurbano-Comunidad-Valenciana|Generalitat-Valenciana-\\(Intercity-bus\\)|Autobús-interurbano-de-Navarra|Autobús-Principado-de-Asturias|Transporte-metropolitano-Andalucía|Sarfa-autobuses|Bizkaibus|Lurraldebus-.*|La-Veloz-SA|Autobuses-Sarbus|Autobús-en-Cantabria|Consorcio-Regional-de-Transportes-de-Madrid-CRTM-I|Transporte-público-de-la-Isla-de-Mallorca|Autobús-interurbano-de-Tenerife|Unauto|Alavabus)\\.gtfs\\.zip$"
+    }
+   ],
+   "notes": "Several files; no national aggregate (NAP has a bus-concessions dataset VAC-*).",
+   "approxMB": 200
+  },
+  {
+   "id": "pt-cp",
+   "country": "PT",
+   "name": "CP Comboios de Portugal",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-2057/latest.zip"
+    },
+    {
+     "transitous": "pt_Comboios-de-Portugal(CP).gtfs.zip"
+    }
+   ],
+   "notes": "route_type 2 + 109. Rede Expressos (coach) not available as open GTFS.",
+   "approxMB": 0.3,
+   "license": "see source",
+   "licenseUrl": "https://www.cp.pt/"
+  },
+  {
+   "id": "gr-hellenic-train",
+   "country": "GR",
+   "name": "Hellenic Train",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "gr_Hellenic-Train.gtfs.zip"
+    }
+   ],
+   "notes": "Unofficial conversion (jbb.ghsq.de). 106/109/102 rail + 3/4.",
+   "approxMB": 5.6
+  },
+  {
+   "id": "hr-hz",
+   "country": "HR",
+   "name": "HŽPP (Croatian rail)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "hr_hz.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-2920/latest.zip"
+    }
+   ],
+   "approxMB": 7
+  },
+  {
+   "id": "rs-srbijavoz",
+   "country": "RS",
+   "name": "Srbijavoz",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "rs_Srbijavoz.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-2927/latest.zip"
+    }
+   ],
+   "approxMB": 1.4
+  },
+  {
+   "id": "ba-zfbih",
+   "country": "BA",
+   "name": "ŽFBiH (Bosnia rail)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "ba_ZFBiH.gtfs.zip"
+    }
+   ],
+   "notes": "Last updated Aug 2025.",
+   "approxMB": 0.2
+  },
+  {
+   "id": "me-zpcg",
+   "country": "ME",
+   "name": "ŽPCG (Montenegro rail)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "me_zpcg.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-2377/latest.zip"
+    }
+   ],
+   "approxMB": 0.4
+  },
+  {
+   "id": "mk-zrsm",
+   "country": "MK",
+   "name": "ŽRSM (North Macedonia rail)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "mk_zr-north-macedonia.gtfs.zip"
+    }
+   ],
+   "approxMB": 0.2
+  },
+  {
+   "id": "xk-trainkos",
+   "country": "XK",
+   "name": "Trainkos",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "xk_Trainkos.gtfs.zip"
+    }
+   ],
+   "approxMB": 0.05
+  },
+  {
+   "id": "al-showmebus",
+   "country": "AL",
+   "name": "ShowMeBus (Albanian/Balkan intercity coaches)",
+   "tier": "core",
+   "keep": [
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "al_ShowMeBus.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-3483/latest.zip"
+    }
+   ],
+   "approxMB": 0.7,
+   "options": {
+    "allCoach": true
+   }
+  },
+  {
+   "id": "ro-railway",
+   "country": "RO",
+   "name": "Romanian railways (CFR Călători + private)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "ro_railway.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-3236/latest.zip"
+    }
+   ],
+   "approxMB": 16
+  },
+  {
+   "id": "bg-bdz",
+   "country": "BG",
+   "name": "BDŽ (Bulgarian rail)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "bg_bdz.gtfs.zip"
+    },
+    {
+     "url": "https://gtfs.livetransport.eu/gtfs/bdz.zip"
+    }
+   ],
+   "notes": "Only 4 rail routes (lines grouped).",
+   "approxMB": 1.6
+  },
+  {
+   "id": "md-cfm",
+   "country": "MD",
+   "name": "CFM (Moldova rail)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "md_CFM.gtfs.zip"
+    }
+   ],
+   "approxMB": 0.2
+  },
+  {
+   "id": "tr-tcdd",
+   "country": "TR",
+   "name": "TCDD Taşımacılık (Turkish rail)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "tr_tcdd.gtfs.zip"
+    },
+    {
+     "url": "https://github.com/yasinkaraaslan/tcdd-gtfs/raw/main/output/tcdd.zip"
+    }
+   ],
+   "notes": "Community-built (MIT); 90 routes incl. YHT (101). Turkish intercity coaches: only FlixBus TR.",
+   "approxMB": 0.05
+  },
+  {
+   "id": "ua-uz",
+   "country": "UA",
+   "name": "Ukrzaliznytsia",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "ua_ukrzaliznytsya.gtfs.zip"
+    },
+    {
+     "url": "https://jbb.ghsq.de/gtfs/ua-ukrzaliznytsya.gtfs.zip"
+    }
+   ],
+   "notes": "Unofficial; route_type 102/106; shapes incl.",
+   "approxMB": 6
+  },
+  {
+   "id": "cy-intercity",
+   "country": "CY",
+   "name": "Cyprus Intercity buses",
+   "tier": "core",
+   "keep": [
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "cy_Intercity.gtfs.zip"
+    }
+   ],
+   "approxMB": 0.6,
+   "options": {
+    "allCoach": true
+   }
+  },
+  {
+   "id": "es-fgc",
+   "country": "ES",
+   "name": "Ferrocarrils de la Generalitat de Catalunya",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "es_Ferrocarriles-de-la-Generalitat-de-Cataluña.gtfs.zip"
+    }
+   ],
+   "options": {
+    "railCat": "Regional"
+   }
+  },
+  {
+   "id": "es-euskotren",
+   "country": "ES",
+   "name": "Euskotren",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "es_Euskotren.gtfs.zip"
+    }
+   ],
+   "options": {
+    "railCat": "Regional"
+   }
+  },
+  {
+   "id": "it-eav",
+   "country": "IT",
+   "name": "EAV Campania (rail)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "it_Campania-EAV.gtfs.zip"
+    }
+   ],
+   "options": {
+    "railCat": "Regional"
+   }
+  },
+  {
+   "id": "cz-leo-regiojet-sk",
+   "country": "SK",
+   "name": "RegioJet SK",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "sk_Regiojet.gtfs.zip"
+    }
+   ],
+   "disabled": true,
+   "notes": "tiny; covered by CZ feed"
+  },
+  {
+   "id": "is-straeto",
+   "country": "IS",
+   "name": "Strætó (Iceland)",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "is_straeto.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "ee-kaugliinid",
+   "country": "EE",
+   "name": "Estonia intercity buses",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "ee_kaugliinid.gtfs.zip"
+    }
+   ],
+   "notes": "Covered by ee-unified; disabled to avoid dupes",
+   "disabled": true
+  }
+ ]
+}

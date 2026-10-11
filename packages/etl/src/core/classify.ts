@@ -29,7 +29,7 @@ export interface ClassifyContext {
 // Train category tokens (case-insensitive unless noted).
 const LD_TOKENS = new Set(
   [
-    "ice", "ic", "ec", "ece", "en", "nj", "ej", "rj", "rjx", "tgv", "inoui", "ouigo", "est", "eurostar", "thalys", "tha",
+    "ice", "ic", "ec", "oui", "ogo", "lyr", "ece", "en", "nj", "ej", "rj", "rjx", "tgv", "inoui", "ouigo", "est", "eurostar", "thalys", "tha",
     "ave", "avlo", "alvia", "av", "avant", "euromed", "iryo", "fr", "fa", "fb", "ita", "italo", "frecciarossa", "frecciargento",
     "frecciabianca", "icn", "ir", "yht", "eic", "eip", "tlk", "ex", "exp", "express", "sc", "le", "d", "flx", "flixtrain",
     "intercity", "eurocity", "eurocity-express", "nightjet", "euronight", "railjet", "ics", "icd", "es",
@@ -43,7 +43,7 @@ const LD_CASE_SENSITIVE = new Set(["rj", "RJ", "RJX"]); // regiojet "rj" (CZ) an
 const REG_TOKENS = new Set(
   [
     "re", "rb", "ire", "s", "ter", "r", "rx", "os", "sp", "mex", "rex", "cjx", "regio", "rs", "rer", "tl", "tlx", "er", "rr",
-    "skm", "km", "kd", "lka", "ska", "pr", "reg", "regional", "regionalzug", "regionalexpress", "regionalbahn", "sbahn",
+    "tt", "trn", "cre", "skm", "km", "kd", "lka", "ska", "pr", "reg", "regional", "regionalzug", "regionalexpress", "regionalbahn", "sbahn",
     "s-bahn", "sprinter", "stoptrein", "sneltrein", "local", "l", "lt", "trn", "rgt", "slp", "p", "ag", "erx", "brb", "alx",
     "vias", "nwb", "mrb", "rbx", "rt", "rex", "cjx", "atb", "rv", "rf", "rg", "ir-reg", "ter200", "transilien", "train-ter",
     "rgx", "kml", "ks", "osobni", "hex", "fex", "rpx", "cityjet", "pe",
@@ -160,6 +160,7 @@ export function classifyRoute(r: RouteInfo, ctx: ClassifyContext): Classificatio
   // Mixed operators (GWR, EMR, ScotRail…) are left ambiguous when only matched by operator name in GB.
   if (cat === Cat.Regional && ctx.country === "GB" && /\b(gwr|emr|scotrail|transport for wales|tfw)\b/i.test(r.agency + " " + allNames)) cat = null;
 
+  if (cat == null && opts.railCatDefault) cat = Cat[opts.railCatDefault];
   if (cat === Cat.Regional && opts.dticket && ctx.country === "DE") flags |= Flag.DTicket;
   return { cls: "rail", cat, flags };
 }

@@ -180,21 +180,36 @@ function lead(a: LonLat, P: LonLat[]): LonLat[] {
   const tx = hx - sx, ty = hy - sy;
   const cos = (sx * tx + sy * ty) / ((Math.hypot(sx, sy) || 1) * (Math.hypot(tx, ty) || 1));
   if (cos > 0.5) return [a, ...P]; // turn < 60°: plain stub, smoothing rounds it
+  // city dot behind the station: join the path further on, where a stub meets it at a gentle angle
+  const lim = Math.min(0.35 * total, 6000);
+  for (let s = 100; s <= lim; s += 100) {
+    const q = pointAt(P, s), q2 = pointAt(P, Math.min(total, s + 200));
+    const [qx, qy] = toM(q.p), [rx, ry] = toM(q2.p);
+    const dq = Math.hypot(qx, qy);
+    if (dq > Math.max(2.5 * d, 1500)) continue;
+    const c = (qx * (rx - qx) + qy * (ry - qy)) / ((dq || 1) * (Math.hypot(rx - qx, ry - qy) || 1));
+    if (c > 0.75) return [...bezierJoin(q.p, pointAt(P, Math.max(0, s - 200)).p), q.p, ...P.slice(q.k + 1)];
+  }
   // merge point: far enough along that the curve can turn gently
   const m = pointAt(P, Math.min(0.3 * total, Math.max(2 * d, 800)));
   const back = pointAt(P, Math.max(0, m.s - 300));
-  const [mx, my] = toM(m.p), [bx, by] = toM(back.p);
-  const tl = Math.hypot(mx - bx, my - by) || 1;
-  const L = Math.hypot(mx, my);
-  const c2x = mx - ((mx - bx) / tl) * (L / 2.5), c2y = my - ((my - by) / tl) * (L / 2.5);
-  const c1x = c2x / 3, c1y = c2y / 3;
-  const out: LonLat[] = [];
-  const n = 14;
-  for (let i = 0; i < n; i++) {
-    const t = i / n, u = 1 - t;
-    out.push(toLL(3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * mx, 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * my));
+  return [...bezierJoin(m.p, back.p), m.p, ...P.slice(m.k + 1)];
+
+  /** cubic Bézier from a to p (exclusive), arriving tangent to the direction back→p */
+  function bezierJoin(p: LonLat, back: LonLat): LonLat[] {
+    const [mx, my] = toM(p), [bx, by] = toM(back);
+    const tl = Math.hypot(mx - bx, my - by) || 1;
+    const L = Math.hypot(mx, my);
+    const c2x = mx - ((mx - bx) / tl) * (L / 2.5), c2y = my - ((my - by) / tl) * (L / 2.5);
+    const c1x = c2x / 3, c1y = c2y / 3;
+    const out: LonLat[] = [];
+    const n = Math.max(4, Math.min(16, Math.ceil(L / 150)));
+    for (let i = 0; i < n; i++) {
+      const t = i / n, u = 1 - t;
+      out.push(toLL(3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * mx, 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * my));
+    }
+    return out;
   }
-  return [...out, m.p, ...P.slice(m.k + 1)];
 }
 
 /** Point at distance s along P; k = index of the vertex before it. */
@@ -238,7 +253,7 @@ function trimStart(a: LonLat, P: LonLat[]): LonLat[] {
 
 /** Smooth + round. style 0 = already smooth curve, 1 = rail (stay on track), 2 = road shape. */
 function finish(c: LonLat[], style: 0 | 1 | 2): [number, number][] {
-  if (style === 1) c = smooth(c, { iterations: 2, maxCut: 200, minTurnDeg: 6 });
+  if (style === 1) c = smooth(c, { iterations: 2, maxCut: 200, minTurnDeg: [6, 20] });
   else if (style === 2) c = smooth(c, { iterations: 2, maxCut: 600, minTurnDeg: 4 });
   return roundCoords(c);
 }

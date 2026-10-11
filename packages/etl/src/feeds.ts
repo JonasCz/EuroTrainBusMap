@@ -14,6 +14,8 @@ export type FeedSource =
 export interface FeedOptions {
   /** Force category of all rail routes in this feed. */
   railCat?: "LongDistance" | "Regional";
+  /** Category for rail routes the classifier cannot decide (instead of the per-trip heuristic). */
+  railCatDefault?: "LongDistance" | "Regional";
   /** Treat every bus route (3, 7xx, 2xx) of this feed as Coach. */
   allCoach?: boolean;
   /** Treat route_type 200–209 as regular Bus (e.g. HU Volánbusz uses 200 for everything). */
@@ -30,6 +32,12 @@ export interface FeedOptions {
   onlyAgencies?: string;
   /** Minimum straight-line span (km) of a bus route (default from config). */
   minBusKm?: number;
+  /** Regex with one capture group applied to trip_id to get the train category when trip_short_name is missing. */
+  tripPrefixRegex?: string;
+  /** Display names for train categories (prefix → name), e.g. {"OUI": "TGV INOUI"}. */
+  prefixNames?: Record<string, string>;
+  /** trip_headsign holds the train number (SNCF): use it as number, derive headsign from the last stop. */
+  headsignIsNumber?: boolean;
   /** Priority in cross-feed dedup (higher wins ties). Default 0. */
   priority?: number;
 }

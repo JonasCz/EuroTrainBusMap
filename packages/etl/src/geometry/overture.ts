@@ -100,6 +100,20 @@ export async function ensureRailExtract(workDir: string, log: Log): Promise<stri
   const dir = join(workDir, 'overture');
   mkdirSync(dir, { recursive: true });
   const cached = readdirSync(dir).filter((f) => /^rail-europe-.*\.parquet$/.test(f)).sort();
+  // The Overture bucket is public. DuckDB would send AWS_* credentials from the environment (e.g.
+  // a CI role or a sandbox placeholder) and get 403, so hide them while DuckDB runs.
+  const saved: Record<string, string> = {};
+  for (const k of ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_PROFILE', 'AWS_DEFAULT_PROFILE']) {
+    if (process.env[k] !== undefined) { saved[k] = process.env[k]!; delete process.env[k]; }
+  }
+  try {
+    return await extract(dir, cached, workDir, log);
+  } finally {
+    Object.assign(process.env, saved);
+  }
+}
+
+async function extract(dir: string, cached: string[], workDir: string, log: Log): Promise<string> {
   const c = await openDuckDB(workDir, log, ['httpfs', 'spatial']);
   let release = await resolveRelease(c, log);
   if (!release) {
@@ -114,7 +128,7 @@ export async function ensureRailExtract(workDir: string, log: Log): Promise<stri
   log(`  overture: extracting rail segments from release ${release} (takes ~10-15 min)…`);
   const t0 = Date.now();
   // Anonymous S3 access: an explicit secret without keys, so DuckDB doesn't send the AWS_* env credentials.
-  await c.run(`CREATE OR REPLACE SECRET overture (TYPE s3, PROVIDER config, REGION 'us-west-2')`);
+  await c.run(`CREATE OR REPLACE SECRET overture (TYPE s3, PROVIDER config, KEY_ID '', SECRET '', REGION 'us-west-2')`);
   await c.run(`SET threads=8`);
   const [x0, y0, x1, y1] = EUROPE_BBOX;
   const src = `s3://overturemaps-us-west-2/release/${release}/theme=transportation/type=segment/*.parquet`;
@@ -133,7 +147,7 @@ export async function ensureRailExtract(workDir: string, log: Log): Promise<stri
     if (release !== FALLBACK_RELEASE) {
       log(`  overture: release ${release} failed (${String(e).slice(0, 160)}); trying ${FALLBACK_RELEASE}`);
       process.env.ETBM_OVERTURE_RELEASE = FALLBACK_RELEASE;
-      try { return await ensureRailExtract(workDir, log); } finally { delete process.env.ETBM_OVERTURE_RELEASE; }
+      try { return await extract(dir, cached, workDir, log); } finally { delete process.env.ETBM_OVERTURE_RELEASE; }
     }
     throw e;
   }

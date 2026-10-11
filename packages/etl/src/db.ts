@@ -27,11 +27,20 @@ export class Db {
   }
 
   async run(sql: string): Promise<void> {
-    await this.con.run(sql);
+    try {
+      await this.con.run(sql);
+    } catch (e) {
+      throw new Error(`${(e as Error).message}\n  in SQL: ${sql.slice(0, 600)}`);
+    }
   }
 
   async all<T = Row>(sql: string): Promise<T[]> {
-    const r = await this.con.runAndReadAll(sql);
+    let r;
+    try {
+      r = await this.con.runAndReadAll(sql);
+    } catch (e) {
+      throw new Error(`${(e as Error).message}\n  in SQL: ${sql.slice(0, 600)}`);
+    }
     const names = r.columnNames();
     const rows = r.getRows();
     return rows.map((row) => {
@@ -92,7 +101,10 @@ export class Db {
     await rm(tmpPath, { force: true });
   }
 
+  private closed = false;
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
     this.con.closeSync();
     this.inst.closeSync();
   }

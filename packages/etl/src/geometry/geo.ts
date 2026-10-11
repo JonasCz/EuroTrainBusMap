@@ -100,14 +100,16 @@ export function dedupe(c: readonly LonLat[], eps = 0.5): LonLat[] {
  */
 export function smooth(
   c: readonly LonLat[],
-  opts: { iterations?: number; ratio?: number; maxCut?: number; minTurnDeg?: number } = {},
+  opts: { iterations?: number; ratio?: number; maxCut?: number; minTurnDeg?: number | number[] } = {},
 ): LonLat[] {
   const { iterations = 2, ratio = 0.25, minTurnDeg = 2 } = opts;
   let maxCut = opts.maxCut ?? 250;
   let pts = c.slice();
-  const cosMin = Math.cos(minTurnDeg * D2R);
   for (let it = 0; it < iterations; it++) {
     if (pts.length < 3) break;
+    // per-iteration threshold: later passes can be limited to sharper corners
+    const th = Array.isArray(minTurnDeg) ? minTurnDeg[Math.min(it, minTurnDeg.length - 1)]! : minTurnDeg;
+    const cosMin = Math.cos(th * D2R);
     const out: LonLat[] = [pts[0]!];
     for (let i = 1; i < pts.length - 1; i++) {
       const p = pts[i - 1]!, q = pts[i]!, r = pts[i + 1]!;

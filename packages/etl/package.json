@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build-data": "node --max-old-space-size=10240 --import tsx src/cli.ts",
+    "build-data": "NODE_USE_ENV_PROXY=1 node --no-warnings --max-old-space-size=8192 --expose-gc --import tsx src/cli.ts",
     "test": "vitest run",
     "typecheck": "tsc -p ."
   },
