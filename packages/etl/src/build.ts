@@ -41,6 +41,7 @@ import { loadStopNames, writeStopCandidates } from "./stopnames-io.ts";
 import { GridIndex, fastDist, greatCircle, haversine, round5, simplifyLine, type LonLat } from "./util/geo.ts";
 import { log, warn, type StageTimer } from "./util/log.ts";
 import { runSanity } from "./sanity.ts";
+import { writeMapData } from "./mapdata.ts";
 
 export interface BuildCtx {
   db: Db;
@@ -978,6 +979,13 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     }
   }
 
+  // ------------------------------------------------------------------ progressive map data
+  // core.json, stations.json, vector tiles of the drawn network, per-shard geo files
+  timer.start("mapdata");
+  const md = await writeMapData(network, outDir, log);
+  totalBytes += md.bytes;
+  fileCount += md.files;
+
   // ------------------------------------------------------------------ stats, sanity, manifest
   timer.start("sanity");
   const catTrips: Record<string, number> = {};
@@ -1024,7 +1032,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   timer.end();
 
   stats.durationSec = Math.round((Date.now() - ctx.t0) / 1000);
-  const manifest: Manifest = { schema: SCHEMA_VERSION, build, generatedAt: new Date().toISOString(), startDate: args.startDate, days: D, stats };
+  const manifest: Manifest = { schema: SCHEMA_VERSION, build, generatedAt: new Date().toISOString(), startDate: args.startDate, days: D, stats, mapdata: md.mapdata };
   Object.assign(report, {
     build,
     stats,

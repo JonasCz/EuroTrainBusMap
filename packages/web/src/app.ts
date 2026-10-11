@@ -1,7 +1,7 @@
 /** Application controller: state → data → map highlight + panel. */
 import type { CityFile } from "@etbm/shared";
 import { loadCity } from "./data/load.ts";
-import { cityTz, type Net } from "./data/net.ts";
+import { cityTz, ensureDetail, type Net } from "./data/net.ts";
 import { addDays, inHorizon } from "./logic/calendar.ts";
 import { connections, type Connection } from "./logic/connections.ts";
 import { sameFilters, type Filters } from "./logic/filters.ts";
@@ -111,7 +111,7 @@ export class App {
     let cf: CityFile;
     const tLoad = performance.now();
     try {
-      cf = await loadCity(net.ds, origin);
+      [cf] = await Promise.all([loadCity(net.ds, origin), ensureDetail(net)]);
       if (import.meta.env.DEV) console.debug(`[perf] city file ${originName} ${Math.round(performance.now() - tLoad)} ms`);
     } catch (e) {
       if (!stale()) this.panel.show({ kind: "error", message: `Could not load timetable data for ${originName}. ${(e as Error).message}` });
@@ -125,9 +125,12 @@ export class App {
       const reach = computeReach(cf, net.ctx, s.filters);
       if (import.meta.env.DEV) console.debug(`[perf] reach ${reach.dests.size} dests ${Math.round(performance.now() - tReach)} ms`);
       const focus = new Set([origin, ...reach.dests.keys()]);
-      await this.map.setHighlight({ emphasis: { focus, active: true, origin }, corridors: reach.corridors });
+      // panel first (the list is what the user waits for), then the map highlight
       document.title = `${originName} – EuroTrainBusMap`;
       this.panel.show({ kind: "reach", city: origin, reach });
+      await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+      if (stale()) return;
+      await this.map.setHighlight({ emphasis: { focus, active: true, origin }, corridors: reach.corridors });
       // frame the origin and its most important destinations (not every bus stop)
       const top = [...reach.dests.keys()].sort((a, b) => net.cities[b]!.importance - net.cities[a]!.importance).slice(0, 25);
       this.frame([origin, ...top], `r${origin}`);
@@ -213,7 +216,7 @@ export class App {
 
   private withCorridorEnds(focus: Set<number>, corridors: Map<number, number>): Set<number> {
     for (const cid of corridors.keys()) {
-      const c = this.net.corridors[cid];
+      const c = this.net.geo.corridors.get(cid);
       if (c) focus.add(c.a).add(c.b);
     }
     return focus;

@@ -2,8 +2,23 @@ import type { AttributionFile } from "@etbm/shared";
 import { h } from "./dom.ts";
 
 /** Footer line + dialog listing all data sources. */
-export function mountAttribution(footer: HTMLElement, dialog: HTMLDialogElement, file: AttributionFile, generatedAt: string): void {
-  const open = h("button", { type: "button", class: "link", onclick: () => dialog.showModal() }, "Data sources");
+export function mountAttribution(footer: HTMLElement, dialog: HTMLDialogElement, load: () => Promise<AttributionFile>, generatedAt: string): void {
+  let filled = false;
+  const open = h(
+    "button",
+    {
+      type: "button",
+      class: "link",
+      onclick: async () => {
+        if (!filled) {
+          fill(dialog, await load(), generatedAt);
+          filled = true;
+        }
+        dialog.showModal();
+      },
+    },
+    "Data sources",
+  );
   footer.replaceChildren(
     h("a", { href: "https://www.openstreetmap.org/copyright", target: "_blank", rel: "noopener" }, "© OpenStreetMap contributors"),
     h("span", { class: "sep" }, "·"),
@@ -11,6 +26,12 @@ export function mountAttribution(footer: HTMLElement, dialog: HTMLDialogElement,
     h("span", { class: "sep" }, "·"),
     open,
   );
+  dialog.addEventListener("click", (e) => {
+    if (e.target === dialog) dialog.close();
+  });
+}
+
+function fill(dialog: HTMLDialogElement, file: AttributionFile, generatedAt: string): void {
   const sources = [
     ...file.sources,
     ...(file.sources.some((s) => /openstreetmap/i.test(s.name)) ? [] : [{ name: "OpenStreetMap", license: "ODbL 1.0", url: "https://www.openstreetmap.org/copyright", attribution: "© OpenStreetMap contributors" }]),
@@ -39,7 +60,4 @@ export function mountAttribution(footer: HTMLElement, dialog: HTMLDialogElement,
       h("p", { class: "small muted" }, `Data generated ${new Date(generatedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}. Timetables may be incomplete; always check with the operator before travelling.`),
     ),
   );
-  dialog.addEventListener("click", (e) => {
-    if (e.target === dialog) dialog.close();
-  });
 }

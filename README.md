@@ -48,13 +48,28 @@ Pipeline in short:
    rail, road with road) and cut where the set of corridors using them changes. Each piece of
    track/road is stored and drawn once (`NetworkFile.segments`, `Corridor.segs`) with the summed
    traffic of all corridors on it, so an express A–C no longer draws a second line beside A–B–C.
-9. **Output** (`data/<build>/`): `network.json` (packed, ~10.6 MB raw / ~4.5 MB gzip),
+9. **Output** (`data/<build>/`): `network.json` (packed, ~10.6 MB raw / ~4.5 MB gzip; the full network for tools – the web app uses the map data below),
    `calendars.json`, `attribution.json`, `basemap/*.json` and `shard/<n>.json` – the per-city
    timetables, grouped into ~600 shards of spatially neighbouring cities (`City.shard`).
    `data/manifest.json` points to the current build.
+10. **Map data** (`src/mapdata.ts`, formats in `packages/shared/src/netmap.ts`) – what the web app
+   actually loads, so phones never download the whole network:
+   - `core.json` (~0.55 MB gzip): cities only (names, positions, importance, shard) + tile index;
+     the only data needed to start.
+   - `tiles/{z}/{x}/{y}.pbf.gz` (z2–7, ~400 files, ~9 MB total): gzipped Mapbox vector tiles of the
+     drawn network (layers `seg`, `city`, and at z7 also `term` end pieces and `st` stations),
+     overzoomed beyond z7. Features are filter-independent: per category width/LOD level/D-Ticket
+     flag; the style packs the visible categories side by side. Low zooms only hold what is shown
+     there, with equal neighbouring segments merged. Stored gzipped because static hosts don't
+     compress protobuf; the app inflates them (DecompressionStream).
+   - `geo/<shard>.json` (~50 KB gzip on average): for each timetable shard, the corridors its patterns
+     use (with segment geometry, for the selection highlight) and the stations it references
+     (names/positions). Loaded together with the shard on a click.
+   `manifest.json` points to `core.json` and lists the tiles (`Manifest.mapdata`).
+   Rebuild just this stage for an existing build: `node --import tsx packages/etl/src/mapdata.ts <out>/<build>`.
 
 Typical full build: ~150 feed files, ~36k cities, ~76k stations, ~70k corridors, ~2.1M trips,
-~1.1 GB in ~640 files; ~15 min on a 4-core runner (plus ~1 min to download assets).
+~1.2 GB in ~1700 files; ~16 min on a 4-core runner (plus ~1 min to download assets).
 
 ## Running locally
 

@@ -54,6 +54,11 @@ export interface Manifest {
   /** Number of days covered by calendar bitmasks. */
   days: number;
   stats: Record<string, number>;
+  /**
+   * Progressive map data (see netmap.ts): when present the client starts from
+   * `<build>/core.json` and the vector tiles listed here instead of network.json.
+   */
+  mapdata?: { version: number; core: string; tiles: import("./netmap.ts").TileIndex };
 }
 
 export interface City {

@@ -140,7 +140,7 @@ export class Panel {
   // ---- search -------------------------------------------------------------------
 
   private bindSearch(): void {
-    const names = this.net.cities.map((c) => slugify(c.name));
+    const names = this.net.nameKey;
     const update = () => {
       const q = slugify(this.search.value);
       if (!q) {
@@ -302,7 +302,7 @@ export class Panel {
         h(
           "p",
           { class: "muted small" },
-          `${n.cities.length.toLocaleString("en")} cities · ${n.corridors.length.toLocaleString("en")} corridors · timetables ${formatDateShort(n.cal.startDate)} – ${formatDateShort(end)}`,
+          `${n.cities.length.toLocaleString("en")} cities · ${n.counts.corridors.toLocaleString("en")} corridors · timetables ${formatDateShort(n.cal.startDate)} – ${formatDateShort(end)}`,
         ),
       ),
     ];
@@ -341,7 +341,7 @@ export class Panel {
         "section",
         { class: "dest-group" },
         title ? h("h3", { class: "section" }, title) : null,
-        h("ul", { class: "dest-list", "aria-label": title || `Direct destinations from ${c.name}` }, items.map(row)),
+        this.lazyList(h("ul", { class: "dest-list", "aria-label": title || `Direct destinations from ${c.name}` }), items, row),
       ),
     );
     const empty = h("p", { class: "pad muted", hidden: true }, "No destination matches.");
@@ -367,6 +367,25 @@ export class Panel {
     }
     out.push(...lists, empty);
     return out;
+  }
+
+  /** Long lists: render the first rows now and append the rest in idle chunks (keeps taps responsive on phones). */
+  private lazyList<T>(ul: HTMLElement, items: T[], row: (x: T) => HTMLElement): HTMLElement {
+    const FIRST = 40, CHUNK = 150;
+    ul.append(...items.slice(0, FIRST).map(row));
+    let i = FIRST;
+    const next = () => {
+      if (!ul.isConnected && i > FIRST) return; // view replaced
+      ul.append(...items.slice(i, i + CHUNK).map(row));
+      i += CHUNK;
+      const f = this.body.querySelector<HTMLInputElement>(".dest-filter");
+      if (f?.value) f.dispatchEvent(new Event("input")); // apply an active filter to the new rows
+      if (i < items.length) schedule();
+      else ul.dispatchEvent(new Event("rendered"));
+    };
+    const schedule = () => ("requestIdleCallback" in window ? requestIdleCallback(next, { timeout: 500 }) : setTimeout(next, 16));
+    if (i < items.length) schedule();
+    return ul;
   }
 
   /** Top stations of a city (rail first, by service), with "+N more". */

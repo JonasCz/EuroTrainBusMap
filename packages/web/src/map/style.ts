@@ -6,8 +6,15 @@ import type { Theme } from "./theme.ts";
 export const FONT_REGULAR = ["Noto Sans Regular"];
 export const FONT_MEDIUM = ["Noto Sans Medium"];
 
+/** Glyph ranges every view needs (Latin, Latin Extended A/B), fetched before MapLibre asks for them. */
+export function glyphPrefetchUrls(): string[] {
+  const base = absUrl("glyphs/");
+  return [...FONT_REGULAR, ...FONT_MEDIUM].flatMap((f) => ["0-255", "256-511", "512-767"].map((r) => `${base}${encodeURIComponent(f)}/${r}.pbf.gz`));
+}
+
+/** Glyph PBFs are stored gzipped (static hosts don't compress protobuf); see protocol.ts. */
 export function glyphsUrl(): string {
-  return absUrl("glyphs/") + "{fontstack}/{range}.pbf";
+  return "etbmgz://" + absUrl("glyphs/") + "{fontstack}/{range}.pbf.gz";
 }
 
 export function baseStyle(theme: Theme, basemapUrl: (name: string) => string): StyleSpecification {

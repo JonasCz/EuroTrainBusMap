@@ -30,7 +30,7 @@ import {
 import { buildBasemap } from "./basemap.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const OUT = join(HERE, "..", "public", "data");
+const OUT = process.env.FIXTURE_OUT ?? join(HERE, "..", "public", "data");
 const BUILD = "fixture";
 const DAYS = 60;
 
@@ -712,6 +712,9 @@ await w("network.json", network);
 await w("calendars.json", calendars);
 await w("attribution.json", attribution);
 for (const c of cities) await w(`city/${c.id}.json`, cityFile(c));
+// progressive map data (core.json, stations.json, vector tiles, geo files) – same writer as the ETL
+const { writeMapData } = await import("../../etl/src/mapdata.ts");
+manifest.mapdata = (await writeMapData(structuredClone(network), dir, () => undefined)).mapdata;
 await writeFile(join(OUT, "manifest.json"), JSON.stringify(manifest, null, 2));
 console.log(`fixture: ${cities.length} cities, ${stations.length} stations, ${corridors.length} corridors, ${patterns.length} patterns, ${trips.length} trips, start ${startDate}`);
 

@@ -127,53 +127,114 @@ export function decodePolyline(s: string, ref?: { lat: number; lon: number }): [
 // ---------------------------------------------------------------- pack / unpack
 const i5 = (x: number) => Math.round(x * 1e5);
 
-export function packNetwork(n: Pick<NetworkFile, "cities" | "stations" | "corridors" | "segments">): PackedNetwork {
+/** Columnar cities (see PackedNetwork.cities). `nStationsTotal` checks that stations are ordered by city. */
+export function packCities(list: City[], nStationsTotal?: number, opts: { prec?: number; population?: boolean } = {}): { countries: string[]; cities: PackedNetwork["cities"] } {
+  const f = 10 ** (opts.prec ?? 5);
   const countries: string[] = [];
   const cIdx = new Map<string, number>();
-  const p: PackedNetwork = {
-    v: 1,
-    countries,
-    cities: { name: [], country: [], lon: [], lat: [], population: [], importance: [], cats: [], tz: [], nStations: [] },
-    stations: { name: [], dlon: [], dlat: [], cats: [] },
-    corridors: { a: [], db: [], cats: [], dtCats: [], tpd: [[], [], [], []], snapped: [], sa: [], sb: [], poly: [] },
-  };
+  const cities: PackedNetwork["cities"] = { name: [], country: [], lon: [], lat: [], population: [], importance: [], cats: [], tz: [], nStations: [], shard: [] };
   let plon = 0, plat = 0, nextStation = 0;
-  for (const c of n.cities) {
+  for (const c of list) {
     let ci = cIdx.get(c.country);
     if (ci === undefined) {
       ci = countries.length;
       countries.push(c.country);
       cIdx.set(c.country, ci);
     }
-    const lon = i5(c.lon), lat = i5(c.lat);
-    p.cities.name.push(c.name);
-    p.cities.country.push(ci);
-    p.cities.lon.push(lon - plon);
-    p.cities.lat.push(lat - plat);
+    const lon = Math.round(c.lon * f), lat = Math.round(c.lat * f);
+    cities.name.push(c.name);
+    cities.country.push(ci);
+    cities.lon.push(lon - plon);
+    cities.lat.push(lat - plat);
     plon = lon;
     plat = lat;
-    p.cities.population.push(c.population);
-    p.cities.importance.push(Math.round(c.importance * 1000));
-    p.cities.cats.push(c.cats);
-    p.cities.tz.push(c.tz);
-    p.cities.nStations.push(c.stations.length);
-    (p.cities.shard ??= []).push(c.shard ?? -1);
+    if (opts.population !== false) cities.population.push(c.population);
+    cities.importance.push(Math.round(c.importance * 1000));
+    cities.cats.push(c.cats);
+    cities.tz.push(c.tz);
+    cities.nStations.push(c.stations.length);
+    cities.shard!.push(c.shard ?? -1);
     c.stations.forEach((s, k) => {
       if (s !== nextStation + k) throw new Error(`packNetwork: stations must be ordered by city (city ${c.id})`);
     });
     nextStation += c.stations.length;
   }
-  if (nextStation !== n.stations.length) throw new Error("packNetwork: every station must belong to a city");
-  for (const s of n.stations) {
-    const c = n.cities[s.city]!;
+  if (nStationsTotal !== undefined && nextStation !== nStationsTotal) throw new Error("packNetwork: every station must belong to a city");
+  return { countries, cities };
+}
+
+/** Columnar stations relative to their city (see PackedNetwork.stations). */
+export function packStations(cities: City[], stations: Station[]): PackedNetwork["stations"] {
+  const out: PackedNetwork["stations"] = { name: [], dlon: [], dlat: [], cats: [], tpd: [] };
+  for (const s of stations) {
+    const c = cities[s.city]!;
     let name = s.name.replace(/^~+/, "");
     if (name.length > c.name.length && name.startsWith(c.name)) name = "~" + name.slice(c.name.length);
-    p.stations.name.push(name);
-    p.stations.dlon.push(i5(s.lon) - i5(c.lon));
-    p.stations.dlat.push(i5(s.lat) - i5(c.lat));
-    p.stations.cats.push(s.cats);
-    (p.stations.tpd ??= []).push(Math.round((s.tpd ?? 0) * 10));
+    out.name.push(name);
+    out.dlon.push(i5(s.lon) - i5(c.lon));
+    out.dlat.push(i5(s.lat) - i5(c.lat));
+    out.cats.push(s.cats);
+    out.tpd!.push(Math.round((s.tpd ?? 0) * 10));
   }
+  return out;
+}
+
+export function unpackCities(countries: string[], pc: PackedNetwork["cities"], prec = 5): City[] {
+  const f = 10 ** prec;
+  const cities: City[] = [];
+  let lon = 0, lat = 0, sid = 0;
+  for (let i = 0; i < pc.name.length; i++) {
+    lon += pc.lon[i]!;
+    lat += pc.lat[i]!;
+    const ids: number[] = [];
+    for (let k = 0; k < pc.nStations[i]!; k++) ids.push(sid++);
+    cities.push({
+      id: i,
+      name: pc.name[i]!,
+      country: countries[pc.country[i]!]!,
+      lon: lon / f,
+      lat: lat / f,
+      population: pc.population[i] ?? 0,
+      importance: pc.importance[i]! / 1000,
+      cats: pc.cats[i]!,
+      stations: ids,
+      tz: pc.tz[i]!,
+      ...(pc.shard && pc.shard[i]! >= 0 ? { shard: pc.shard[i]! } : {}),
+    });
+  }
+  return cities;
+}
+
+export function unpackStations(cities: City[], ps: PackedNetwork["stations"]): Station[] {
+  const stations: Station[] = [];
+  let ci = 0, left = cities.length ? cities[0]!.stations.length : 0;
+  for (let s = 0; s < ps.name.length; s++) {
+    while (left === 0 && ci + 1 < cities.length) left = cities[++ci]!.stations.length;
+    left--;
+    const c = cities[ci]!;
+    const nm = ps.name[s]!;
+    stations.push({
+      id: s,
+      city: ci,
+      name: nm.startsWith("~") ? c.name + nm.slice(1) : nm,
+      lon: (Math.round(c.lon * 1e5) + ps.dlon[s]!) / 1e5,
+      lat: (Math.round(c.lat * 1e5) + ps.dlat[s]!) / 1e5,
+      cats: ps.cats[s]!,
+      ...(ps.tpd && ps.tpd[s] ? { tpd: ps.tpd[s]! / 10 } : {}),
+    });
+  }
+  return stations;
+}
+
+export function packNetwork(n: Pick<NetworkFile, "cities" | "stations" | "corridors" | "segments">): PackedNetwork {
+  const { countries, cities } = packCities(n.cities, n.stations.length);
+  const p: PackedNetwork = {
+    v: 1,
+    countries,
+    cities,
+    stations: packStations(n.cities, n.stations),
+    corridors: { a: [], db: [], cats: [], dtCats: [], tpd: [[], [], [], []], snapped: [], sa: [], sb: [], poly: [] },
+  };
   let pa = 0, prevCode = 0;
   const first = (city: number) => n.cities[city]!.stations[0] ?? 0;
   for (const co of n.corridors) {
@@ -230,46 +291,8 @@ export function segmentPath(segs: number[], segments: { coords: [number, number]
 }
 
 export function unpackNetwork(p: PackedNetwork): { cities: City[]; stations: Station[]; corridors: Corridor[]; segments?: Segment[] } {
-  const cities: City[] = [];
-  const stations: Station[] = [];
-  let lon = 0, lat = 0, sid = 0;
-  const pc = p.cities;
-  for (let i = 0; i < pc.name.length; i++) {
-    lon += pc.lon[i]!;
-    lat += pc.lat[i]!;
-    const ids: number[] = [];
-    for (let k = 0; k < pc.nStations[i]!; k++) ids.push(sid++);
-    cities.push({
-      id: i,
-      name: pc.name[i]!,
-      country: p.countries[pc.country[i]!]!,
-      lon: lon / 1e5,
-      lat: lat / 1e5,
-      population: pc.population[i]!,
-      importance: pc.importance[i]! / 1000,
-      cats: pc.cats[i]!,
-      stations: ids,
-      tz: pc.tz[i]!,
-      ...(pc.shard && pc.shard[i]! >= 0 ? { shard: pc.shard[i]! } : {}),
-    });
-  }
-  const ps = p.stations;
-  let ci = 0, left = cities.length ? cities[0]!.stations.length : 0;
-  for (let s = 0; s < ps.name.length; s++) {
-    while (left === 0 && ci + 1 < cities.length) left = cities[++ci]!.stations.length;
-    left--;
-    const c = cities[ci]!;
-    const nm = ps.name[s]!;
-    stations.push({
-      id: s,
-      city: ci,
-      name: nm.startsWith("~") ? c.name + nm.slice(1) : nm,
-      lon: (Math.round(c.lon * 1e5) + ps.dlon[s]!) / 1e5,
-      lat: (Math.round(c.lat * 1e5) + ps.dlat[s]!) / 1e5,
-      cats: ps.cats[s]!,
-      ...(ps.tpd && ps.tpd[s] ? { tpd: ps.tpd[s]! / 10 } : {}),
-    });
-  }
+  const cities = unpackCities(p.countries, p.cities);
+  const stations = unpackStations(cities, p.stations);
   let segments: Segment[] | undefined;
   if (p.segments) {
     const ref = { lat: 0, lon: 0 };

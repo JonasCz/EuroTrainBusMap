@@ -1,32 +1,36 @@
-/** In-memory indexes over the network file. */
-import type { City, Corridor, NetworkFile, Segment } from "@etbm/shared";
-import { netSegments } from "../map/features.ts";
+/** In-memory indexes over the network (cities from core.json; stations/calendars on demand). */
+import type { City, Corridor, Station } from "@etbm/shared";
 import { buildCalIndex, type CalIndex } from "../logic/calendar.ts";
 import { buildNetCtx, type NetCtx } from "../logic/context.ts";
-import type { DataSet } from "./load.ts";
+import { geoStore, loadDetail, type DataSet, type GeoStore } from "./load.ts";
 
-/**
- * Optional corridor extension (proposed for the schema): Cat bits on this
- * corridor that carry Deutschlandticket-valid services.
- */
-export type CorridorExt = Corridor & { dtCats?: number };
+export type CorridorExt = Corridor;
 
 export interface Net {
   ds: DataSet;
-  file: NetworkFile;
+  cities: City[];
+  /** Stations: sparse, filled from the geo files of the loaded timetable shards. */
+  file: { stations: Station[]; timezones: string[] };
+  /** Calendars: an empty placeholder until `ensureDetail` has run. */
   cal: CalIndex;
   ctx: NetCtx;
-  cities: City[];
-  corridors: CorridorExt[];
-  /** Line-graph segments (drawing). */
-  segments: Segment[];
+  /** Corridors and segment geometry of the loaded timetable shards. */
+  geo: GeoStore;
   slug: string[];
   bySlug: Map<string, number>;
-  /** Whether the data has `dtCats` on corridors; otherwise a DE-only heuristic is used. */
+  /** slugified city names (no disambiguation suffix), for search */
+  nameKey: string[];
+  /** Whether corridors carry dtCats; otherwise a DE-only heuristic is used. */
   hasDtCats: boolean;
+  counts: { stations: number; corridors: number; segments: number };
+  detailLoaded: boolean;
 }
 
+const ASCII_SLUG = /^[a-z0-9]+(?:[ -][a-z0-9]+)*$/;
+
 export function slugify(s: string): string {
+  const lower = s.toLowerCase();
+  if (ASCII_SLUG.test(lower)) return lower.replace(/ /g, "-"); // fast path (most names)
   return s
     .toLocaleLowerCase("en")
     .replace(/ı/g, "i")
@@ -41,35 +45,48 @@ export function slugify(s: string): string {
 }
 
 export function buildNet(ds: DataSet): Net {
-  const file = ds.network;
-  const cal = buildCalIndex(ds.calendars);
+  const cities = ds.cities;
   const slug: string[] = [];
   const bySlug = new Map<string, number>();
   const counts = new Map<string, number>();
-  for (const c of file.cities) {
-    const s = slugify(c.name) || `city-${c.id}`;
+  const nameKey = cities.map((c) => slugify(c.name));
+  for (const c of cities) {
+    const s = nameKey[c.id] || `city-${c.id}`;
     counts.set(s, (counts.get(s) ?? 0) + 1);
   }
-  for (const c of file.cities) {
-    let s = slugify(c.name) || `city-${c.id}`;
+  for (const c of cities) {
+    let s = nameKey[c.id] || `city-${c.id}`;
     if (counts.get(s)! > 1) s = `${s}-${c.country.toLowerCase()}`;
     if (bySlug.has(s)) s = `${s}-${c.id}`;
     slug[c.id] = s;
     bySlug.set(s, c.id);
   }
-  const corridors = file.corridors as CorridorExt[];
+  const m = ds.manifest;
+  const cal = buildCalIndex({ startDate: m.startDate, days: m.days, masks: [] });
+  const file = { stations: geoStore.stations, timezones: ds.core.timezones };
   return {
     ds,
+    cities,
     file,
     cal,
-    ctx: buildNetCtx(file, cal),
-    cities: file.cities,
-    corridors,
-    segments: netSegments(file as { corridors: CorridorExt[]; segments?: Segment[] }),
+    ctx: buildNetCtx({ cities, timezones: ds.core.timezones }, cal),
+    geo: geoStore,
     slug,
     bySlug,
-    hasDtCats: corridors.some((c) => c.dtCats !== undefined),
+    nameKey,
+    hasDtCats: ds.core.hasDtCats,
+    counts: ds.core.counts,
+    detailLoaded: false,
   };
+}
+
+/** Load the calendars (once) and wire them into the net. */
+export async function ensureDetail(net: Net): Promise<void> {
+  if (net.detailLoaded) return;
+  const d = await loadDetail(net.ds);
+  net.cal = buildCalIndex(d.calendars);
+  net.ctx.cal = net.cal;
+  net.detailLoaded = true;
 }
 
 export function cityByRef(net: Net, ref: string | null | undefined): number | undefined {

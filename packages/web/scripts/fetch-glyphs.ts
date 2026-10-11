@@ -7,6 +7,7 @@
  *   node --experimental-strip-types scripts/fetch-glyphs.ts
  */
 import { mkdir, writeFile } from "node:fs/promises";
+import { gzipSync } from "node:zlib";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,7 +28,8 @@ for (const font of FONTS) {
     const url = `${SRC}/${encodeURIComponent(font)}/${r}.pbf`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`${url}: ${res.status}`);
-    await writeFile(join(out, font, `${r}.pbf`), new Uint8Array(await res.arrayBuffer()));
+    // stored gzipped: static hosts don't compress protobuf; the app inflates them (src/map/protocol.ts)
+    await writeFile(join(out, font, `${r}.pbf.gz`), gzipSync(new Uint8Array(await res.arrayBuffer()), { level: 9 }));
     console.log("ok", font, r);
   }
 }

@@ -13,11 +13,16 @@ export interface NetCtx {
   cal: CalIndex;
 }
 
-export function buildNetCtx(net: NetworkFile, cal: CalIndex): NetCtx {
-  const stationCity = new Int32Array(net.stations.length);
-  const stationRank = new Int32Array(net.stations.length);
-  for (const s of net.stations) stationCity[s.id] = s.city;
-  for (const c of net.cities) c.stations.forEach((s, i) => (stationRank[s] = i));
+export function buildNetCtx(net: Pick<NetworkFile, "cities" | "timezones">, cal: CalIndex): NetCtx {
+  let n = 0;
+  for (const c of net.cities) for (const s of c.stations) n = Math.max(n, s + 1);
+  const stationCity = new Int32Array(n);
+  const stationRank = new Int32Array(n);
+  for (const c of net.cities)
+    c.stations.forEach((s, i) => {
+      stationCity[s] = c.id;
+      stationRank[s] = i;
+    });
   return {
     stationCity,
     stationRank,
