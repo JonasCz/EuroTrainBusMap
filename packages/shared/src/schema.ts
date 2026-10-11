@@ -18,6 +18,8 @@
  *     timezone (may exceed 1440 for trips running past midnight).
  */
 
+import type { PackedNetwork } from "./pack.ts";
+
 export const SCHEMA_VERSION = 1;
 
 /** Service categories. Bit flags so several can be combined in masks. */
@@ -124,6 +126,12 @@ export interface NetworkFile {
    * arrays, in order, to `stations` / `corridors` (ids stay dense and global).
    */
   parts?: string[];
+  /**
+   * Compact columnar encoding of cities/stations/corridors (see pack.ts). When
+   * present, the three arrays above are empty; call `expandNetwork(file)` (or
+   * `unpackNetwork(file.packed)`) after loading, before using them.
+   */
+  packed?: PackedNetwork;
 }
 
 /** Continuation of NetworkFile.stations / .corridors (see NetworkFile.parts). */

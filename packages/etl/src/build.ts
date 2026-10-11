@@ -12,7 +12,7 @@ import {
   type Corridor,
   type Manifest,
   type NetworkFile,
-  type NetworkPart,
+  packNetwork,
   type Pattern,
   type Route,
   type Station,
@@ -691,7 +691,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const g = geomById.get(id);
     const A = cities[c.a]!, B = cities[c.b]!;
     const raw = g?.coords ?? greatCircle([A.lon, A.lat], [B.lon, B.lat]);
-    const coords = simplifyLine(raw, c.cats & RAIL ? 40 : c.cats & Cat.Coach ? 200 : 500).map(([x, y]) => [round5(x), round5(y)] as [number, number]);
+    const coords = simplifyLine(raw, c.cats & RAIL ? 120 : c.cats & Cat.Coach ? 300 : 600).map(([x, y]) => [round5(x), round5(y)] as [number, number]);
     // orient from new a to new b
     const flip = a > b;
     if (flip) coords.reverse();
@@ -712,6 +712,16 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     corrNew[id] = outCorr.length;
     outCorr.push(cor);
   });
+  // Order corridors by (a, b) so ids are stable-ish and pack well.
+  {
+    const order = outCorr.map((_, i) => i).sort((x, y) => outCorr[x]!.a - outCorr[y]!.a || outCorr[x]!.b - outCorr[y]!.b);
+    const newIdOfOld = new Int32Array(outCorr.length);
+    order.forEach((old, i) => (newIdOfOld[old] = i));
+    const sorted = order.map((old, i) => ({ ...outCorr[old]!, id: i }));
+    outCorr.length = 0;
+    for (const c of sorted) outCorr.push(c);
+    for (let k = 0; k < corrNew.length; k++) if (corrNew[k]! >= 0) corrNew[k] = newIdOfOld[corrNew[k]!]!;
+  }
 
   const build = args.build ?? `${args.startDate.replace(/-/g, "")}-${new Date().toISOString().slice(11, 16).replace(":", "")}`;
   const outRoot = args.out;
@@ -805,40 +815,10 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
 
   // attribution
   const attribution = buildAttribution(ctx);
-  // Split the network into continuation parts if it would exceed the per-file limit.
+  // The network is written in the compact columnar form (NetworkFile.packed).
   const files: [string, unknown][] = [];
-  {
-    const LIMIT = 18_000_000;
-    const size = (x: unknown) => Buffer.byteLength(JSON.stringify(x));
-    const main: NetworkFile = { ...network, stations: [], corridors: [] };
-    let used = size(main);
-    const parts: NetworkPart[] = [];
-    let cur: NetworkPart | null = null;
-    let curSize = 0;
-    const place = (kind: "stations" | "corridors", item: Station | Corridor) => {
-      const sz = Buffer.byteLength(JSON.stringify(item)) + 1;
-      if (!cur && used + sz <= LIMIT) {
-        (main[kind] as (Station | Corridor)[]).push(item);
-        used += sz;
-        return;
-      }
-      if (!cur || curSize + sz > LIMIT) {
-        cur = {};
-        parts.push(cur);
-        curSize = 30;
-      }
-      ((cur[kind] ??= []) as (Station | Corridor)[]).push(item);
-      curSize += sz;
-    };
-    for (const st of network.stations) place("stations", st);
-    for (const co of network.corridors) place("corridors", co);
-    if (parts.length) {
-      main.parts = parts.map((_, i) => `network-${i + 1}.json`);
-      parts.forEach((p, i) => files.push([`network-${i + 1}.json`, p]));
-      log(`network split into network.json + ${parts.length} part(s)`);
-    }
-    files.unshift(["network.json", main]);
-  }
+  const packedNet: NetworkFile = { schema: SCHEMA_VERSION, build, timezones, cities: [], stations: [], corridors: [], packed: packNetwork(network) };
+  files.push(["network.json", packedNet]);
   files.push(
     ["calendars.json", calendars],
     ["attribution.json", attribution],
