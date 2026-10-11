@@ -299,7 +299,10 @@ h2:focus {
   padding: 14px 10px 8px 18px;
   position: sticky;
   top: 0;
-  background: var(--surface);
+  /* Not fully opaque on purpose: Chrome's compositor can mis-place an opaque sticky
+     header inside the bottom sheet's scroller for occlusion culling and then skip
+     drawing a band of the map canvas (seen on Android-sized viewports). */
+  background: color-mix(in srgb, var(--surface) 99%, transparent);
   z-index: 1;
 }
 .view-head .icon-btn:first-child {
