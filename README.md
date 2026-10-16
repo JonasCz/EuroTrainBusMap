@@ -19,6 +19,8 @@ packages/
     src/core/*          pure logic (classification, calendars, names, city assignment, station merging,
                         pattern building, cross-feed dedup) – unit tested in test/
     src/geometry/       corridor geometry: rail / coach+bus routing on graphs built from Overture (OSM) rail and major roads
+    src/urban/          local transport (metro / tram / city bus) display layer: own GTFS pass, own tiles (see "Local transport" below)
+    urban-feeds.json    extra GTFS feeds that only feed the local layer (kept out of feeds.json: the intercity pipeline is untouched)
     src/assets.ts       builds the slow-changing inputs stored in R2 (see below)
   web/      MapLibre front end (Vite); reads data/ at runtime
 ```
@@ -60,6 +62,7 @@ Pipeline in short:
 5. **Dedup** – the same train/coach present in several feeds (DE+AT+CH+CZ…) is detected by matching
    (city, time) sequences and kept once, with merged calendars.
 6. **Patterns & trips** – station sequences with offsets, deduplicated; calendars as 60-day bitmasks starting the day before the build (Berlin date), so viewers in earlier timezones stay covered.
+   Invalid stop times are repaired (`repairTimes` in `core/patterns.ts`): hops of more than 3 km that take no time or would need more than 450 km/h (rail) / 160 km/h (road), as in a Milan–Paris–Lyon pattern whose Paris and Lyon calls both read 12:00, get times interpolated by distance between the surrounding valid times (extrapolated at a typical speed at the end of a trip); the UI never shows "0 min" between two cities.
 7. **Corridors** – the drawn network connects *stations*: a corridor is an undirected edge between two stations
    that are consecutive stops of a trip, between cities as well as inside one (Tipperary – Limerick Junction,
    Paddington – Ealing Broadway), so lines are continuous at every zoom. Trips/day per category; geometry routed on the
@@ -117,6 +120,47 @@ Pipeline in short:
    `manifest.json` points to `core.json` and lists the tiles (`Manifest.mapdata`).
    Rebuild just this stage for an existing build: `node --import tsx packages/etl/src/mapdata.ts <out>/<build>`.
 
+11. **Local transport** (`src/urban/`, formats in `packages/shared/src/urban.ts`) – metro, tram, light rail,
+   funicular / cable car and city bus lines with their stops, a *display layer* beside the intercity network: it has
+   no timetables, no cities and no shards (urban trips would multiply both), only lines and stops shown from
+   zoom 10 / 12. Own pass over the cached feed zips (`work/cache/feeds`: the intercity feeds of `feeds.json` plus
+   the extra ones of `urban-feeds.json`, ~60 city feeds such as IDFM, Madrid, Barcelona, Rome, Milan, Warsaw, Budapest,
+   Prague, Helsinki, Lisbon…, downloaded into the same cache), its own in-memory DuckDB, per-feed results cached in
+   `work/urban/feeds/*.json.gz`:
+   - **Extraction** (`extract.ts`): route types 0/5/9xx tram, 1/12/400-402/405 metro, 6/7/13xx/1400 cable, 3/11/7xx bus
+     (rail-replacement, school, shuttle and coach operators dropped). Per route and direction the most frequent
+     shape (or headsign) plus up to two frequent variants, one representative trip each (a few trips per route, so
+     `stop_times` is filtered down before it is read); trips per direction on a typical weekday (a Wednesday a week
+     after the start date) give `tpd`, shown as "every ~10 min". City buses are lines whose stops lie ≥ 60 % inside
+     the disc (4–16 km, grows with population) of a place with ≥ 100 000 inhabitants and span ≤ 30 km;
+     metro / tram / cable lines are kept anywhere.
+   - **Alignment**: the feed's `shapes.txt` where there is one (simplified to 3 m); lines without shapes (all of
+     DELFI, GB, CH, SE, …) are routed hop by hop between their stops on a tram / metro / light-rail track graph
+     (`rail/urbanrail-graph-v1.bin`, Overture classes the intercity rail graph drops) – buses on the road graph
+     (motorway…tertiary) – with a detour bound; ≥ 70 % routed hops make the alignment `rail` / `road`, else the
+     line stays a straight stop-to-stop chain, drawn dashed (`g` = 3). Duplicates (the opposite direction, the same
+     line in two feeds) are dropped by name + geometry overlap (`dedupeLines`).
+   - **Stations** (`model.ts`): the stops are merged with the same `mergeStations` as the intercity stations
+     (names, proximity, `parent_station`), "City, Stop" names lose the city (`stripCityName`), every station knows its
+     lines. A station at an intercity station (≤ 90 m, or ≤ 350 m with the same normalised name) is flagged `x` and
+     gets no dot or label of its own. **Adaptive merging over zoom**: stations are ranked by importance (lines ×
+     mode × frequency) and each takes the first zoom level (10.5, 11.5 … 14.5) at which no more important station
+     within ~24 px is already shown (`thinZooms`, buses 14 / 14.8 at 12 px), so a centre shows its hubs first and
+     fills in as one zooms; a stop never appears before its first line. Lines have a first zoom too (`lineZoom`):
+     metro 10 / 10.8 (≥ 100 trips per direction and day), tram 11.2 / 12 / 12.6, cable 12.5, buses 12.4 … 14.2 by frequency.
+   - **Tiles**: two vector sources, `urban/rail/10/{x}/{y}.pbf.gz` (metro / tram / cable lines and the stops of
+     stations with such a line; extent 16384 ≈ 2.4 m) and `urban/bus/11/…` (bus lines and bus-only stops; extent 8192), stored at
+     one zoom only, non-empty tiles only (`Manifest.urban` lists them, the app answers the rest with an empty tile) and overzoomed by MapLibre.
+     Lines are `ul` (mode, short name, feed colour clamped to a readable luminance, agency, description, tpd, first zoom, geometry quality),
+     stops `us` (name, mode mask, line names, importance, first zoom, `x`).
+   - **Web** (`map/urban.ts`, `ui/urbanpopup.ts`): drawn *below* the intercity network (land-coloured halo,
+     thin, buses grey and thinner), fading in over 0.6 zoom levels after their own first zoom; labels (stop names from z12.4, line
+     names along the line) sit below the intercity labels so those win collisions. A click / tap on a stop or line opens a small popup (line chips, modes,
+     operator, frequency band); hover shows the name. The chip "Local transport" (on by default; `#local=0` in the URL when off)
+     hides all of it. Nothing of this loads below zoom 10.
+   Rebuild just this stage for an existing build: `node --import tsx packages/etl/src/urban/index.ts <out>/<build>`
+   (~1 min with warm caches, ~15 min when the zips of all feeds must be re-read), or skip it with `--no-urban`.
+
 The coastline and lakes are not part of a build: `data/basemap-v2/` (next to `manifest.json`, shared by all
 builds, `Manifest.basemap`) holds OSM land polygons + Natural Earth 10m lakes as gzipped vector tiles z2–z9
 (extent 8192 at z9 ≈ 6 m, overzoomed to z15), ~4.9k files / ~31 MB. Tiles without land are missing (sea) and
@@ -125,8 +169,9 @@ with a synthetic all-land tile (`web/src/map/basemap.ts`). The tiles are built b
 (`basemap/tiles-v2.tar`) and unpacked by every build (see `.claude/skills/basemap/SKILL.md`).
 
 Typical full build: ~150 feed files, ~920k stops → ~73k stations (served) in ~41k cities, ~125k corridors on ~176k line-graph segments, ~2.1M trips,
-~1.4 GB in ~10.4k files incl. ~4.9k basemap tiles (Cloudflare limit: 20k files per deployment); ~12 min on a 4-core machine with a warm DuckDB
-(`--reuse-db`; ~16 min on a runner incl. loading, plus ~1 min to download assets).
+~1.4 GB in ~12.9k files incl. ~4.9k basemap tiles and ~2.4k local-transport tiles (Cloudflare limit: 20k files per deployment); ~12 min on a 4-core machine with a warm DuckDB
+(`--reuse-db`; ~16 min on a runner incl. loading, plus ~1 min to download assets). The local-transport stage adds ~7 min when its per-feed caches are cold
+(129 feeds with local lines: 21k lines / 25k alignments, 179k stations, 2 384 tiles / 11 MB gz, largest tile 86 KB).
 
 ## Running locally
 
@@ -143,7 +188,7 @@ pnpm --filter @etbm/etl run build-data -- --out work/out --subset core
 ```
 
 Useful flags: `--work <dir>` (cache/DuckDB, default `./work`), `--reuse-db` (skip download+load when
-inputs are unchanged – handy when iterating on later stages), `--no-geometry`, `--no-basemap`,
+inputs are unchanged – handy when iterating on later stages), `--no-geometry`, `--no-basemap`, `--no-urban`,
 `--assets <dir>` (default `work/assets`), `--extract-rail` (allow the slow Overture extraction locally),
 `--start YYYY-MM-DD`, `--days 60`. A build report (stats per stage/country, sanity checks) is written to
 `<work>/build-report.json`.
@@ -167,7 +212,7 @@ Tests: `pnpm test`, types: `pnpm typecheck`.
     without activity for 60 days.
 - **`.github/workflows/refresh-assets.yml`** (monthly + manual): rebuilds the slow-changing inputs and
   uploads them to the R2 bucket `eurotrainbusmap-assets`: `geonames/places-europe.tsv.gz` (pruned
-  GeoNames, ~2 MB), `basemap/{borders,labels}.json` (Natural Earth 1:10m borders, country labels), `basemap/tiles-v2.tar` (land + lake vector tiles from OSM land polygons, ~31 MB, rebuilt with `--only tiles`: ~1 GB download, ~3 min), `rail/rail-graph-v1.bin` (rail graph from the
+  GeoNames, ~2 MB), `basemap/{borders,labels}.json` (Natural Earth 1:10m borders, country labels), `basemap/tiles-v2.tar` (land + lake vector tiles from OSM land polygons, ~31 MB, rebuilt with `--only tiles`: ~1 GB download, ~3 min), `rail/urbanrail-graph-v1.bin` (tram / metro / light-rail track for local-transport lines without shapes, ~2 MB), `rail/rail-graph-v1.bin` (rail graph from the
   Overture rail extract incl. disused/under-construction track at high cost and bridged gaps, ~27 MB),
   `road/road-graph-v1.bin` (motorway…tertiary road graph, 30 m geometry, ~114 MB) and `manifest.json`.
 

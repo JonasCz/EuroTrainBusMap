@@ -14,6 +14,7 @@
   --cat-2: #1f74d1;
   --cat-4: #14a065;
   --cat-8: #9558d1;
+  --urban: #e0651a;
   --radius: 16px;
   --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
   color-scheme: light;
@@ -36,6 +37,7 @@
     --cat-2: #4b9dff;
     --cat-4: #34d08a;
     --cat-8: #b98bff;
+    --urban: #ff8a3d;
     color-scheme: dark;
   }
 }
@@ -366,6 +368,12 @@ h2:focus {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.legend-wide {
+  grid-column: 1 / -1;
+}
+.legend-line.thin {
+  height: 3px;
 }
 .legend-line {
   width: 22px;

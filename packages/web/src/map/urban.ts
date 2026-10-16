@@ -97,7 +97,7 @@ export function urbanLayers(t: Theme, dim: boolean): LayerSpecification[] {
       "line-width": E(["interpolate", ["linear"], ["zoom"], 10, ["case", metro, 1.5, 1.1], 13, ["case", metro, 2.6, 2], 16, ["case", metro, 4.2, 3.2]]),
       "line-opacity": ramp(dim ? 0.6 : 1),
       // trams drawn by stop-to-stop chords rather than aligned: dashed so they read as approximate
-      "line-dasharray": E(["case", [">=", ["coalesce", ["get", "g"], 0], 3], ["literal", [2, 1.4]], ["literal", [1, 0]]]),
+      "line-dasharray": E(["case", ["all", [">=", ["coalesce", ["get", "g"], 0], 3], ["!=", ["get", "m"], UMODE.Cable]], ["literal", [2, 1.4]], ["literal", [1, 0]]]),
     },
   });
   // ---- stops

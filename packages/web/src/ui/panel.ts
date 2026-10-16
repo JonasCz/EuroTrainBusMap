@@ -133,7 +133,9 @@ export class Panel {
   }
 
   /** The local-transport chip only makes sense when the build has the layer. */
+  private localAvailable = false;
   showLocalChip(on: boolean): void {
+    this.localAvailable = on;
     const b = this.chips.querySelector<HTMLElement>(".chip-local");
     if (b) b.hidden = !on;
   }
@@ -310,6 +312,7 @@ export class Panel {
           "ul",
           { class: "legend" },
           CAT_ORDER.map((cat) => h("li", null, h("span", { class: "legend-line", style: `--c:var(--cat-${cat})` }), CAT_LABEL[cat]!)),
+          this.localAvailable ? h("li", { class: "legend-wide" }, h("span", { class: "legend-line thin", style: "--c:var(--urban)" }), "Metro, tram, city bus – zoom in") : null,
         ),
         h(
           "p",

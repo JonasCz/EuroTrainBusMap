@@ -156,7 +156,7 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
 
 ## Status of checks (last run)
 
-`pnpm typecheck` passes (shared, etl, web); `pnpm test` passes (etl 124 tests, web 49 tests, ~10 s each). `wrangler whoami` works with the env token;
+`pnpm typecheck` passes (shared, etl, web); `pnpm test` passes (etl 142 tests, web 53 tests, ~10 s each). `wrangler whoami` works with the env token;
 `wrangler deploy --dry-run` succeeded on the assembled `dist/site` (1781 files). Expected harmless build warnings: a few feeds with
 "no trips within the horizon" (it-regional-bus lombardia/liguria, es-feve, navarra bus, ba-zfbih), stop-names "not found within 1500 m",
 "Berlin is missing station Berlin Ostbahnhof".
@@ -245,3 +245,26 @@ data, give the build a new id: rename the directory (e.g. append a letter, `2026
 
 - The coastline / lakes are vector tiles unpacked by every build to `<out>/basemap-v2/` (not into the build dir, shared by all builds, ~4.9k files) from `work/assets/basemap/tiles-v2.tar`; `Manifest.basemap` points to them. Without the tar the build falls back to the coarse 1:50m GeoJSON. A mapdata-only run (`mapdata.ts`) keeps `manifest.basemap` and the directory untouched.
 - Assemble/deploy copies `work/out/.` so `data/basemap-v2/` is deployed too; total files = builds (~5.4k) + 4.9k tiles. Keep an eye on the 20k limit.
+
+## Local transport layer (phase G) – metro / tram / city bus
+
+- **Separate pass**: stage `urban` of `build-data` (after `mapdata`, skip with `--no-urban`) runs `packages/etl/src/urban/index.ts` on the feed zips
+  already in `work/cache/feeds` plus the ~60 extra city feeds of `packages/etl/urban-feeds.json` (downloaded into the same cache; the intercity
+  feeds are NOT downloaded by it). `feeds.json` is untouched, so `--reuse-db` keys are unaffected by urban changes. Standalone, on an existing build:
+  `cd packages/etl && node --no-warnings --max-old-space-size=8192 --import tsx src/urban/index.ts ../../work/out/<build>` (updates `urban/`,
+  `attribution.json` and `manifest.json` (`urban`, `urban*` stats) of that build; ~1 min with warm per-feed caches in `work/urban/feeds/*.json.gz`,
+  first run ~15 min because every cached zip is read once; the cache key is zip size + `EXTRACT_VERSION` + reference weekday, bump `EXTRACT_VERSION`
+  in `urban/types.ts` when extraction changes). Needs `work/assets/rail/urbanrail-graph-v1.bin` (tram / metro track, see the refresh-geometry-assets skill;
+  without it lines without shapes stay dashed stop-to-stop chains) and the road graph.
+- **Iterating on the look without touching the deployed build**: make a scratch out dir whose build dir holds symlinks to the real build's files
+  and real copies of `attribution.json` and `manifest.json` (`work/out-dev/<build>/*` -> `work/out/<build>/*`, `work/out-dev/basemap-v2` -> `work/out/basemap-v2`),
+  run `urban/index.ts` on it, point the preview symlink (`packages/web/public/data`) at `work/out-dev`. Swapping the symlink between `work/out` (before)
+  and `work/out-dev` (after) gives before/after screenshots with the same web code. `window.__etbm.map.queryRenderedFeatures({layers:["urb-rail-stop"]})` finds
+  stops to click in Playwright; `jumpTo({..., padding: {left: 400}})` centres the view in the area not covered by the panel.
+- **`--reuse-db` gotcha**: the default `--start` is the Berlin date of yesterday, so on a new day the db-state key no longer matches and the whole
+  download + load (~12 min) runs again (and deletes `work/etl.duckdb` first). Pass `--start <date of the existing db>` to reuse it.
+- **Debugging coverage**: per feed lines / shaped patterns / dropped counts are logged (`urban <key>: N lines (S shaped patterns) …`), the alignment
+  summary line `urban: alignment {"bus":{shape,routed,partial,stops},"rail":{…}}` shows how many patterns came from shapes, were routed completely /
+  ≥ 70 % or stayed chords. Feeds without `shapes.txt` (DELFI, GB, CH, SE, parts of FR/IT) depend on the graphs.
+- **Sizes** (see README): 2.4k files / ~11 MB for the layer, largest tile < 100 KB; the site stays far below 20k files.
+- A `DiscIndex` / `isCityBus` change moves which buses count as "city buses" (population ≥ 100 000 discs): bump `EXTRACT_VERSION`, the filter runs at extraction time.
