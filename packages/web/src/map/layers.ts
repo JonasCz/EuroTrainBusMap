@@ -13,7 +13,7 @@ import type { ExpressionSpecification, FilterSpecification, LayerSpecification }
 import type * as GeoJSON from "geojson";
 import type { Filters } from "../logic/filters.ts";
 import { GAP } from "./features.ts";
-import { LEVELS, LONG_HOP_ZOOM, STATION_LEVELS, STATION_ZOOM } from "./lod.ts";
+import { FADE_ZOOM, LEVELS, LONG_HOP_ZOOM, STATION_LEVELS, STATION_ZOOM } from "./lod.ts";
 import { FONT_MEDIUM, FONT_REGULAR } from "./style.ts";
 import type { Theme } from "./theme.ts";
 
@@ -73,9 +73,42 @@ function lvlAt(z: number): number {
  */
 function zoomStops(zf: [number, number][]): number[] {
   const zs = new Set<number>(zf.map((s) => s[0]));
-  for (const l of LEVELS) if (l > 0) zs.add(l);
+  // a level's lines are laid out (width, side-by-side offsets) FADE_ZOOM before it, while fading in
+  for (const l of LEVELS) if (l > 0) zs.add(r3(l - FADE_ZOOM));
+  return [...zs].filter((z) => z >= zf[0]![0]).sort((a, b) => a - b);
+}
+
+// ---------------------------------------------------------------- fade-in
+
+const r3 = (x: number) => Math.round(x * 1000) / 1000;
+/** Level index → zoom the level starts at (level 0 = always on). */
+const LEVEL_ZOOM: number[] = LEVELS.map((l, i) => (i === 0 ? -1 : l));
+/** Fade 0 → 1 over the FADE_ZOOM zoom levels that end at `end` (an expression or number), evaluated at zoom z. */
+const fadeAt = (z: number, end: unknown): unknown => ["max", 0, ["min", 1, ["+", 1, ["/", ["-", z, end], FADE_ZOOM]]]];
+/**
+ * Zoom stops of an interpolation that must follow a fade-in that ends at any LOD level (shifted by
+ * `shift`): the fade is piecewise linear with kinks where a fade starts and ends.
+ */
+function fadeStops(shift: number): number[] {
+  const zs = new Set<number>([2]);
+  for (const l of LEVELS) {
+    if (l <= 0) continue;
+    for (const z of [l + shift - FADE_ZOOM, l + shift]) if (z > 2) zs.add(r3(z));
+  }
   return [...zs].sort((a, b) => a - b);
 }
+/** line-opacity of one category: a feature is fully shown at its own level `l{k}` and fades in over the FADE_ZOOM before. */
+function lineFade(k: number, base: unknown): Expr {
+  const start = ["at", ["get", `l${k}`], ["literal", LEVEL_ZOOM]];
+  return E(["interpolate", ["linear"], ["zoom"], ...fadeStops(0).flatMap((z) => [z, ["*", base, fadeAt(z, start)]])]);
+}
+/** Casing opacity: follows the earliest-fading category present on the feature. */
+function casingFade(cats: number[], base: unknown): Expr {
+  const one = (z: number) => cats.map((k) => ["case", ["has", `l${k}`], fadeAt(z, ["at", ["get", `l${k}`], ["literal", LEVEL_ZOOM]]), 0]);
+  return E(["interpolate", ["linear"], ["zoom"], ...fadeStops(0).flatMap((z) => [z, ["*", base, ["max", 0, ...one(z)]]])]);
+}
+/** Fade of a plain layer that starts at zoom z0 (station levels). */
+const rampFrom = (z0: number, to: number): Expr => E(["interpolate", ["linear"], ["zoom"], z0, 0, z0 + FADE_ZOOM, to]);
 
 // ---------------------------------------------------------------- bundle expressions on tile features
 
@@ -97,7 +130,7 @@ function offset(k: number, L: number, f: Filters): unknown {
 
 function byZoom(zf: [number, number][], at: (z: number, factor: number, L: number) => unknown, fixedLevel?: number): Expr {
   const stops: unknown[] = [];
-  for (const z of fixedLevel === undefined ? zoomStops(zf) : zf.map((s) => s[0])) stops.push(z, at(z, factorAt(z, zf), fixedLevel ?? lvlAt(z)));
+  for (const z of fixedLevel === undefined ? zoomStops(zf) : zf.map((s) => s[0])) stops.push(z, at(z, factorAt(z, zf), fixedLevel ?? lvlAt(z + FADE_ZOOM)));
   return E(["interpolate", ["linear"], ["zoom"], ...stops]);
 }
 
@@ -141,12 +174,22 @@ export interface LayerState {
 }
 
 /** Base city filter: visible from max(tier zoom, earliest visible line) under the filters. */
-export function cityFilter(st: LayerState): FilterSpecification {
-  const f = st.filters;
-  const cats = CAT_BITS.filter((k) => f.cats & k);
+/** Zoom at which a city marker is fully shown (CITY_LEAD later); it is in the tiles and fades in FADE_ZOOM before that. */
+const CITY_LEAD = 0.5;
+function cityZoomExpr(st: LayerState): unknown {
+  const cats = CAT_BITS.filter((k) => st.filters.cats & k);
   const zOf = (k: number) => ["coalesce", ["get", `m${k}`], 99];
   const minLine = cats.length ? ["min", 99, ...cats.map(zOf)] : 99;
-  const zoomOk = [">=", ["+", ["zoom"], 0.5], ["max", ["get", "tz"], minLine]];
+  return ["max", ["get", "tz"], minLine];
+}
+/** Opacity of city dots / labels: fully shown CITY_LEAD before their zoom, fading in over FADE_ZOOM before that. */
+function cityFade(st: LayerState, base: number): Expr {
+  const end = ["-", cityZoomExpr(st), CITY_LEAD];
+  return E(["interpolate", ["linear"], ["zoom"], ...fadeStops(-CITY_LEAD).flatMap((z) => [z, ["*", base, fadeAt(z, end)]])]);
+}
+
+export function cityFilter(st: LayerState): FilterSpecification {
+  const zoomOk = [">=", ["+", ["zoom"], CITY_LEAD + FADE_ZOOM], cityZoomExpr(st)];
   return (st.focus.length ? ["all", zoomOk, ["!", ["in", ["get", "id"], ["literal", st.focus]]]] : zoomOk) as FilterSpecification;
 }
 
@@ -185,7 +228,7 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
       paint: {
         "line-color": t.land,
         "line-width": byZoom(ZF, (_z, fz, L) => ["case", [">", total(L, f), 0], ["+", ["*", fz * wMul, total(L, f)], 1.2], 0], v.fixed),
-        "line-opacity": dim ? 0.6 : 1,
+        "line-opacity": v.id === "net" ? casingFade(cats as number[], dim ? 0.6 : 1) : dim ? 0.6 : 1,
       },
     });
   }
@@ -196,14 +239,14 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
       type: "line",
       source: "net",
       "source-layer": TILE_LAYERS.seg,
-      minzoom: LONG_HOP_ZOOM,
+      minzoom: LONG_HOP_ZOOM - FADE_ZOOM,
       filter: ["all", ["has", "hop"], ...catFilter(k).slice(1)] as unknown as FilterSpecification,
       layout: { "line-cap": "round" },
       paint: {
         "line-color": dim ? t.dimLine : catColorConst(t, k),
         "line-width": ["interpolate", ["linear"], ["zoom"], 6.5, 0.8, 10, 1.5],
         "line-dasharray": [2, 3],
-        "line-opacity": dim ? 0.5 : ["interpolate", ["linear"], ["zoom"], 6.5, 0.25, 9, 0.5, STATION_ZOOM, 0.35],
+        "line-opacity": dim ? E(["interpolate", ["linear"], ["zoom"], LONG_HOP_ZOOM - FADE_ZOOM, 0, LONG_HOP_ZOOM, 0.5]) : ["interpolate", ["linear"], ["zoom"], LONG_HOP_ZOOM - FADE_ZOOM, 0, LONG_HOP_ZOOM, 0.25, 9, 0.5, STATION_ZOOM, 0.35],
       },
     });
   }
@@ -222,7 +265,7 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
           "line-color": dim ? t.dimLine : catColorConst(t, k),
           "line-width": byZoom(ZF, (_z, fz, L) => ["case", vis(k, L, f), ["*", fz * wMul, wOf(k)], 0], v.fixed),
           "line-offset": byZoom(ZF, (_z, fz, L) => ["*", fz * wMul, offset(k, L, f)], v.fixed),
-          "line-opacity": dim ? 1 : k === Cat.Bus ? 0.65 : ["case", ["==", ["get", "u"], 1], 0.8, 1],
+          "line-opacity": v.id === "net" ? lineFade(k, dim ? 1 : k === Cat.Bus ? 0.65 : ["case", ["==", ["get", "u"], 1], 0.8, 1]) : dim ? 1 : k === Cat.Bus ? 0.65 : ["case", ["==", ["get", "u"], 1], 0.8, 1],
         },
       });
     }
@@ -282,6 +325,8 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
       "circle-stroke-color": dim ? t.dimMarker : t.markerStroke,
       "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 3, ["case", [">=", ["get", "imp"], 0.8], 1.3, 1], 8, 1.6, 10, 2],
       "circle-pitch-alignment": "map",
+      "circle-opacity": cityFade(st, 1),
+      "circle-stroke-opacity": cityFade(st, 1),
     },
   });
   // ---- selection: reachable cities (small dots) + origin/destination
@@ -332,8 +377,8 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
         "circle-color": t.markerFill,
         "circle-stroke-color": t.markerStroke,
         "circle-stroke-width": ["case", ["==", ["get", "rail"], 1], 2.2, 1.6],
-        "circle-opacity": dim && base ? 0.6 : 1,
-        "circle-stroke-opacity": dim && base ? 0.45 : 1,
+        "circle-opacity": base ? rampFrom(minzoom, dim ? 0.6 : 1) : dim && base ? 0.6 : 1,
+        "circle-stroke-opacity": base ? rampFrom(minzoom, dim ? 0.45 : 1) : 1,
       },
     }) as LayerSpecification;
   const stationLabel = (id: string, src: { source: string; "source-layer"?: string }, minzoom: number, filter?: FilterSpecification, base = true): LayerSpecification =>
@@ -358,6 +403,7 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
         "text-color": dim && base ? t.dimText : ["case", ["==", ["get", "major"], 1], t.text, t.textMuted],
         "text-halo-color": t.halo,
         "text-halo-width": 2,
+        "text-opacity": base ? rampFrom(minzoom, 1) : 1,
       },
     }) as LayerSpecification;
   const stSrc = { source: "net", "source-layer": TILE_LAYERS.station };
@@ -398,7 +444,7 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
         "text-color": dim && !focus ? t.dimText : t.text,
         "text-halo-color": t.halo,
         "text-halo-width": 2,
-        "text-opacity": dim && !focus ? 0.8 : 1,
+        "text-opacity": focus ? 1 : cityFade(st, dim ? 0.8 : 1),
       },
     }) as LayerSpecification;
   // city name as a faint area label once the city has broken out into stations

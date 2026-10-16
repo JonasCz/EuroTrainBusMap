@@ -20,7 +20,7 @@ import {
   type MapNet,
   type NetworkFile,
 } from "@etbm/shared";
-import { mergeLines, TILE_MAXZOOM } from "@etbm/shared";
+import { levelIndex, mergeLines, TILE_MAXZOOM } from "@etbm/shared";
 import { forZoom, tileProps, writeMapData } from "../src/mapdata.ts";
 
 const net: NetworkFile = {
@@ -100,9 +100,13 @@ describe("map data (netmap)", () => {
     const p = tileProps({ sid: 4, k: 10, u: 0, term: 0, hop: 0, l1: 0, w1: 2.33, l2: 7, w2: 1.2 });
     expect(p.sid).toBeUndefined();
     expect(p.w1).toBe(2.25);
-    const z3 = forZoom(f(0, 1, p), 3).properties as Record<string, number>;
-    expect(z3.l1).toBe(0);
-    expect(z3.w2).toBeUndefined(); // regional not visible below zoom 4
+    const z2 = forZoom(f(0, 1, p), 2).properties as Record<string, number>;
+    expect(z2.l1).toBe(0);
+    expect(z2.w2).toBeUndefined(); // regional (level 6.5) not yet fading in (from 5.8) below zoom 4
+    // a level that fades in before the next zoom is already in the tile (one tile zoom earlier), at its true level
+    const z5 = forZoom(f(0, 1, p), 5).properties as Record<string, number>;
+    expect(z5.l2).toBe(7);
+    expect(z5.l1).toBe(levelIndex(5)); // finished fading in: clamped
   });
   it("writes tiles, core, stations and geo files", async () => {
     const dir = await mkdtemp(join(tmpdir(), "mapdata-"));

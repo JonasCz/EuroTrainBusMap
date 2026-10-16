@@ -16,6 +16,7 @@ import geojsonvt from "geojson-vt";
 import vtpbf from "vt-pbf";
 import {
   CAT_BITS,
+  FADE_ZOOM,
   STATION_ZOOM,
   levelIndex,
   TILE_LAYERS,
@@ -45,6 +46,8 @@ type Feature = GeoJSON.Feature;
 type Log = (msg: string) => void;
 
 const TILE_MINZOOM = 2;
+/** City markers are fully shown this much before the zoom of their level (must match the style); they fade in over FADE_ZOOM before that. */
+const CITY_LEAD = 0.5;
 
 export interface MapDataResult {
   files: number;
@@ -127,8 +130,8 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
     const opts = { maxZoom: z, indexMaxZoom: z, indexMaxPoints: 0, extent, buffer: last ? 512 : 256, tolerance: last ? 1 : 4 };
     const fc = (fs: Feature[]): GeoJSON.FeatureCollection => ({ type: "FeatureCollection", features: fs });
     const layers: Record<string, ReturnType<typeof geojsonvt>> = {
-      [TILE_LAYERS.seg]: geojsonvt(fc(mergeLines(segFeatures.filter((x) => last || x.z < z + 1).map((x) => (last ? x.f : forZoom(x.f, z))))), opts),
-      [TILE_LAYERS.city]: geojsonvt(fc(cityFeatures.filter((x) => last || x.z < z + 1).map((x) => x.f)), { ...opts, buffer: 64 }),
+      [TILE_LAYERS.seg]: geojsonvt(fc(mergeLines(segFeatures.filter((x) => last || x.z - FADE_ZOOM < z + 1).map((x) => (last ? x.f : forZoom(x.f, z))))), opts),
+      [TILE_LAYERS.city]: geojsonvt(fc(cityFeatures.filter((x) => last || x.z - CITY_LEAD - FADE_ZOOM < z + 1).map((x) => x.f)), { ...opts, buffer: 64 }),
     };
     if (last) {
       layers[TILE_LAYERS.term] = geojsonvt(fc(mergeLines(termFeatures)), opts);
@@ -234,12 +237,12 @@ export function tileProps(p: Record<string, number>): Record<string, number> {
 
 /**
  * Coarser properties for a tile shown from zoom z to z+1: categories not yet
- * visible by z+1 are dropped, levels reached by z are clamped, widths rounded
+ * fading in by z+1 (FADE_ZOOM before their level) are dropped, levels reached by z (fully faded in) are clamped, widths rounded
  * to half units and no sort key – so more neighbours share properties.
  */
 export function forZoom(f: Feature, z: number): Feature {
   const p = f.properties as Record<string, number>;
-  const lo = levelIndex(z), hi = levelIndex(z + 0.999);
+  const lo = levelIndex(z), hi = levelIndex(z + 1 + FADE_ZOOM - 0.001);
   const out: Record<string, number> = {};
   for (const k of CAT_BITS) {
     const l = p[`l${k}`];

@@ -6,7 +6,9 @@
 import { Cat } from "./schema.ts";
 
 /** Zoom levels at which new detail appears. Index = "lz" bucket. */
-export const LEVELS = [0, 4.5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9.5] as const;
+export const LEVELS = [0, 3, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9.5] as const;
+/** Features fade in over this many zoom levels from their level (style) and are in the tiles from one tile zoom earlier. */
+export const FADE_ZOOM = 0.7;
 /** Zoom at which cities break out into their stations. */
 export const STATION_ZOOM = 10.5;
 /** Station detail levels (≥ STATION_ZOOM). Index = station "lz". */

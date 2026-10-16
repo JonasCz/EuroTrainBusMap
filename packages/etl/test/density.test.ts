@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CAT_BITS, Cat, LEVELS, levelIndex, promoteSparse } from "@etbm/shared";
+import { CAT_BITS, Cat, LEVELS, PROMOTE_FLOOR, levelIndex, promoteSparse } from "@etbm/shared";
 
 const NC = CAT_BITS.length;
 const bus = CAT_BITS.indexOf(Cat.Bus);
@@ -10,7 +10,7 @@ function lines(lon0: number, n: number) {
 
 describe("density-aware LOD", () => {
   // a sparse region with 1 bus line and a dense one with 120 bus lines, all at base level 9.5
-  const segCoords = [...lines(0, 1), ...lines(10, 120)];
+  const segCoords = [...lines(0, 1), ...lines(40, 120)];
   // every line starts at a city (0) on the visible network (corridor 0: a long-distance line)
   const corridors = [
     { a: 0, b: 1, segs: [] as number[], cats: Cat.LongDistance, tpd: { [Cat.LongDistance]: 20 } },
@@ -22,15 +22,15 @@ describe("density-aware LOD", () => {
     const levels = new Int8Array(corridors.length * NC).fill(127);
     levels[ld] = 0;
     corridors.forEach((_, c) => c > 0 && (levels[c * NC + bus] = base));
-    promoteSparse({ segCoords, corridors, cats: CAT_BITS, levels }, { budget: 600 });
+    promoteSparse({ segCoords, corridors, cats: CAT_BITS, levels }, { budget: 150 });
     return corridors.slice(1).map((_, c) => LEVELS[levels[(c + 1) * NC + bus]!]);
   };
 
-  it("promotes lines in sparse areas only, by at most MAX_PROMOTE levels", () => {
+  it("promotes lines in sparse areas only, down to the category floor", () => {
     const z = run();
-    expect(z[0]).toBe(LEVELS[base - 3]); // 7.5
+    expect(z[0]).toBe(PROMOTE_FLOOR[Cat.Bus]); // 5
     const dense = z.slice(1);
-    expect(dense.filter((x) => x === 9.5).length).toBeGreaterThan(60);
+    expect(dense.filter((x) => x === 9.5).length).toBeGreaterThan(30);
     // busiest dense lines are the ones that got the room
     expect(dense[dense.length - 1]).toBeLessThan(9.5);
   });
@@ -44,5 +44,23 @@ describe("density-aware LOD", () => {
 
   it("is deterministic", () => {
     expect(run()).toEqual(run());
+  });
+
+  it("promotes a whole chain of hops together or not at all", () => {
+    // a 3-hop bus line A-B-C-D (each hop ~50 km east), hops at different base levels; A is on the visible network
+    const hops = [0, 1, 2].map((i) => [[i * 0.65, 45], [(i + 1) * 0.65, 45]] as [number, number][]);
+    const cors = [
+      { a: 0, b: 10, segs: [] as number[], cats: Cat.LongDistance, tpd: { [Cat.LongDistance]: 20 } },
+      ...hops.map((_, i) => ({ a: i, b: i + 1, segs: [i], cats: Cat.Bus, tpd: { [Cat.Bus]: 100 } })),
+    ];
+    const levels = new Int8Array(cors.length * NC).fill(127);
+    levels[ld] = 0;
+    [levelIndex(8.5), levelIndex(9.5), levelIndex(8)].forEach((l, i) => (levels[(i + 1) * NC + bus] = l));
+    const group = new Int32Array(cors.length * NC).fill(-1);
+    for (let i = 1; i <= 3; i++) group[i * NC + bus] = 7;
+    promoteSparse({ segCoords: hops, corridors: cors, cats: CAT_BITS, levels, group });
+    const got = [1, 2, 3].map((c) => levels[c * NC + bus]);
+    expect(new Set(got).size).toBe(1);
+    expect(LEVELS[got[0]!]).toBe(PROMOTE_FLOOR[Cat.Bus]);
   });
 });

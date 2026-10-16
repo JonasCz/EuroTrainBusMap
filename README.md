@@ -62,15 +62,25 @@ Pipeline in short:
    actually loads, so phones never download the whole network:
    - `core.json` (~0.6 MB gzip): cities only (names, positions, importance, shard) + tile index;
      the only data needed to start.
-   - `tiles/{z}/{x}/{y}.pbf.gz` (z2–9, ~4100 files, ~20 MB gzip total; only tiles that contain data):
+   - `tiles/{z}/{x}/{y}.pbf.gz` (z2–9, ~4200 files, ~25 MB gzip total; only tiles that contain data):
      gzipped Mapbox vector tiles of the drawn network (layers `seg`, `city`, and at z9 also `term` end
      pieces and `st` stations), overzoomed beyond z9. z9 (extent 8192 ≈ 6 m) holds the stored
      geometry almost unsimplified, z7/z8 are simplified to ~200 / ~100 m. Features are filter-independent: per category width/LOD level; the
      style packs the visible categories side by side. Low zooms only hold what is shown
-     there, with equal neighbouring segments merged. LOD is density-aware
-     (`packages/shared/src/density.ts`): where the map around a line is sparse, regional rail,
-     coach and bus lines appear up to three LOD levels earlier, in importance order within an ink
-     budget per screen cell, and only connected to the visible network. Stored gzipped because static hosts don't
+     there, with equal neighbouring segments merged. Lines are revealed as a whole: per category,
+     corridors (hops between consecutive cities) that meet in a city where exactly two of them
+     meet form a chain (`packages/shared/src/lines.ts`, ends at junctions), and a chain gets the
+     earliest LOD level of its hops – a route no longer shows up piece by piece because its
+     patterns skip different stops. LOD is density-aware
+     (`packages/shared/src/density.ts`): the target is a roughly even amount of ink per screen
+     cell, so where the map around a line is sparse, whole chains of regional rail, coach and bus
+     lines appear as early as the budget allows (floors: long-distance 3, regional/coach 4, bus 5),
+     in importance order within an ink budget per 256 px cell, never in dense areas beyond the
+     budget, and only connected to the visible network; computed globally in the ETL, so
+     neighbouring tiles always agree. Lines fade in over 0.7 zoom levels ending at their level
+     (`FADE_ZOOM`; tile z already holds everything that starts fading in before z+1), city
+     markers/labels and stations fade the same way (style `line-opacity` / `circle-opacity`
+     interpolated over zoom with per-feature stops). Stored gzipped because static hosts don't
      compress protobuf; the app inflates them (DecompressionStream).
    - `geo/<shard>.json` (~80 KB gzip on average): for each timetable shard, the corridors its patterns
      use (with segment geometry, for the selection highlight) and the stations it references

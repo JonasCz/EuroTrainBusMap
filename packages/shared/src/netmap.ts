@@ -16,9 +16,10 @@ import type { CatBit, City, Corridor, Segment, Station } from "./schema.ts";
 import type * as GeoJSON from "geojson";
 import { Cat } from "./schema.ts";
 import { promoteSparse } from "./density.ts";
+import { lineGroups, smoothLevels } from "./lines.ts";
 import { LEVELS, LONG_HOP_ZOOM, catWidth, cityTierZoom, corridorMinZoom, haversineKm, isLongHop, levelIndex, stationLevel } from "./lod.ts";
 
-export const MAPDATA_VERSION = 2;
+export const MAPDATA_VERSION = 3;
 export const CAT_BITS = [Cat.LongDistance, Cat.Regional, Cat.Coach, Cat.Bus] as const;
 /**
  * Vector tiles: zoom range (tileSize 512) and source-layer names. Tiles at the max zoom hold the full
@@ -99,6 +100,8 @@ export function cutIndices(net: MapNet, c: Corridor): [number, number] {
 export interface NetIndexOptions {
   /** Density-aware LOD (density.ts): lines appear earlier where the map is sparse. */
   density?: boolean | { budget?: number; maxPromote?: number };
+  /** Reveal chains of hops as a whole (lines.ts); default true. */
+  lines?: boolean;
   log?: (s: string) => void;
 }
 
@@ -126,15 +129,20 @@ export function buildNetIndex(net: MapNet, opts: NetIndexOptions = {}): NetIndex
       if (isLongHop(len, c.snapped)) fixed[c.id * NC + i] = 1;
     });
   }
+  // a line (chain of hops) is revealed as a whole: all its hops get the earliest level among them
+  const corList = net.corridors.map((c) => (c ? { a: c.a, b: c.b, segs: c.segs ?? [], cats: c.cats, tpd: c.tpd } : undefined));
+  const group = lineGroups(corList, CAT_BITS, fixed);
+  if (opts.lines !== false) smoothLevels(corLevel, group);
   if (opts.density) {
     const t0 = Date.now();
     const r = promoteSparse(
       {
         segCoords: net.segments.map((s) => s?.coords),
-        corridors: net.corridors.map((c) => (c ? { a: c.a, b: c.b, segs: c.segs ?? [], cats: c.cats, tpd: c.tpd } : undefined)),
+        corridors: corList,
         cats: CAT_BITS,
         levels: corLevel,
         fixed,
+        group: opts.lines !== false ? group : undefined,
       },
       typeof opts.density === "object" ? opts.density : {},
     );

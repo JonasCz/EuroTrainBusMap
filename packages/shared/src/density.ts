@@ -6,15 +6,18 @@
  *
  *  - the map is cut into cells of CELL_PX × CELL_PX screen pixels at each LOD level's zoom,
  *  - a cell's "ink" is the drawn line length (px, one line per category) visible at that level,
- *  - level by level (ascending), corridors not yet visible are promoted in importance order
- *    (category, then trips/day) while the mean ink of the 3 × 3 cells around every cell they
+ *  - level by level (ascending), lines not yet visible are promoted in importance order
+ *    (category, then trips/day) while the mean ink of the 3 × 3 cells around the cells they
  *    cross stays within the budget (regional density: a hub in an empty region has room),
- *  - a promoted line must touch the visible network at one of its end cities, so lines grow
+ *  - the unit of promotion is a whole line (a chain of corridors, see lines.ts), never a single
+ *    hop: a route is revealed at once, not piece by piece,
+ *  - a promoted line must touch the visible network at one of its cities, so lines grow
  *    out of the network instead of appearing as floating pieces.
  *
- * Promotion is limited to a few levels and never earlier than a per-category floor. All
- * categories count towards the ink regardless of UI filters, so the result is
- * filter-independent and can be baked into the tiles.
+ * Promotion never goes earlier than a per-category floor (long-distance rail first, then regional
+ * rail, coaches, buses), but otherwise as far as the budget allows: the target is a roughly even
+ * amount of ink everywhere. All categories count towards the ink regardless of UI filters, so the
+ * result is filter-independent and can be baked into the tiles.
  */
 import { Cat } from "./schema.ts";
 import { LEVELS, levelIndex } from "./lod.ts";
@@ -22,10 +25,15 @@ import { LEVELS, levelIndex } from "./lod.ts";
 export const CELL_PX = 256;
 /** Max mean drawn line length per cell around a line (px); a line straight across a cell is 256 px. */
 export const INK_BUDGET = 1200;
-/** Max number of LEVELS a corridor line may move forward. */
-export const MAX_PROMOTE = 3;
+/** Max number of LEVELS a line may move forward (all of them: the floors and the budget limit it). */
+export const MAX_PROMOTE = LEVELS.length;
+/**
+ * A line is promoted if at least this share of the ink it adds lies in cells with room (a long
+ * line crossing a busy town on its way must not be held back by that one cell).
+ */
+export const ROOM_SHARE = 0.75;
 /** Earliest zoom a promoted line of each category may get. */
-export const PROMOTE_FLOOR: Record<number, number> = { [Cat.LongDistance]: 4.5, [Cat.Regional]: 5.5, [Cat.Coach]: 6, [Cat.Bus]: 7 };
+export const PROMOTE_FLOOR: Record<number, number> = { [Cat.LongDistance]: 3, [Cat.Regional]: 4, [Cat.Coach]: 4, [Cat.Bus]: 5 };
 
 export interface DensityInput {
   /** Segment polylines (lon/lat); undefined for gaps in sparse networks. */
@@ -38,6 +46,8 @@ export interface DensityInput {
   levels: Int8Array;
   /** Corridor × cat: may not be promoted (e.g. unsnapped long hops). */
   fixed?: Uint8Array;
+  /** Corridor × cat line group (lines.ts, −1 = none); members share one level and are promoted together. Default: one group per corridor × cat. */
+  group?: Int32Array;
 }
 
 export interface DensityResult {
@@ -83,16 +93,23 @@ export function promoteSparse(inp: DensityInput, opts: { budget?: number; maxPro
   };
   for (let c = 0; c < nC; c++) if (inp.corridors[c]) refresh(c);
 
-  // candidates: corridor × cat, most important first
-  const cands: number[] = [];
+  // candidates: lines (groups of corridor × cat), most important first
+  const group = inp.group ?? Int32Array.from({ length: nC * NC }, (_, i) => i);
+  const members = new Map<number, number[]>();
   for (let c = 0; c < nC; c++) {
     const cr = inp.corridors[c];
     if (!cr?.segs.length) continue;
-    for (let k = 0; k < NC; k++) if (inp.levels[c * NC + k]! !== 127 && !inp.fixed?.[c * NC + k]) cands.push(c * NC + k);
+    for (let k = 0; k < NC; k++) {
+      const ck = c * NC + k;
+      if (inp.levels[ck] === 127 || inp.fixed?.[ck] || group[ck]! < 0) continue;
+      (members.get(group[ck]!) ?? members.set(group[ck]!, []).get(group[ck]!)!).push(ck);
+    }
   }
   const catOf = (ck: number) => inp.cats[ck % NC]!;
   const tpdOf = (ck: number) => inp.corridors[Math.floor(ck / NC)]!.tpd[catOf(ck)] ?? 0;
-  cands.sort((a, b) => CAT_RANK[catOf(a)]! - CAT_RANK[catOf(b)]! || tpdOf(b) - tpdOf(a) || a - b);
+  const lines = [...members.entries()].map(([g, ms]) => ({ g, ms, cat: ms[0]! % NC, tpd: Math.max(...ms.map(tpdOf)), cities: [...new Set(ms.flatMap((ck) => [inp.corridors[Math.floor(ck / NC)]!.a, inp.corridors[Math.floor(ck / NC)]!.b]))] }));
+  lines.sort((a, b) => CAT_RANK[inp.cats[a.cat]!]! - CAT_RANK[inp.cats[b.cat]!]! || b.tpd - a.tpd || a.g - b.g);
+  const lineLevel = (ln: { ms: number[] }) => Math.min(...ln.ms.map((ck) => inp.levels[ck]!)); // equal for all members once smoothed
 
   const promoted = new Array(NC).fill(0) as number[];
   const cellsCache = new Map<number, Map<number, number>>(); // segment → cell → px (current level)
@@ -151,45 +168,42 @@ export function promoteSparse(inp: DensityInput, opts: { budget?: number; maxPro
       return sum / 9;
     };
     const floor = (k: number) => levelIndex(PROMOTE_FLOOR[inp.cats[k]!] ?? 0);
-    let pending = cands.filter((ck) => {
-      const lv = inp.levels[ck]!;
-      return lv > L && lv - L <= maxPromote && L >= floor(ck % NC);
+    let pending = lines.filter((ln) => {
+      const lv = lineLevel(ln);
+      return lv > L && lv - L <= maxPromote && L >= floor(ln.cat);
     });
     // passes: a line rejected only for lack of a connection may connect once its neighbour is in
     for (let pass = 0; pass < 8 && pending.length; pass++) {
-      const next: number[] = [];
+      const next: typeof pending = [];
       let changed = false;
-      for (const ck of pending) {
-        const k = ck % NC;
-        const c = Math.floor(ck / NC);
-        const cr = inp.corridors[c]!;
-        if (!cityVis.has(cr.a) && !cityVis.has(cr.b)) {
-          next.push(ck);
+      for (const ln of pending) {
+        const k = ln.cat;
+        if (!ln.cities.some((c) => cityVis.has(c))) {
+          next.push(ln);
           continue;
         }
         // ink this line would add: its segments not yet drawn for this category at L
         const add = new Map<number, number>();
-        for (const code of cr.segs) {
-          const s = sid(code);
-          if (segLevel[s * NC + k]! <= L) continue;
-          for (const [cell, px] of cellsOf(s)) add.set(cell, (add.get(cell) ?? 0) + px);
-        }
-        let ok = true;
-        for (const cell of add.keys())
-          if (around(cell, add) > budget) {
-            ok = false;
-            break;
+        const seen = new Set<number>();
+        for (const ck of ln.ms) {
+          for (const code of inp.corridors[Math.floor(ck / NC)]!.segs) {
+            const s = sid(code);
+            if (segLevel[s * NC + k]! <= L || seen.has(s)) continue;
+            seen.add(s);
+            for (const [cell, px] of cellsOf(s)) add.set(cell, (add.get(cell) ?? 0) + px);
           }
-        if (!ok) continue; // over budget: stays at its base level
-        for (const [cell, px] of add) ink.set(cell, (ink.get(cell) ?? 0) + px);
-        inp.levels[ck] = L;
-        for (const code of cr.segs) {
-          const s = sid(code);
-          if (L < segLevel[s * NC + k]!) segLevel[s * NC + k] = L;
         }
-        cityVis.add(cr.a);
-        cityVis.add(cr.b);
-        promoted[k]!++;
+        let total = 0, roomy = 0;
+        for (const [cell, px] of add) {
+          total += px;
+          if (around(cell, add) <= budget) roomy += px;
+        }
+        if (roomy < ROOM_SHARE * total) continue; // over budget: stays at its base level
+        for (const [cell, px] of add) ink.set(cell, (ink.get(cell) ?? 0) + px);
+        for (const ck of ln.ms) inp.levels[ck] = L;
+        for (const s of seen) if (L < segLevel[s * NC + k]!) segLevel[s * NC + k] = L;
+        for (const c of ln.cities) cityVis.add(c);
+        promoted[k]! += ln.ms.length;
         changed = true;
       }
       if (!changed) break;
