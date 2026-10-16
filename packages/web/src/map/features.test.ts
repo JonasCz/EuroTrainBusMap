@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Cat, type Corridor, type Station } from "@etbm/shared";
 import type { GeoStore } from "../data/load.ts";
-import { highlightData, pack, visibleCats } from "./features.ts";
+import { highlightData, pack } from "./features.ts";
 
 // local A–B, B–C and an express A–C running over both segments
 const seg = (x0: number, x1: number) => ({ coords: [[x0, 50], [(x0 + x1) / 2, 50.02], [x1, 50]] as [number, number][], snapped: true, hop: false });
@@ -37,11 +37,5 @@ describe("selection highlight", () => {
     const p = pack([2, 2]);
     expect(p.offsets[0]).toBe(-p.offsets[1]!);
     expect(p.total).toBeCloseTo(4.3);
-  });
-  it("filters categories (Deutschlandticket heuristic without dtCats)", () => {
-    const cities = [0, 1].map((i) => ({ id: i, name: "x", country: i ? "AT" : "DE", lon: 0, lat: 0, population: 0, importance: 0, cats: 3, stations: [i], tz: 0 }));
-    const c = corr(5, 0, 1, [], Cat.Regional | Cat.LongDistance, {});
-    expect(visibleCats(cities, false, c, { cats: 15, dticket: false })).toBe(3);
-    expect(visibleCats(cities, false, c, { cats: 15, dticket: true })).toBe(0);
   });
 });

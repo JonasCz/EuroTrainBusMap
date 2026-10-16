@@ -439,9 +439,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       return;
     }
     const dn = rc.pname ? { name: rc.pname, number: tShort[tk] ?? undefined } : displayName(rc.short, rc.long, tShort[tk] ?? "", rc.agency);
-    let flags = tFlags[tk]!;
-    // Deutschlandticket only applies to services that run in Germany.
-    if (flags & Flag.DTicket && !shape.cities.some((c) => cities[c]!.country === "DE")) flags &= ~Flag.DTicket;
+    // Older databases (--reuse-db) may still carry the removed Deutschlandticket bit (1).
+    const flags = tFlags[tk]! & Flag.Night;
     const color = rc.color && /^[0-9a-fA-F]{6}$/.test(rc.color) ? rc.color.toUpperCase() : undefined;
     const rkey = `${dn.name}\u0001${rc.agency}\u0001${cat}\u0001${flags}\u0001${color ?? ""}`;
     let route = routeIndex.get(rkey);
@@ -536,7 +535,6 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     a: number;
     b: number;
     cats: number;
-    dt: number;
     tpd: Record<number, number>;
     hops: Map<string, { from: number; to: number; w: number; shapeTrip: number }>;
     sa: Map<number, number>;
@@ -559,13 +557,12 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       if (id === undefined) {
         id = corrs.length;
         corrIndex.set(key, id);
-        corrs.push({ a, b, cats: 0, dt: 0, tpd: {}, hops: new Map(), sa: new Map(), sb: new Map() });
+        corrs.push({ a, b, cats: 0, tpd: {}, hops: new Map(), sa: new Map(), sb: new Map() });
       }
       list.push(id);
       if (!w) continue;
       const cr = corrs[id]!;
       cr.cats |= route.cat;
-      if (route.flags & Flag.DTicket) cr.dt |= route.cat;
       cr.tpd[route.cat] = (cr.tpd[route.cat] ?? 0) + w / D;
       const s1 = pt.stations[i]!, s2 = pt.stations[i + 1]!;
       const [from, to] = c1 === a ? [s1, s2] : [s2, s1];
@@ -753,7 +750,6 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     };
     const sa = top(c.sa), sb = top(c.sb);
     const cor: Corridor = { id: outCorr.length, a: flip ? b : a, b: flip ? a : b, coords, cats: c.cats, tpd, snapped: !!g?.snapped };
-    if (c.dt) cor.dtCats = c.dt;
     const [ea, eb] = flip ? [sb, sa] : [sa, sb];
     if (ea !== undefined) cor.sa = ea;
     if (eb !== undefined) cor.sb = eb;
@@ -782,7 +778,6 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     outCorr.map((c) => ({
       coords: c.coords,
       cats: c.cats,
-      dtCats: c.dtCats ?? 0,
       tpd: c.tpd as Record<number, number>,
       snapped: c.snapped,
       tol: corrTol.get(c) ?? 150,
@@ -793,7 +788,6 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const tpd: Partial<Record<CatBit, number>> = {};
     for (const k of CAT_BITS) if (sg.tpd[k]) tpd[k] = Math.round(sg.tpd[k]! * 10) / 10;
     const o: Segment = { id: i, coords: sg.coords.map(([x, y]) => [round5(x), round5(y)] as [number, number]), cats: sg.cats, tpd, snapped: sg.snapped };
-    if (sg.dtCats) o.dtCats = sg.dtCats;
     return o;
   });
   let noSeg = 0;

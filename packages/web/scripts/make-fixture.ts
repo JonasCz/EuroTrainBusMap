@@ -251,15 +251,15 @@ const R = {
   ECPL: route("EC Berlin–Warszawa-Express", "PKP Intercity", Cat.LongDistance),
   ECCH: route("EC", "SBB", Cat.LongDistance),
   ICEDK: route("ICE-L", "DB Fernverkehr / DSB", Cat.LongDistance),
-  RE1: route("RE1", "ODEG", Cat.Regional, Flag.DTicket),
-  RE50: route("RE50", "DB Regio", Cat.Regional, Flag.DTicket),
-  ME: route("RE3 metronom", "metronom", Cat.Regional, Flag.DTicket),
+  RE1: route("RE1", "ODEG", Cat.Regional),
+  RE50: route("RE50", "DB Regio", Cat.Regional),
+  ME: route("RE3 metronom", "metronom", Cat.Regional),
   IR: route("IR36", "SBB", Cat.Regional),
   OSPL: route("REGIO", "Koleje Śląskie", Cat.Regional),
   FLIX: route("FlixBus", "FlixBus", Cat.Coach, 0, "73D700"),
   KK: route("Kamil Koç", "Kamil Koç", Cat.Coach),
   BB: route("BlaBlaCar Bus", "BlaBlaCar", Cat.Coach),
-  B631: route("Bus 631", "Havelbus", Cat.Bus, Flag.DTicket),
+  B631: route("Bus 631", "Havelbus", Cat.Bus),
   SZW: route("Szwagropol", "Szwagropol", Cat.Bus),
 };
 
@@ -613,13 +613,6 @@ for (const [pi, , cal] of trips) {
 }
 for (const c of corridors) for (const k of Object.keys(c.tpd)) c.tpd[Number(k) as CatBit] = Math.round(c.tpd[Number(k) as CatBit]! * 10) / 10;
 
-// Deutschlandticket cats per corridor (proposed schema extension `dtCats`)
-const dtCats = new Map<number, number>();
-for (const p of patterns) {
-  const r = routes[p.route]!;
-  if (r.flags & Flag.DTicket) for (const cid of p.corridors) dtCats.set(cid, (dtCats.get(cid) ?? 0) | r.cat);
-}
-
 // importance: population + service, normalised to 0..1
 const maxPop = Math.log10(Math.max(...cities.map((c) => c.population)));
 const maxSvc = Math.log1p(Math.max(...cityService));
@@ -687,7 +680,7 @@ const network: NetworkFile = {
   timezones: TZ,
   cities,
   stations,
-  corridors: corridors.map((c) => ({ ...c, ...(dtCats.has(c.id) ? { dtCats: dtCats.get(c.id) } : {}) })),
+  corridors,
 };
 const manifest: Manifest = {
   schema: SCHEMA_VERSION,

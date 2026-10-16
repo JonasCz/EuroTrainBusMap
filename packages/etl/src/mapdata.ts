@@ -65,7 +65,6 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
     corridors: network.corridors,
     segments,
     stations: network.stations,
-    hasDtCats: network.corridors.some((c) => c.dtCats !== undefined),
   };
   const idx = buildNetIndex(net, { density: true, log });
   let files = 0, bytes = 0;
@@ -169,7 +168,6 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
     cityList: network.cities,
     nStations: network.stations.length,
     counts: { stations: network.stations.length, corridors: network.corridors.length, segments: segments.length },
-    hasDtCats: net.hasDtCats,
     tiles: { minzoom: TILE_MINZOOM, maxzoom: TILE_MAXZOOM, tiles: index, url: "tiles/{z}/{x}/{y}.pbf.gz" },
   });
   await write("core.json", JSON.stringify(core));

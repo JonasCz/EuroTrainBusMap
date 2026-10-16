@@ -20,7 +20,7 @@
 
 import type { PackedNetwork } from "./pack.ts";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** Service categories. Bit flags so several can be combined in masks. */
 export const Cat = {
@@ -37,8 +37,6 @@ export type CatBit = (typeof Cat)[keyof typeof Cat];
 
 /** Extra flags on a route/trip. */
 export const Flag = {
-  /** Valid with the German Deutschlandticket (regional services in DE). */
-  DTicket: 1,
   /** Night train / overnight service. */
   Night: 2,
 } as const;
@@ -117,8 +115,6 @@ export interface Corridor {
   tpd: Partial<Record<CatBit, number>>;
   /** Whether geometry is snapped to real infrastructure (true) or synthesized (false). */
   snapped: boolean;
-  /** Cat bits on this corridor that carry Deutschlandticket-valid services (Flag.DTicket). */
-  dtCats?: number;
   /** Most-used station at the `a` / `b` end (for drawing to the real station at high zoom). */
   sa?: number;
   sb?: number;
@@ -138,11 +134,10 @@ export interface Corridor {
 export interface Segment {
   id: number;
   coords: [number, number][];
-  /** Union of Cat bits of the corridors using the segment (cats, tpd, dtCats, snapped are aggregates). */
+  /** Union of Cat bits of the corridors using the segment (cats, tpd, snapped are aggregates). */
   cats: number;
   /** Sum of trips per day (both directions) of all corridors using it, per Cat bit. */
   tpd: Partial<Record<CatBit, number>>;
-  dtCats?: number;
   snapped: boolean;
 }
 

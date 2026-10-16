@@ -110,7 +110,7 @@ export function classifyRoute(r: RouteInfo, ctx: ClassifyContext): Classificatio
   if (!ctx.keep.includes(mode)) return null;
 
   if (mode === "coach") return { cls: "coach", cat: Cat.Coach, flags: 0 };
-  if (mode === "bus") return { cls: "bus", cat: Cat.Bus, flags: opts.dticket && ctx.country === "DE" ? Flag.DTicket : 0 };
+  if (mode === "bus") return { cls: "bus", cat: Cat.Bus, flags: 0 };
 
   // ---- rail ----
   let flags = 0;
@@ -161,7 +161,6 @@ export function classifyRoute(r: RouteInfo, ctx: ClassifyContext): Classificatio
   if (cat === Cat.Regional && ctx.country === "GB" && /\b(gwr|emr|scotrail|transport for wales|tfw)\b/i.test(r.agency + " " + allNames)) cat = null;
 
   if (cat == null && opts.railCatDefault) cat = Cat[opts.railCatDefault];
-  if (cat === Cat.Regional && opts.dticket && ctx.country === "DE") flags |= Flag.DTicket;
   return { cls: "rail", cat, flags };
 }
 

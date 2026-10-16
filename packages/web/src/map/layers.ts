@@ -4,14 +4,14 @@
  * selection layers come from small client-built GeoJSON sources.
  *
  * Tile features are filter-independent: each segment carries per-category
- * widths `w{k}`, LOD levels `l{k}` and Deutschlandticket flags `d{k}`, and the
+ * widths `w{k}`, and LOD levels `l{k}`, and the
  * style expressions below pack the categories that are visible (under the
  * current filters, at the current LOD level) side by side.
  */
 import { CAT_BITS, Cat, TILE_LAYERS } from "@etbm/shared";
 import type { ExpressionSpecification, FilterSpecification, LayerSpecification } from "maplibre-gl";
 import type * as GeoJSON from "geojson";
-import { effectiveCats, type Filters } from "../logic/filters.ts";
+import type { Filters } from "../logic/filters.ts";
 import { GAP } from "./features.ts";
 import { LEVELS, LONG_HOP_ZOOM, STATION_LEVELS, STATION_ZOOM } from "./lod.ts";
 import { FONT_MEDIUM, FONT_REGULAR } from "./style.ts";
@@ -19,25 +19,29 @@ import type { Theme } from "./theme.ts";
 
 export { STATION_ZOOM };
 
-/** Zoom → px per width unit (base network: thin at overview). */
+/**
+ * Zoom → px per width unit of the base network. Deliberately grows much slower than the map
+ * scale (which doubles per zoom level): lines get relatively thinner the further one zooms in,
+ * so the ink per screen area stays similar and dense areas (London, Ruhr) never clog at z6–9,
+ * while a few-px line (unit ≈ 1–5) stays legible overview and detail alike.
+ */
 const ZF: [number, number][] = [
-  [2, 0.32],
-  [4, 0.5],
-  [5.5, 0.72],
-  [7, 1.0],
-  [9, 1.45],
-  [11, 1.8],
-  [13, 2.1],
-  [15, 2.5],
+  [2, 0.36],
+  [4, 0.48],
+  [6, 0.62],
+  [8, 0.7],
+  [10, 0.7],
+  [12, 0.7],
+  [15, 0.9],
 ];
-/** Highlighted corridors are bolder at low zoom. */
+/** Highlighted corridors are bolder than the base network, but also flatten out when zoomed in. */
 const ZF_HL: [number, number][] = [
   [2, 0.75],
-  [4, 0.95],
-  [6, 1.15],
-  [8, 1.45],
-  [11, 2.0],
-  [15, 2.8],
+  [4, 0.9],
+  [6, 1.0],
+  [8, 1.05],
+  [11, 1.2],
+  [15, 1.5],
 ];
 
 function factorAt(z: number, zf: [number, number][]): number {
@@ -77,10 +81,8 @@ function zoomStops(zf: [number, number][]): number[] {
 
 /** Whether category k of a feature is drawn at LOD level L under the filters. */
 function vis(k: number, L: number, f: Filters): unknown {
-  if (!(effectiveCats(f) & k)) return false;
-  const c: unknown[] = ["all", ["has", `w${k}`], ["<=", ["get", `l${k}`], L]];
-  if (f.dticket) c.push(["has", `d${k}`]);
-  return c;
+  if (!(f.cats & k)) return false;
+  return ["all", ["has", `w${k}`], ["<=", ["get", `l${k}`], L]];
 }
 const wOf = (k: number) => ["get", `w${k}`];
 /** Total bundle width (units) at level L. */
@@ -141,8 +143,8 @@ export interface LayerState {
 /** Base city filter: visible from max(tier zoom, earliest visible line) under the filters. */
 export function cityFilter(st: LayerState): FilterSpecification {
   const f = st.filters;
-  const cats = CAT_BITS.filter((k) => effectiveCats(f) & k);
-  const zOf = (k: number) => ["coalesce", ["get", `${f.dticket ? "n" : "m"}${k}`], 99];
+  const cats = CAT_BITS.filter((k) => f.cats & k);
+  const zOf = (k: number) => ["coalesce", ["get", `m${k}`], 99];
   const minLine = cats.length ? ["min", 99, ...cats.map(zOf)] : 99;
   const zoomOk = [">=", ["+", ["zoom"], 0.5], ["max", ["get", "tz"], minLine]];
   return (st.focus.length ? ["all", zoomOk, ["!", ["in", ["get", "id"], ["literal", st.focus]]]] : zoomOk) as FilterSpecification;
@@ -159,8 +161,8 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
   const layers: LayerSpecification[] = [];
   const lineLayout = { "line-join": "round", "line-cap": "round" } as const;
   const wMul = dim ? 0.6 : 1;
-  const cats = CAT_BITS.filter((k) => effectiveCats(f) & k);
-  const catFilter = (k: number): unknown[] => ["all", ["has", `w${k}`], ...(f.dticket ? [["has", `d${k}`]] : [])];
+  const cats = CAT_BITS.filter((k) => f.cats & k);
+  const catFilter = (k: number): unknown[] => ["all", ["has", `w${k}`]];
 
   // ---- base network
   // seg (city-level geometry, below STATION_ZOOM); at station zoom lead-in pieces ("term") are
@@ -182,7 +184,7 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
       layout: lineLayout,
       paint: {
         "line-color": t.land,
-        "line-width": byZoom(ZF, (_z, fz, L) => ["case", [">", total(L, f), 0], ["+", ["*", fz * wMul, total(L, f)], 1.6], 0], v.fixed),
+        "line-width": byZoom(ZF, (_z, fz, L) => ["case", [">", total(L, f), 0], ["+", ["*", fz * wMul, total(L, f)], 1.2], 0], v.fixed),
         "line-opacity": dim ? 0.6 : 1,
       },
     });

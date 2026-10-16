@@ -3,7 +3,7 @@ import { buildSegments, corridorCoords, type SegInput } from "../src/core/segmen
 
 const P = (x: number, y = 50): [number, number] => [10 + x * 0.01, y];
 const inp = (coords: [number, number][], tpd: Record<number, number>, extra: Partial<SegInput> = {}): SegInput => ({
-  coords, cats: Object.keys(tpd).reduce((a, k) => a | +k, 0), dtCats: 0, tpd, snapped: true, tol: 1, ...extra,
+  coords, cats: Object.keys(tpd).reduce((a, k) => a | +k, 0), tpd, snapped: true, tol: 1, ...extra,
 });
 
 describe("buildSegments", () => {

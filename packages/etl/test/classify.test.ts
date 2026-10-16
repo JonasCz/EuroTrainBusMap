@@ -48,8 +48,8 @@ describe("rail category", () => {
     expect(nj.flags & Flag.Night).toBeTruthy();
   });
   it("applies feed options", () => {
-    expect(classifyRoute(r(2, "16"), ctx({ opts: { railCatDefault: "Regional", dticket: true }, country: "DE" }))).toEqual({
-      cls: "rail", cat: Cat.Regional, flags: Flag.DTicket,
+    expect(classifyRoute(r(2, "16"), ctx({ opts: { railCatDefault: "Regional" }, country: "DE" }))).toEqual({
+      cls: "rail", cat: Cat.Regional, flags: 0,
     });
     expect(classifyRoute(r(2, "X"), ctx({ opts: { railCat: "LongDistance" } }))?.cat).toBe(Cat.LongDistance);
     expect(classifyRoute(r(2, "IC"), ctx({ keep: ["bus"] }))).toBeNull();
@@ -68,11 +68,11 @@ describe("bus & coach", () => {
     expect(classifyRoute(r(200, "5", "", "Volán"), ctx({ opts: { coachTypesAsBus: true } }))?.cat).toBe(Cat.Bus);
     expect(classifyRoute(r(3, "1", "", "X"), ctx({ opts: { allCoach: true } }))?.cat).toBe(Cat.Coach);
   });
-  it("drops replacement and urban buses, sets D-Ticket for DE buses", () => {
+  it("drops replacement and urban buses, keeps intercity buses", () => {
     expect(classifyRoute(r(3, "SEV"), ctx())).toBeNull();
     expect(classifyRoute(r(3, "Bus SEV"), ctx())).toBeNull();
     expect(classifyRoute(r(3, "13A", "", "Wiener Linien"), ctx())).toBeNull();
-    expect(classifyRoute(r(3, "800", "", "RVO"), ctx({ country: "DE", opts: { dticket: true } }))?.flags).toBe(Flag.DTicket);
+    expect(classifyRoute(r(3, "800", "", "RVO"), ctx({ country: "DE" }))?.cls).toBe("bus");
   });
 });
 

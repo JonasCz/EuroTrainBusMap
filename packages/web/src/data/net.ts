@@ -20,8 +20,6 @@ export interface Net {
   bySlug: Map<string, number>;
   /** slugified city names (no disambiguation suffix), for search */
   nameKey: string[];
-  /** Whether corridors carry dtCats; otherwise a DE-only heuristic is used. */
-  hasDtCats: boolean;
   counts: { stations: number; corridors: number; segments: number };
   detailLoaded: boolean;
 }
@@ -74,7 +72,6 @@ export function buildNet(ds: DataSet): Net {
     slug,
     bySlug,
     nameKey,
-    hasDtCats: ds.core.hasDtCats,
     counts: ds.core.counts,
     detailLoaded: false,
   };

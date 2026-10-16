@@ -156,12 +156,21 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
 
 ## Status of checks (last run)
 
-`pnpm typecheck` passes (shared, etl, web); `pnpm test` passes (etl 88 tests, web 40 tests, ~10 s each). `wrangler whoami` works with the env token;
+`pnpm typecheck` passes (shared, etl, web); `pnpm test` passes (etl 88 tests, web 39 tests, ~10 s each). `wrangler whoami` works with the env token;
 `wrangler deploy --dry-run` succeeded on the assembled `dist/site` (1781 files). Expected harmless build warnings: a few feeds with
 "no trips within the horizon" (it-regional-bus lombardia/liguria, es-feve, navarra bus, ba-zfbih), stop-names "not found within 1500 m",
 "Berlin is missing station Berlin Ostbahnhof".
 
 ## Gotchas
+
+- `--reuse-db` also refuses (and silently rebuilds from scratch = re-download) when `packages/etl/feeds.json` changed at all,
+  because its length and hash are part of the key in `work/db-state.json`. After a change that does not affect loading
+  (e.g. removing an option that is only read at build time), rewrite `key.cfgLen` / `key.cfgHash` in that file
+  (`cfgHash = text.split("").reduce((h,c)=>(Math.imul(h,31)+c.charCodeAt(0))|0, 7)`) instead of reloading.
+- Screenshots: while `vite` runs, editing web sources hot-reloads the page and resets the camera, so do not edit
+  during a screenshot run; wait for `map.loaded()` after each `jumpTo`, and never run two Playwright jobs at once
+  (SwiftShader makes each view take ~25 s). Do not `pkill -f` / `pgrep -f` a pattern that also appears in your own
+  command line (it kills or matches the calling shell).
 
 - `node --import tsx ...` fails ("Cannot find package 'tsx'") outside `packages/etl`.
 - The workflow's cleanup step (`rm -rf work/etl.duckdb ...`) defeat `--reuse-db`; skip it locally.

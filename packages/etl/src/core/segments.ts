@@ -23,7 +23,6 @@ export interface SegInput {
   /** Polyline from city a to city b (full resolution). */
   coords: LonLat[];
   cats: number;
-  dtCats: number;
   /** Trips/day per Cat bit. */
   tpd: Record<number, number>;
   snapped: boolean;
@@ -36,7 +35,6 @@ export interface SegInput {
 export interface SegOut {
   coords: LonLat[];
   cats: number;
-  dtCats: number;
   tpd: Record<number, number>;
   snapped: boolean;
   /** Corridor indices using the segment. */
@@ -337,17 +335,16 @@ function sameList(a: number[], b: number[]): boolean {
 }
 
 function makeSeg(pts: LonLat[], users: number[], inputs: SegInput[]): SegOut {
-  let cats = 0, dt = 0, snapped = false, tol = Infinity;
+  let cats = 0, snapped = false, tol = Infinity;
   const tpd: Record<number, number> = {};
   for (const c of users) {
     const inp = inputs[c]!;
     cats |= inp.cats;
-    dt |= inp.dtCats;
     snapped ||= inp.snapped;
     tol = Math.min(tol, inp.tol);
     for (const [k, v] of Object.entries(inp.tpd)) tpd[+k] = (tpd[+k] ?? 0) + v;
   }
-  return { coords: simplifyLine(pts, Number.isFinite(tol) ? tol : 100), cats, dtCats: dt, tpd, snapped, users };
+  return { coords: simplifyLine(pts, Number.isFinite(tol) ? tol : 100), cats, tpd, snapped, users };
 }
 
 /**

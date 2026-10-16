@@ -39,8 +39,8 @@ const net: NetworkFile = {
     { id: 3, city: 2, name: "Brandenburg Hbf", lon: 12.5664, lat: 52.4006, cats: 3 },
   ],
   corridors: [
-    { id: 0, a: 0, b: 1, coords: [], cats: Cat.Regional, tpd: { 2: 60 }, snapped: true, dtCats: 2, sa: 1, sb: 2, segs: [0, 1] },
-    { id: 1, a: 1, b: 2, coords: [], cats: Cat.Regional, tpd: { 2: 40 }, snapped: true, dtCats: 2, sa: 2, sb: 3, segs: [2] },
+    { id: 0, a: 0, b: 1, coords: [], cats: Cat.Regional, tpd: { 2: 60 }, snapped: true, sa: 1, sb: 2, segs: [0, 1] },
+    { id: 1, a: 1, b: 2, coords: [], cats: Cat.Regional, tpd: { 2: 40 }, snapped: true, sa: 2, sb: 3, segs: [2] },
     { id: 2, a: 0, b: 2, coords: [], cats: Cat.LongDistance, tpd: { 1: 10 }, snapped: true, sa: 0, sb: 3, segs: [0, 1, 2] },
   ],
   segments: [
@@ -49,8 +49,7 @@ const net: NetworkFile = {
     { id: 2, coords: [[13.0657, 52.3989], [12.8, 52.41], [12.56, 52.41]], cats: 3, tpd: { 1: 10, 2: 40 }, snapped: true },
   ],
 };
-for (const s of net.segments!) s.dtCats = 2;
-const mnet: MapNet = { cities: net.cities, corridors: net.corridors, segments: net.segments!, stations: net.stations, hasDtCats: true };
+const mnet: MapNet = { cities: net.cities, corridors: net.corridors, segments: net.segments!, stations: net.stations };
 
 describe("map data (netmap)", () => {
   const idx = buildNetIndex(mnet);
@@ -60,8 +59,6 @@ describe("map data (netmap)", () => {
     expect(p.w2).toBeGreaterThan(p.w1!);
     expect(p.l1).toBe(0); // long distance ≥ 4 trips/day: overview
     expect(LEVELS[p.l2!]).toBeGreaterThan(0);
-    expect(p.d2).toBe(1);
-    expect(p.d1).toBeUndefined();
     // the express runs through the middle segment: it is not a lead-in
     expect(idx.segTerm[1]).toBe(0);
   });
@@ -70,11 +67,10 @@ describe("map data (netmap)", () => {
     const cp = cityProps(mnet, idx, sp);
     expect(cp[0]!.m1).toBe(0);
     expect(cp[1]!.m2).toBeDefined();
-    expect(cp[1]!.n2).toBe(cp[1]!.m2);
     expect(cp[2]!.tz).toBeGreaterThan(0);
   });
   it("round-trips core, stations and geo files", () => {
-    const core = packCore({ schema: 1, build: "t", timezones: net.timezones, cityList: net.cities, nStations: 4, counts: { stations: 4, corridors: 3, segments: 3 }, hasDtCats: true, tiles: { minzoom: 2, maxzoom: 7, tiles: { 2: [1, 2] }, url: "x" } });
+    const core = packCore({ schema: 1, build: "t", timezones: net.timezones, cityList: net.cities, nStations: 4, counts: { stations: 4, corridors: 3, segments: 3 }, tiles: { minzoom: 2, maxzoom: 7, tiles: { 2: [1, 2] }, url: "x" } });
     const cities = unpackCore(JSON.parse(JSON.stringify(core)) as CoreFile);
     expect(cities.map((c) => c.name)).toEqual(net.cities.map((c) => c.name));
     expect(cities[0]!.lon).toBeCloseTo(13.4105, 4);
@@ -91,7 +87,6 @@ describe("map data (netmap)", () => {
     expect(g.stations[1]!.city).toBe(0);
     expect(g.corridors.map((c) => c.id)).toEqual([0, 2]);
     expect(g.corridors[1]!.segs).toEqual([0, 1, 2]);
-    expect(g.corridors[0]!.dtCats).toBe(2);
     expect(g.corridors[0]!.tpd).toEqual({ 2: 60 });
     expect(g.cut.get(0)).toEqual([idx.cutA[0], idx.cutB[0]]);
     expect([...g.segments.keys()]).toEqual([0, 1, 2]);

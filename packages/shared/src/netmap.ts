@@ -18,7 +18,7 @@ import { Cat } from "./schema.ts";
 import { promoteSparse } from "./density.ts";
 import { LEVELS, LONG_HOP_ZOOM, catWidth, cityTierZoom, corridorMinZoom, haversineKm, isLongHop, levelIndex, stationLevel } from "./lod.ts";
 
-export const MAPDATA_VERSION = 1;
+export const MAPDATA_VERSION = 2;
 export const CAT_BITS = [Cat.LongDistance, Cat.Regional, Cat.Coach, Cat.Bus] as const;
 /** Vector tiles: zoom range (tileSize 512) and source-layer names. */
 export const TILE_MAXZOOM = 7;
@@ -32,7 +32,6 @@ export interface MapNet {
   corridors: (Corridor | undefined)[];
   segments: (Segment | undefined)[];
   stations: (Station | undefined)[];
-  hasDtCats: boolean;
 }
 
 export const segId = (code: number) => (code >= 0 ? code : -code - 1);
@@ -51,7 +50,6 @@ export function ensureSegments(n: { corridors: Corridor[]; segments?: Segment[] 
   n.segments = n.corridors.map((c) => {
     c.segs = [c.id];
     const s: Segment = { id: c.id, coords: c.coords, cats: c.cats, tpd: c.tpd, snapped: c.snapped };
-    if (c.dtCats !== undefined) s.dtCats = c.dtCats;
     return s;
   });
   return n.segments;
@@ -62,8 +60,6 @@ export function ensureSegments(n: { corridors: Corridor[]; segments?: Segment[] 
 export interface NetIndex {
   /** per segment: longest corridor (km, straight line) using it */
   segLen: Float32Array;
-  /** per segment: Cat bits whose corridors are all inside Germany (D-Ticket heuristic without dtCats) */
-  segDe: Uint8Array;
   /** per segment: lead-in between a city point and the stations of every corridor using it */
   segTerm: Uint8Array;
   /** per corridor: index (in segs) of the segment closest to its station at the a / b end */
@@ -107,7 +103,6 @@ export function buildNetIndex(net: MapNet, opts: NetIndexOptions = {}): NetIndex
   const nC = net.corridors.length;
   const nS = net.segments.length;
   const segLen = new Float32Array(nS);
-  const segDe = new Uint8Array(nS).fill(15);
   const segTerm = new Uint8Array(nS).fill(255);
   const cutA = new Int32Array(nC), cutB = new Int32Array(nC);
   const NC = CAT_BITS.length;
@@ -144,9 +139,7 @@ export function buildNetIndex(net: MapNet, opts: NetIndexOptions = {}): NetIndex
   }
   for (const c of net.corridors) {
     if (!c) continue;
-    const ca = net.cities[c.a]!, cb = net.cities[c.b]!;
     const len = corLen[c.id]!;
-    const de = ca.country === "DE" && cb.country === "DE";
     const segs = c.segs ?? [];
     const [ka, kb] = cutIndices(net, c);
     cutA[c.id] = ka;
@@ -155,13 +148,12 @@ export function buildNetIndex(net: MapNet, opts: NetIndexOptions = {}): NetIndex
       const s = segId(code);
       for (let k = 0; k < NC; k++) if (corLevel[c.id * NC + k]! < segLevel[s * NC + k]!) segLevel[s * NC + k] = corLevel[c.id * NC + k]!;
       if (len > segLen[s]!) segLen[s] = len;
-      if (!de) segDe[s]! &= ~c.cats;
       if (i > ka && i < kb) segTerm[s] = 0;
       else if (segTerm[s] === 255) segTerm[s] = 1;
     });
   }
   for (let i = 0; i < nS; i++) if (segTerm[i] === 255) segTerm[i] = 0;
-  return { segLen, segDe, segTerm, cutA, cutB, segLevel };
+  return { segLen, segTerm, cutA, cutB, segLevel };
 }
 
 /**
@@ -206,8 +198,7 @@ export function terminalGeometry(
 
 /**
  * Properties of one drawn segment (layer `seg`/`term`). Per present category k
- * (1, 2, 4, 8): `w{k}` width unit, `l{k}` LOD level index, `d{k}` 1 when valid
- * with the Deutschlandticket. The client packs visible categories side by side
+ * (1, 2, 4, 8): `w{k}` width unit, `l{k}` LOD level index. The client packs visible categories side by side
  * with style expressions, so tiles do not depend on the active filters.
  */
 export function segmentProps(net: MapNet, idx: NetIndex, s: Segment): Record<string, number> | null {
@@ -215,7 +206,6 @@ export function segmentProps(net: MapNet, idx: NetIndex, s: Segment): Record<str
   const len = idx.segLen[s.id]!;
   const hop = isLongHop(len, s.snapped);
   const props: Record<string, number> = { sid: s.id, k: 0, u: s.snapped ? 0 : 1, term: idx.segTerm[s.id]!, hop: hop ? 1 : 0 };
-  const dt = net.hasDtCats ? (s.dtCats ?? 0) : idx.segDe[s.id]!;
   CAT_BITS.forEach((k, i) => {
     if (!(s.cats & k)) return;
     const tpd = s.tpd[k] ?? 0;
@@ -225,7 +215,6 @@ export function segmentProps(net: MapNet, idx: NetIndex, s: Segment): Record<str
     const agg = k === Cat.LongDistance ? levelIndex(corridorMinZoom(k, tpd, len, s.snapped)) : 127;
     props[`l${k}`] = hop ? levelIndex(LONG_HOP_ZOOM) : Math.min(users, agg, LEVELS.length - 1);
     props[`w${k}`] = Math.round(catWidth(k, tpd, s.snapped) * 100) / 100;
-    if (dt & k) props[`d${k}`] = 1;
   });
   props.k = Math.round(props.k! * 10) / 10;
   return props;
@@ -240,8 +229,8 @@ export function segmentMinZoom(props: Record<string, number>): number {
 
 /**
  * City marker properties: `m{k}` = earliest zoom of a line of category k ending
- * at the city, `n{k}` the same for Deutschlandticket-valid lines, `tz` the
- * importance tier zoom; the client shows a city from max(tz, min visible m/n).
+ * at the city, `tz` the
+ * importance tier zoom; the client shows a city from max(tz, min visible m).
  */
 export function cityProps(net: MapNet, idx: NetIndex, segProps: (Record<string, number> | null)[]): (Record<string, number | string> | null)[] {
   const m = net.cities.map(() => ({}) as Record<string, number>);
@@ -258,7 +247,6 @@ export function cityProps(net: MapNet, idx: NetIndex, segProps: (Record<string, 
         const z = LEVELS[p[`l${k}`]!]!;
         const r = m[city]!;
         if (r[`m${k}`] === undefined || z < r[`m${k}`]!) r[`m${k}`] = z;
-        if (p[`d${k}`] && (r[`n${k}`] === undefined || z < r[`n${k}`]!)) r[`n${k}`] = z;
         if (p[`l${k}`]! <= midLevel) w += p[`w${k}`]! + 0.3;
       }
       if (w > width[city]!) width[city] = w;
@@ -314,8 +302,6 @@ export interface CoreFile {
   cities: PackedNetwork["cities"];
   cityPrec: number;
   counts: { stations: number; corridors: number; segments: number };
-  /** Whether corridors carry dtCats (else the client uses a DE-only heuristic). */
-  hasDtCats: boolean;
   tiles: TileIndex;
 }
 
@@ -357,7 +343,6 @@ export interface GeoFile {
     a: number[];
     b: number[];
     cats: number[];
-    dtCats: number[];
     /** trips/day × 10 for Cat bits 1, 2, 4, 8 */
     tpd: [number[], number[], number[], number[]];
     snapped: number[];
@@ -411,7 +396,7 @@ export function packGeo(net: MapNet, idx: NetIndex, corridorIds: Iterable<number
   const ids = [...new Set(corridorIds)].filter((id) => net.corridors[id]).sort((x, y) => x - y);
   const f: GeoFile = {
     mapdata: MAPDATA_VERSION,
-    corridors: { id: [], a: [], b: [], cats: [], dtCats: [], tpd: [[], [], [], []], snapped: [], sa: [], sb: [], segN: [], segs: [], cutA: [], cutB: [] },
+    corridors: { id: [], a: [], b: [], cats: [], tpd: [[], [], [], []], snapped: [], sa: [], sb: [], segN: [], segs: [], cutA: [], cutB: [] },
     segments: { id: [], poly: [], flags: [] },
     stations: { id: [], name: [], lon: [], lat: [], cats: [], tpd: [] },
   };
@@ -443,7 +428,6 @@ export function packGeo(net: MapNet, idx: NetIndex, corridorIds: Iterable<number
     k.a.push(c.a);
     k.b.push(c.b);
     k.cats.push(c.cats);
-    k.dtCats.push(c.dtCats ?? 0);
     CAT_BITS.forEach((cat, i) => k.tpd[i]!.push(Math.round((c.tpd[cat] ?? 0) * 10)));
     k.snapped.push(c.snapped ? 1 : 0);
     k.sa.push(c.sa ?? -1);
@@ -510,7 +494,6 @@ export function unpackGeo(f: GeoFile, cityOf: (station: number) => City | undefi
       segs.push(prevCode & 1 ? -((prevCode - 1) / 2) - 1 : prevCode / 2);
     }
     const c: Corridor = { id, a: k.a[i]!, b: k.b[i]!, coords: [], cats: k.cats[i]!, tpd, snapped: k.snapped[i] === 1, segs };
-    if (k.dtCats[i]) c.dtCats = k.dtCats[i];
     if (k.sa[i]! >= 0) c.sa = k.sa[i];
     if (k.sb[i]! >= 0) c.sb = k.sb[i];
     corridors.push(c);

@@ -11,7 +11,7 @@ import { buildCalIndex, encodeMask } from "./calendar.ts";
 import { buildNetCtx } from "./context.ts";
 import type { CityFile } from "@etbm/shared";
 
-const all = { cats: ALL_CATS, dticket: false };
+const all = { cats: ALL_CATS };
 const BER = "Europe/Berlin";
 
 describe("filters", () => {
@@ -34,12 +34,10 @@ describe("reach", () => {
     expect([...r.corridors.keys()].sort()).toEqual([10, 11, 13]); // never-running coach (14) excluded
   });
   it("respects filters", () => {
-    const r = computeReach(alpha, ctx, { cats: Cat.Regional, dticket: false });
+    const r = computeReach(alpha, ctx, { cats: Cat.Regional });
     expect([...r.dests.keys()]).toEqual([4]);
     expect([...r.corridors]).toEqual([[13, Cat.Regional]]);
-    const d = computeReach(alpha, ctx, { cats: ALL_CATS, dticket: true });
-    expect([...d.dests.keys()]).toEqual([4]);
-    const c = computeReach(alpha, ctx, { cats: Cat.Coach, dticket: false });
+    const c = computeReach(alpha, ctx, { cats: Cat.Coach });
     expect([...c.dests.keys()]).toEqual([1]);
   });
 });
@@ -68,7 +66,7 @@ describe("timetable", () => {
     expect(t[2]!.startStation).toBeNull();
   });
   it("next service dates", () => {
-    const coach = { cats: Cat.Coach, dticket: false };
+    const coach = { cats: Cat.Coach };
     expect(timetable(alpha, ctx, coach, 1, "2026-10-08")).toHaveLength(0);
     expect(nextServiceDates(alpha, ctx, coach, 1, "2026-10-04")).toEqual(["2026-10-05", "2026-10-06", "2026-10-07"]);
     expect(nextServiceDates(alpha, ctx, coach, 1, "2026-10-08")).toEqual([]);
@@ -131,7 +129,7 @@ describe("split trips", () => {
   };
   it("merges them into one row labelled with the union of their days", () => {
     for (const date of ["2026-10-05", "2026-10-09"]) {
-      const t = timetable(a2, ctx2, { cats: Cat.LongDistance, dticket: false }, 1, date);
+      const t = timetable(a2, ctx2, { cats: Cat.LongDistance }, 1, date);
       expect(t.map((d) => `${fmtTime(d.depUtc, BER)} ${d.number}`)).toEqual(["08:00 77", "10:00 1", ...(date === "2026-10-09" ? ["23:50 3"] : [])]);
       expect(t[0]!.note).toBeNull(); // daily: Mon–Wed ∪ Thu–Sun
     }

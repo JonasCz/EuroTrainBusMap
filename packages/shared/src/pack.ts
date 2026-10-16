@@ -42,8 +42,6 @@ export interface PackedNetwork {
     /** b − a */
     db: number[];
     cats: number[];
-    /** 0 when absent */
-    dtCats: number[];
     /** Trips per day × 10 (integers) for Cat bits 1, 2, 4, 8. */
     tpd: [number[], number[], number[], number[]];
     snapped: number[];
@@ -61,7 +59,7 @@ export interface PackedNetwork {
   };
   /**
    * v2: line-graph segment geometry. Chained polylines: each starts relative to the previous
-   * segment's last point. Segment cats/tpd/dtCats/snapped are not stored: they are the
+   * segment's last point. Segment cats/tpd/snapped are not stored: they are the
    * aggregate of the corridors listing the segment (computed by unpackNetwork).
    */
   segments?: { poly: string[] };
@@ -233,7 +231,7 @@ export function packNetwork(n: Pick<NetworkFile, "cities" | "stations" | "corrid
     countries,
     cities,
     stations: packStations(n.cities, n.stations),
-    corridors: { a: [], db: [], cats: [], dtCats: [], tpd: [[], [], [], []], snapped: [], sa: [], sb: [], poly: [] },
+    corridors: { a: [], db: [], cats: [], tpd: [[], [], [], []], snapped: [], sa: [], sb: [], poly: [] },
   };
   let pa = 0, prevCode = 0;
   const first = (city: number) => n.cities[city]!.stations[0] ?? 0;
@@ -242,7 +240,6 @@ export function packNetwork(n: Pick<NetworkFile, "cities" | "stations" | "corrid
     pa = co.a;
     p.corridors.db.push(co.b - co.a);
     p.corridors.cats.push(co.cats);
-    p.corridors.dtCats.push(co.dtCats ?? 0);
     CATS.forEach((cat, k) => p.corridors.tpd[k]!.push(Math.round((co.tpd[cat] ?? 0) * 10)));
     p.corridors.snapped.push(co.snapped ? 1 : 0);
     p.corridors.sa.push(co.sa != null ? co.sa - first(co.a) : -1);
@@ -329,7 +326,6 @@ export function unpackNetwork(p: PackedNetwork): { cities: City[]; stations: Sta
       tpd,
       snapped: pk.snapped[i] === 1,
     };
-    if (pk.dtCats[i]) co.dtCats = pk.dtCats[i];
     if (pk.sa[i]! >= 0) co.sa = cities[a]!.stations[0]! + pk.sa[i]!;
     if (pk.sb[i]! >= 0) co.sb = cities[b]!.stations[0]! + pk.sb[i]!;
     if (segs) co.segs = segs;
@@ -352,7 +348,7 @@ export function expandNetwork(n: NetworkFile): NetworkFile {
 }
 
 /**
- * Segment attributes from the corridors using them: union of cats / dtCats, any snapped,
+ * Segment attributes from the corridors using them: union of cats, any snapped,
  * sum of trips per day per category (rounded to 0.1).
  */
 export function aggregateSegments(corridors: Corridor[], segments: Segment[]): void {
@@ -360,7 +356,6 @@ export function aggregateSegments(corridors: Corridor[], segments: Segment[]): v
     s.cats = 0;
     s.tpd = {};
     s.snapped = false;
-    delete s.dtCats;
   }
   for (const c of corridors) {
     if (!c.segs) continue;
@@ -372,7 +367,6 @@ export function aggregateSegments(corridors: Corridor[], segments: Segment[]): v
       const s = segments[id];
       if (!s) continue;
       s.cats |= c.cats;
-      if (c.dtCats) s.dtCats = (s.dtCats ?? 0) | c.dtCats;
       if (c.snapped) s.snapped = true;
       for (const cat of CATS) {
         const v = c.tpd[cat];

@@ -284,7 +284,6 @@
    "licenseUrl": "https://gtfs.de/",
    "options": {
     "railCatDefault": "Regional",
-    "dticket": true,
     "priority": 2
    }
   },
@@ -306,10 +305,7 @@
     }
    ],
    "notes": "Use only for regional/intercity buses (filter out city buses, rail comes from gtfs.de). Extended route types (700/715/3...). stop_times ~2.7 GB uncompressed. MDB copy 530 MB incl. shapes. Alternative: gtfs.de nv_free 278 MB.",
-   "approxMB": 328,
-   "options": {
-    "dticket": true
-   }
+   "approxMB": 328
   },
   {
    "id": "at-rail",

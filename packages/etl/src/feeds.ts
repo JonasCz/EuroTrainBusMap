@@ -20,8 +20,6 @@ export interface FeedOptions {
   allCoach?: boolean;
   /** Treat route_type 200–209 as regular Bus (e.g. HU Volánbusz uses 200 for everything). */
   coachTypesAsBus?: boolean;
-  /** Set Flag.DTicket on Regional rail and Bus. */
-  dticket?: boolean;
   /** Set Flag.Night on all trips. */
   night?: boolean;
   /** Load shapes.txt for kept rail trips (default true). */

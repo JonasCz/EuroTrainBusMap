@@ -26,7 +26,7 @@ export function parseHash(net: Net, hash: string): AppState {
     ...(city !== undefined ? { city } : {}),
     ...(dest !== undefined && dest !== city ? { dest } : {}),
     ...(isValidDate(date) ? { date } : {}),
-    filters: { cats: f === null ? ALL_CATS : decodeCats(f), dticket: q.get("dt") === "1" },
+    filters: { cats: f === null ? ALL_CATS : decodeCats(f) },
     legs,
   };
 }
@@ -38,6 +38,5 @@ export function toHash(net: Net, s: AppState): string {
   if (s.date && s.city !== undefined) q.push(`date=${s.date}`);
   if (s.legs.length && s.dest !== undefined) q.push(`legs=${encodeLegs(s.legs)}`);
   if (s.filters.cats !== ALL_CATS) q.push(`modes=${encodeCats(s.filters.cats) || "none"}`);
-  if (s.filters.dticket) q.push("dt=1");
   return q.length ? `#${q.join("&")}` : "";
 }

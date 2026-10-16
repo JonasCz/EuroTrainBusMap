@@ -31,7 +31,7 @@ Pipeline in short:
 2. **Load** – each zip is unzipped, filtered and loaded into a DuckDB file, then deleted. Kept:
    heavy rail (long distance, regional/suburban), coaches and *intercity* buses (≥ 15 km span,
    urban modes/operators dropped). Rail is classified LongDistance/Regional from extended route types,
-   train category tokens and operators; Deutschlandticket and night-train flags are set.
+   train category tokens and operators; the night-train flag is set.
 3. **Cities** – every stop is assigned to a GeoNames place (population-scaled radius, city districts
    and city-state units absorbed into their city, local names such as "München", "Praha", "İstanbul");
    stops far from any place form synthetic towns (rail/coach only). Bus stops only count in places
@@ -61,8 +61,8 @@ Pipeline in short:
      the only data needed to start.
    - `tiles/{z}/{x}/{y}.pbf.gz` (z2–7, ~400 files, ~9 MB total): gzipped Mapbox vector tiles of the
      drawn network (layers `seg`, `city`, and at z7 also `term` end pieces and `st` stations),
-     overzoomed beyond z7. Features are filter-independent: per category width/LOD level/D-Ticket
-     flag; the style packs the visible categories side by side. Low zooms only hold what is shown
+     overzoomed beyond z7. Features are filter-independent: per category width/LOD level; the
+     style packs the visible categories side by side. Low zooms only hold what is shown
      there, with equal neighbouring segments merged. LOD is density-aware
      (`packages/shared/src/density.ts`): where the map around a line is sparse, regional rail,
      coach and bus lines appear up to three LOD levels earlier, in importance order within an ink

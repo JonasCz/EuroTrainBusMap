@@ -8,7 +8,7 @@ import { CAT_BITS, catWidth, cityTierZoom, levelIndex, mergeLines, segId, shortS
 import { Cat } from "@etbm/shared";
 import type * as GeoJSON from "geojson";
 import type { GeoStore } from "../data/load.ts";
-import { effectiveCats, type Filters } from "../logic/filters.ts";
+import type { Filters } from "../logic/filters.ts";
 
 type FC = GeoJSON.FeatureCollection;
 type Feature = GeoJSON.Feature;
@@ -30,16 +30,6 @@ export function pack(widths: number[]): { offsets: number[]; total: number } {
     return round2(o);
   });
   return { offsets, total: round2(total) };
-}
-
-/** Cat bits of a corridor visible under the filter. */
-export function visibleCats(cities: City[], hasDtCats: boolean, c: Corridor, f: Filters): number {
-  let cats = c.cats & effectiveCats(f);
-  if (f.dticket) {
-    if (hasDtCats) cats &= c.dtCats ?? 0;
-    else if (cities[c.a]?.country !== "DE" || cities[c.b]?.country !== "DE") cats = 0;
-  }
-  return cats;
 }
 
 /**

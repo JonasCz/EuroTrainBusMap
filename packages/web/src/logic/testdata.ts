@@ -1,5 +1,5 @@
 /** Small synthetic network used by unit tests. */
-import { Cat, Flag, type CityFile, type NetworkFile } from "@etbm/shared";
+import { Cat, type CityFile, type NetworkFile } from "@etbm/shared";
 import { buildCalIndex, encodeMask } from "./calendar.ts";
 import { buildNetCtx } from "./context.ts";
 
@@ -53,7 +53,7 @@ export const alpha: CityFile = {
   city: 0,
   routes: [
     { name: "ICE", agency: "DB", cat: Cat.LongDistance, flags: 0 },
-    { name: "RE", agency: "DB", cat: Cat.Regional, flags: Flag.DTicket },
+    { name: "RE", agency: "DB", cat: Cat.Regional, flags: 0 },
     { name: "Flix", agency: "Flix", cat: Cat.Coach, flags: 0 },
   ],
   patterns: [

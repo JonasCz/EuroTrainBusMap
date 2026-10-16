@@ -108,32 +108,13 @@ export class Panel {
         CAT_LABEL[cat]!,
       ),
     );
-    items.push(
-      h(
-        "button",
-        {
-          type: "button",
-          class: "chip chip--dt",
-          "aria-pressed": "false",
-          title: "Only regional services valid with the Deutschlandticket",
-          onclick: () => {
-            const f = this.actions.state.filters;
-            this.actions.set({ filters: { ...f, dticket: !f.dticket } });
-          },
-        },
-        h("span", { class: "dt-mark", "aria-hidden": "true" }, "D"),
-        "Deutschlandticket",
-      ),
-    );
     this.chips.replaceChildren(...items);
   }
 
   setFilters(f: Filters): void {
     for (const b of this.chips.querySelectorAll<HTMLButtonElement>(".chip")) {
       const cat = Number(b.dataset.cat);
-      const on = b.classList.contains("chip--dt") ? f.dticket : (f.cats & cat) !== 0;
-      b.setAttribute("aria-pressed", String(on));
-      if (!b.classList.contains("chip--dt")) b.disabled = f.dticket && (cat === Cat.LongDistance || cat === Cat.Coach);
+      b.setAttribute("aria-pressed", String((f.cats & cat) !== 0));
     }
   }
 
