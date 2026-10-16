@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignStops, chooseCityName, placeRadius, resolveSatellites, townFromStopName, type Place } from "../src/core/cities.ts";
+import { adoptStationNames, assignStations, chooseCityName, foldKey, placeCore, placeRadius, resolveSatellites, townFromStopName, type Place, type StationPoint } from "../src/core/cities.ts";
 
 const P = (id: number, name: string, lat: number, lon: number, population: number, fcode = "PPL", admin: [string, string, string, string] = ["", "", "", String(id)], country = "DE"): Place => ({
   id, name, lat, lon, population, fcode, admin, country, tz: "Europe/Berlin",
@@ -19,8 +19,9 @@ const places: Place[] = [
   P(10, "Kleinmachnow", 52.40786, 13.22514, 20000, "PPL", ["11", "00", "12069", "12069304"]),
 ];
 resolveSatellites(places);
-const city = (lon: number, lat: number) => {
-  const i = assignStops(places, [{ lon, lat }])[0]!;
+const city = (lon: number, lat: number, name = "", strict = false) => {
+  const pt: StationPoint = { lon, lat, names: name ? [foldKey(name)] : [], strict };
+  const i = assignStations(places, [pt])[0]!;
   return i >= 0 ? places[i]!.name : null;
 };
 
@@ -54,6 +55,57 @@ describe("city assignment", () => {
   });
 });
 
+describe("station membership (rail / coach stations)", () => {
+  // Meuse valley: Revin (pop 8k) and the village of Anchamps, 4 km away, which GeoNames (cities1000) does not list
+  const meuse: Place[] = [
+    P(20, "Revin", 49.94039, 4.63503, 7960, "PPL", ["44", "08", "081", "08363"], "FR"),
+    P(21, "Deville", 49.87893, 4.7061, 1171, "PPL", ["44", "08", "081", "08139"], "FR"),
+    P(22, "Tipperary", 52.47333, -8.15583, 4979, "PPL", ["M", "26", "", ""], "IE"),
+    P(23, "Limerick", 52.66472, -8.62306, 94192, "PPLA", ["M", "27", "", ""], "IE"),
+  ];
+  resolveSatellites(meuse);
+  const at = (lon: number, lat: number, name: string, strict = true) => {
+    const i = assignStations(meuse, [{ lon, lat, names: [foldKey(name)], strict }])[0]!;
+    return i >= 0 ? meuse[i]!.name : null;
+  };
+  it("a station in the town centre belongs to the town", () => {
+    expect(at(4.6395, 49.9282, "Revin")).toBe("Revin");
+  });
+  it("a village 4 km away keeps its own station (→ a town of its own), a bus stop there does not", () => {
+    expect(at(4.62, 49.915, "Anchamps")).toBeNull();
+    expect(at(4.62, 49.915, "Anchamps", false)).toBe("Revin"); // bus-only stops keep the plain catchment rule
+  });
+  it("a station beyond the core belongs to the town if it carries the town's name", () => {
+    expect(at(4.62, 49.915, "Revin - La Gare")).toBe("Revin");
+    expect(at(4.7061, 49.8789, "Deville")).toBe("Deville");
+  });
+  it("Limerick Junction is not Tipperary", () => {
+    expect(at(-8.2078, 52.4977, "Limerick Junction")).toBeNull();
+    expect(at(-8.1596, 52.4733, "Tipperary")).toBe("Tipperary");
+  });
+  it("bus stops named like a rail station nearby join its place, other bus stops do not", () => {
+    const st = [
+      { lon: -8.1972, lat: 52.5037, norm: "limerick junction", strict: true }, // the rail station (its own town: -1)
+      { lon: -8.2062, lat: 52.4986, norm: "limerick junction", strict: false }, // 900 m away, was Tipperary's
+      { lon: -8.2062, lat: 52.4986, norm: "post office", strict: false },
+      { lon: -8.19, lat: 52.55, norm: "limerick junction", strict: false }, // 5 km away
+    ];
+    const placeOf = Int32Array.from([-1, 0, 0, 0]);
+    expect(adoptStationNames(st, placeOf)).toBe(1);
+    expect([...placeOf]).toEqual([-1, -1, 0, 0]);
+  });
+  it("core radius grows with the population up to the whole catchment", () => {
+    expect(placeCore(1000)).toBeLessThan(0.5 * placeRadius(1000) + 1);
+    expect(placeCore(5000)).toBeCloseTo(0.45 * placeRadius(5000), 0);
+    expect(placeCore(200_000)).toBeCloseTo(placeRadius(200_000), 0);
+    expect(placeCore(3e6)).toBe(placeRadius(3e6));
+  });
+  it("big cities group their outlying stations (Berlin-Spandau, Munich-Ost)", () => {
+    expect(city(13.1977, 52.5344, "Berlin-Spandau", true)).toBe("Berlin");
+    expect(city(11.6047, 48.1272, "München Ost", true)).toBe("München");
+  });
+});
+
 describe("city names", () => {
   it("chooses the local name matching stop names", () => {
     expect(chooseCityName(["München", "Munich"], ["München Hbf", "München Ost"])).toBe("München");
@@ -64,6 +116,10 @@ describe("city names", () => {
     expect(townFromStopName("Kleindorf, Kirche")).toBe("Kleindorf");
     expect(townFromStopName("Oberau Bahnhof")).toBe("Oberau");
     expect(townFromStopName("Musterhausen (Kr. X)")).toBe("Musterhausen");
+    expect(townFromStopName("Gare de Laifour")).toBe("Laifour");
+    expect(townFromStopName("Deville")).toBe("Deville");
+    expect(townFromStopName("[Enschede] Voorzijde station, Stationsplein")).toBe("Enschede");
+    expect(townFromStopName("[cadavéu Cadavedo] Rotonda Cadavéu [CTA 16975]")).toBe("Cadavéu Cadavedo");
   });
 });
 

@@ -1,5 +1,5 @@
 /** In-memory indexes over the network (cities from core.json; stations/calendars on demand). */
-import type { City, Corridor, Station } from "@etbm/shared";
+import { shortStationName, type City, type Corridor, type Station } from "@etbm/shared";
 import { buildCalIndex, type CalIndex } from "../logic/calendar.ts";
 import { buildNetCtx, type NetCtx } from "../logic/context.ts";
 import { geoStore, loadDetail, type DataSet, type GeoStore } from "./load.ts";
@@ -100,4 +100,23 @@ export function cityTz(net: Net, city: number): string {
 
 export function stationName(net: Net, station: number): string {
   return net.file.stations[station]?.name ?? "?";
+}
+
+/**
+ * URL reference of a station: the slug of its short name ("gare-de-lyon" for "Paris Gare de Lyon" in Paris),
+ * unique enough within its city (ties resolve to the busiest station, see stationBySlug).
+ */
+export function stationSlug(cityName: string, stationNameStr: string): string {
+  return slugify(shortStationName(stationNameStr, cityName)) || "station";
+}
+
+/** The station of `city` a URL slug refers to (stations come with the city's geo file); undefined while unknown. */
+export function stationBySlug(net: Net, city: number, slug: string | undefined): number | undefined {
+  const c = net.cities[city];
+  if (!c || !slug) return undefined;
+  for (const sid of c.stations) {
+    const st = net.file.stations[sid];
+    if (st && stationSlug(c.name, st.name) === slug) return sid;
+  }
+  return undefined;
 }

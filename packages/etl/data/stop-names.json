@@ -9310,7 +9310,7 @@
     12.59083,
     41.79891
    ],
-   "station": "ROMA | Via Appia (Aeroporto Ciampino) # f3586"
+   "station": "Roma Via Appia (Aeroporto Ciampino)"
   },
   "eu-flixbus:7e60f723-f816-4d68-b375-5abf1d851d76": {
    "action": "keep"
@@ -11336,7 +11336,7 @@
     12.58772,
     41.84231
    ],
-   "station": "ROMA | Anagnina (Metro A) # f3582"
+   "station": "Roma Anagnina (Metro A)"
   },
   "eu-flixbus:ce7bef73-35d2-43c3-bbc2-b03657f91a64": {
    "action": "keep"

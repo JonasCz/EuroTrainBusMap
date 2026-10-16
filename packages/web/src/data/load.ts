@@ -102,11 +102,10 @@ export interface GeoStore {
   /** sparse: only stations of loaded shards */
   stations: Station[];
   corridors: Map<number, Corridor>;
-  cut: Map<number, [number, number]>;
   segments: Map<number, { coords: Pos[]; snapped: boolean; hop: boolean }>;
 }
 
-export const geoStore: GeoStore = { stations: [], corridors: new Map(), cut: new Map(), segments: new Map() };
+export const geoStore: GeoStore = { stations: [], corridors: new Map(), segments: new Map() };
 
 const fileCache = new Map<string, Promise<unknown>>();
 
@@ -125,7 +124,6 @@ function loadGeo(ds: DataSet, rel: string): Promise<void> {
     const g = unpackGeo(await getJson<GeoFile>(ds.url(rel)), (sid) => ds.cities[ds.stationCity[sid] ?? -1]);
     for (const s of g.stations) geoStore.stations[s.id] = s;
     for (const c of g.corridors) geoStore.corridors.set(c.id, c);
-    for (const [k, v] of g.cut) geoStore.cut.set(k, v);
     for (const [k, v] of g.segments) geoStore.segments.set(k, v);
   });
 }

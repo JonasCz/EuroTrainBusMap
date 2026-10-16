@@ -27,7 +27,7 @@ const city = (id: number, name: string, tz: number, stations: number[]) => ({
 const station = (id: number, c: number, name: string) => ({ id, city: c, name, lon: c, lat: c, cats: 15 });
 
 export const network: NetworkFile = {
-  schema: 1,
+  schema: 3,
   build: "test",
   timezones: ["Europe/Berlin", "Europe/Prague", "Europe/Istanbul", "Europe/London"],
   cities: [
@@ -58,7 +58,7 @@ export const alpha: CityFile = {
   ],
   patterns: [
     // p0 ICE Alpha Hbf → Alpha Süd → Beta → Gamma
-    { route: 0, stations: [0, 1, 2, 3], arr: [0, 8, 120, 600], dep: [0, 10, 125, 600], corridors: [10, 11], headsign: "Gamma" },
+    { route: 0, stations: [0, 1, 2, 3], arr: [0, 8, 120, 600], dep: [0, 10, 125, 600], corridors: [9, 10, 11], headsign: "Gamma" },
     // p1 RE Delta → Alpha Hbf → Eps (London tz)
     { route: 1, stations: [4, 0, 5], arr: [0, 100, 160], dep: [0, 105, 160], corridors: [12, 13], headsign: "Eps" },
     // p2 Coach Alpha Süd → Beta (Oct 5–7 only)

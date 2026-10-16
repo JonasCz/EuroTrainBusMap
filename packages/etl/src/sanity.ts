@@ -62,7 +62,8 @@ export function runSanity(inp: SanityInput): SanityResult {
   });
   n.corridors.forEach((c, i) => {
     if (c.id !== i) errors.push(`corridor id mismatch ${i}`);
-    if (!n.cities[c.a] || !n.cities[c.b]) errors.push(`corridor ${i} bad city`);
+    if (!n.stations[c.a] || !n.stations[c.b]) errors.push(`corridor ${i} bad station`);
+    else if (c.a === c.b) errors.push(`corridor ${i} joins a station to itself`);
     if (c.coords.length < 2) errors.push(`corridor ${i} has < 2 coords`);
   });
   if (n.segments) {
@@ -82,10 +83,13 @@ export function runSanity(inp: SanityInput): SanityResult {
     cf.patterns.forEach((p, pi) => {
       if (!cf.routes[p.route]) errors.push(`city ${id} pattern ${pi} bad route`);
       if (p.arr.length !== p.stations.length || p.dep.length !== p.stations.length) errors.push(`city ${id} pattern ${pi} array lengths`);
-      let changes = 0;
-      for (let i = 1; i < p.stations.length; i++) if (n.stations[p.stations[i]!]?.city !== n.stations[p.stations[i - 1]!]?.city) changes++;
-      if (changes !== p.corridors.length) errors.push(`city ${id} pattern ${pi} corridors ${p.corridors.length} != city changes ${changes}`);
-      for (const c of p.corridors) if (!n.corridors[c]) errors.push(`city ${id} pattern ${pi} bad corridor ${c}`);
+      if (p.corridors.length !== p.stations.length - 1) errors.push(`city ${id} pattern ${pi} corridors ${p.corridors.length} != stops - 1 (${p.stations.length - 1})`);
+      p.corridors.forEach((c, k) => {
+        const cr = n.corridors[c];
+        if (c === -1) return; // a hop that never runs in the horizon
+        if (!cr) errors.push(`city ${id} pattern ${pi} bad corridor ${c}`);
+        else if (!((cr.a === p.stations[k] && cr.b === p.stations[k + 1]) || (cr.b === p.stations[k] && cr.a === p.stations[k + 1]))) errors.push(`city ${id} pattern ${pi} corridor ${c} does not join stops ${k}, ${k + 1}`);
+      });
       for (const s of p.stations) if (!n.stations[s]) errors.push(`city ${id} pattern ${pi} bad station ${s}`);
       if (!p.stations.some((s) => n.stations[s]?.city === id)) errors.push(`city ${id} pattern ${pi} does not call at city`);
     });

@@ -11,7 +11,7 @@
  *    cross stays within the budget (regional density: a hub in an empty region has room),
  *  - the unit of promotion is a whole line (a chain of corridors, see lines.ts), never a single
  *    hop: a route is revealed at once, not piece by piece,
- *  - a promoted line must touch the visible network at one of its cities, so lines grow
+ *  - a promoted line must touch the visible network at one of its stations, so lines grow
  *    out of the network instead of appearing as floating pieces.
  *
  * Promotion never goes earlier than a per-category floor (long-distance rail first, then regional
@@ -146,7 +146,7 @@ export function promoteSparse(inp: DensityInput, opts: { budget?: number; maxPro
       if (!n) continue;
       for (const [cell, px] of cellsOf(s)) ink.set(cell, (ink.get(cell) ?? 0) + n * px);
     }
-    // cities touched by a line visible at this level
+    // stations touched by a line visible at this level
     const cityVis = new Set<number>();
     for (let c = 0; c < nC; c++) {
       const cr = inp.corridors[c];

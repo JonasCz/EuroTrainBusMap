@@ -1,6 +1,6 @@
 /**
  * Network layer specifications. The base network comes from vector tiles
- * (source "net", layers seg/term/city/st – see @etbm/shared netmap.ts); the
+ * (source "net", layers seg/city/st – see @etbm/shared netmap.ts); the
  * selection layers come from small client-built GeoJSON sources.
  *
  * Tile features are filter-independent: each segment carries per-category
@@ -160,8 +160,10 @@ export function geojsonSources(): Record<string, { type: "geojson"; data: GeoJSO
 }
 
 export const CITY_LAYERS = ["city-c", "city-l"];
-/** Station complex areas: a click inside selects their city. */
-export const COMPLEX_LAYERS = [0, 1].flatMap((i) => [`cx-body-${i}`, `cx-fill-${i}`]);
+/** The faint city name over a city's stations (station zoom): a click on it selects the city, not a station. */
+export const CITY_AREA_LAYER = "city-area-l";
+/** Soft rings around the stations of a selected city. */
+export const RING_LAYERS = ["member-ring-major", "member-ring-minor"];
 
 /** Linear blend of two #rrggbb colours (t = share of b). */
 export function mix(a: string, b: string, t: number): string {
@@ -215,47 +217,22 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
   const cats = CAT_BITS.filter((k) => f.cats & k);
   const catFilter = (k: number): unknown[] => ["all", ["has", `w${k}`]];
 
-  // ---- station complexes: tinted outline around the stations of a city that were merged into one
-  // dot. The outline is the stations' hull drawn as a wide round-joined line of constant pixel
-  // width, so it has straight edges and rounded corners at every zoom (a capsule for two
-  // stations). Colours fade from the land colour, so overlapping parts never show seams.
-  const cxW = (extra: number): Expr => E(["interpolate", ["linear"], ["zoom"], STATION_ZOOM - 0.5, 24 + extra, 13, 30 + extra, 15, 36 + extra]);
-  const cxColor = (z0: number, to: string): Expr => E(["interpolate", ["linear"], ["zoom"], z0, t.land, z0 + FADE_ZOOM, dim ? mix(t.land, to, 0.45) : to]);
-  for (let i = STATION_LEVELS.length - 1; i >= 0; i--) {
-    if (i > 1) continue;
-    // the outline starts fading in half a zoom level before its stations, around the still visible city dot
-    const z0 = STATION_LEVELS[i]! - 0.5;
-    const src = { source: "net", "source-layer": TILE_LAYERS.complex, minzoom: z0, filter: ["==", ["get", "zi"], i] as unknown as FilterSpecification };
-    layers.push({ id: `cx-edge-${i}`, type: "line", ...src, layout: lineLayout, paint: { "line-color": cxColor(z0, t.cxLine), "line-width": cxW(2.4) } });
-    layers.push({ id: `cx-body-${i}`, type: "line", ...src, layout: lineLayout, paint: { "line-color": cxColor(z0, t.cxFill), "line-width": cxW(0) } });
-    layers.push({ id: `cx-fill-${i}`, type: "fill", ...src, filter: ["all", ["==", ["get", "zi"], i], ["==", ["geometry-type"], "Polygon"]] as unknown as FilterSpecification, paint: { "fill-color": cxColor(z0, t.cxFill), "fill-antialias": false } });
-  }
-
-  // ---- base network
-  // seg (city-level geometry, below STATION_ZOOM); at station zoom lead-in pieces ("term") are
-  // replaced by end pieces drawn to the actual stations (layer "term")
-  const variants: { id: string; layer: string; zr: { minzoom?: number; maxzoom?: number }; filter: unknown[]; fixed?: number }[] = [
-    { id: "net", layer: TILE_LAYERS.seg, zr: { maxzoom: STATION_ZOOM }, filter: [] },
-    { id: "net-st", layer: TILE_LAYERS.seg, zr: { minzoom: STATION_ZOOM }, filter: [["!", ["has", "term"]]], fixed: LEVELS.length - 1 },
-    { id: "net-term", layer: TILE_LAYERS.term, zr: { minzoom: STATION_ZOOM }, filter: [], fixed: LEVELS.length - 1 },
-  ];
+  // ---- base network: every corridor joins two stations, so one set of layers serves all zooms
   const anyCat: unknown[] = ["any", ...cats.map((k) => catFilter(k))];
-  for (const v of variants) {
-    layers.push({
-      id: `${v.id}-cas`,
-      type: "line",
-      source: "net",
-      "source-layer": v.layer,
-      ...v.zr,
-      filter: ["all", ["!", ["has", "hop"]], anyCat, ...v.filter] as unknown as FilterSpecification,
-      layout: lineLayout,
-      paint: {
-        "line-color": t.land,
-        "line-width": byZoom(ZF, (_z, fz, L) => ["case", [">", total(L, f), 0], ["+", ["*", fz * wMul, total(L, f)], 1.2], 0], v.fixed),
-        "line-opacity": v.id === "net" ? casingFade(cats as number[], dim ? 0.6 : 1) : dim ? 0.6 : 1,
-      },
-    });
-  }
+  // casing (land colour halo): approximate alignments (u = 1) are drawn dashed, without a halo
+  layers.push({
+    id: "net-cas",
+    type: "line",
+    source: "net",
+    "source-layer": TILE_LAYERS.seg,
+    filter: ["all", ["!", ["has", "hop"]], ["!=", ["get", "u"], 1], anyCat] as unknown as FilterSpecification,
+    layout: lineLayout,
+    paint: {
+      "line-color": t.land,
+      "line-width": byZoom(ZF, (_z, fz, L) => ["case", [">", total(L, f), 0], ["+", ["*", fz * wMul, total(L, f)], 1.2], 0]),
+      "line-opacity": casingFade(cats as number[], dim ? 0.6 : 1),
+    },
+  });
   // long straight hops: thin dashed, from LONG_HOP_ZOOM
   for (const k of [...cats].reverse()) {
     layers.push({
@@ -274,59 +251,46 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
       },
     });
   }
-  for (const v of variants) {
-    // buses below rail: draw categories in reverse order
-    for (const k of [...cats].reverse()) {
+  // buses below rail: draw categories in reverse order. Snapped lines are solid, approximate alignments
+  // (no track / road found between the two stations) thin and dashed.
+  for (const k of [...cats].reverse()) {
+    for (const approx of [false, true]) {
+      const u = ["==", ["get", "u"], approx ? 1 : 0];
+      const width = byZoom(ZF, (_z, fz, L) => ["case", vis(k, L, f), approx ? ["min", 2.2, ["*", fz * wMul, wOf(k)]] : ["*", fz * wMul, wOf(k)], 0]);
       layers.push({
-        id: `${v.id}-${k}`,
+        id: `net-${approx ? "u-" : ""}${k}`,
         type: "line",
         source: "net",
-        "source-layer": v.layer,
-        ...v.zr,
-        filter: ["all", ["!", ["has", "hop"]], ...catFilter(k).slice(1), ...v.filter] as unknown as FilterSpecification,
-        layout: { ...lineLayout, "line-sort-key": ["coalesce", ["get", "k"], 0] },
+        "source-layer": TILE_LAYERS.seg,
+        filter: ["all", ["!", ["has", "hop"]], ...catFilter(k).slice(1), u] as unknown as FilterSpecification,
+        layout: approx ? { "line-join": "round", "line-cap": "butt", "line-sort-key": ["coalesce", ["get", "k"], 0] } : { ...lineLayout, "line-sort-key": ["coalesce", ["get", "k"], 0] },
         paint: {
           "line-color": dim ? t.dimLine : catColorConst(t, k),
-          "line-width": byZoom(ZF, (_z, fz, L) => ["case", vis(k, L, f), ["*", fz * wMul, wOf(k)], 0], v.fixed),
-          "line-offset": byZoom(ZF, (_z, fz, L) => ["*", fz * wMul, offset(k, L, f)], v.fixed),
-          "line-opacity": v.id === "net" ? lineFade(k, dim ? 1 : k === Cat.Bus ? 0.65 : ["case", ["==", ["get", "u"], 1], 0.8, 1]) : dim ? 1 : k === Cat.Bus ? 0.65 : ["case", ["==", ["get", "u"], 1], 0.8, 1],
+          "line-width": width,
+          "line-offset": byZoom(ZF, (_z, fz, L) => ["*", fz * wMul, offset(k, L, f)]),
+          "line-opacity": lineFade(k, dim ? 1 : k === Cat.Bus ? 0.65 : approx ? 0.85 : 1),
+          ...(approx ? { "line-dasharray": [2, 1.6] } : {}),
         },
       });
     }
   }
 
-  // ---- links between the stations of a complex (intra-city hops of trains / buses)
-  const linkCatColor: Expr = E(["match", ["get", "c"], Cat.LongDistance, t.cat[Cat.LongDistance], Cat.Regional, t.cat[Cat.Regional], Cat.Coach, t.cat[Cat.Coach], Cat.Bus, t.cat[Cat.Bus], "#888"]);
-  const linkW = (cas: number): Expr => E(["interpolate", ["linear"], ["zoom"], STATION_ZOOM, ["max", 1.6 + cas, ["+", cas, ["*", factorAt(STATION_ZOOM, ZF) * wMul, ["get", "w"]]]], 15, ["max", 2 + cas, ["+", cas, ["*", factorAt(15, ZF) * wMul, ["get", "w"]]]]]);
-  for (const i of [1, 0]) {
-    const z0 = STATION_LEVELS[i]!;
-    const src = { source: "net", "source-layer": TILE_LAYERS.link, minzoom: z0, filter: ["==", ["get", "zi"], i] as unknown as FilterSpecification };
-    layers.push({ id: `lk-cas-${i}`, type: "line", ...src, layout: lineLayout, paint: { "line-color": t.land, "line-width": linkW(1.6), "line-opacity": rampFrom(z0, dim ? 0.6 : 1) } });
-    layers.push({ id: `lk-${i}`, type: "line", ...src, layout: lineLayout, paint: { "line-color": dim ? t.dimLine : linkCatColor, "line-width": linkW(0), "line-opacity": rampFrom(z0, 1) } });
-  }
-
   // ---- highlighted corridors (selection), always above the dimmed network
-  for (const g of [0, 1]) {
-    const zr = g ? { minzoom: STATION_ZOOM } : { maxzoom: STATION_ZOOM };
-    layers.push({
-      id: `hl-cas-${g}`,
-      type: "line",
-      source: "hl-casing",
-      ...zr,
-      filter: ["in", ["get", "g"], ["literal", [g, 2]]],
-      layout: lineLayout,
-      paint: { "line-color": t.land, "line-width": scaled("t", ZF_HL, 2.4) },
-    });
-    layers.push({
-      id: `hl-${g}`,
-      type: "line",
-      source: "hl",
-      ...zr,
-      filter: ["all", ["in", ["get", "g"], ["literal", [g, 2]]], ["==", ["get", "hop"], 0]],
-      layout: { ...lineLayout, "line-sort-key": ["get", "k"] },
-      paint: { "line-color": catColor(t), "line-width": scaled("w", ZF_HL), "line-offset": scaled("o", ZF_HL) },
-    });
-  }
+  layers.push({
+    id: "hl-cas",
+    type: "line",
+    source: "hl-casing",
+    layout: lineLayout,
+    paint: { "line-color": t.land, "line-width": scaled("t", ZF_HL, 2.4) },
+  });
+  layers.push({
+    id: "hl",
+    type: "line",
+    source: "hl",
+    filter: ["==", ["get", "hop"], 0],
+    layout: { ...lineLayout, "line-sort-key": ["get", "k"] },
+    paint: { "line-color": catColor(t), "line-width": scaled("w", ZF_HL), "line-offset": scaled("o", ZF_HL) },
+  });
   layers.push({
     id: "hl-hops",
     type: "line",
@@ -397,6 +361,30 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
       },
     });
 
+  // ---- the member stations of a selected city: a soft ring around each (nothing is drawn while no city is selected);
+  // the station chosen as origin gets a stronger one. Minor stops get theirs from the zoom they are drawn at.
+  const cur: Expr = E(["==", ["get", "cur"], 1]);
+  const ringR: Expr = E(["interpolate", ["linear"], ["zoom"], 8.5, 5, 10.5, 10, 12.5, 15, 15, 21]);
+  for (const major of [true, false]) {
+    const z0 = major ? 8.5 : STATION_LEVELS[2]!;
+    layers.push({
+      id: major ? RING_LAYERS[0]! : RING_LAYERS[1]!,
+      type: "circle",
+      source: "focus-stations",
+      minzoom: z0,
+      filter: (major ? ["<=", ["get", "lz"], 1] : [">", ["get", "lz"], 1]) as unknown as FilterSpecification,
+      paint: {
+        "circle-radius": ringR,
+        "circle-color": t.accent,
+        "circle-opacity": E(["interpolate", ["linear"], ["zoom"], z0, 0, z0 + 0.7, ["case", cur, 0.26, 0.1]]),
+        "circle-stroke-color": t.accent,
+        "circle-stroke-width": ["case", cur, 1.8, 1],
+        "circle-stroke-opacity": E(["interpolate", ["linear"], ["zoom"], z0, 0, z0 + 0.7, ["case", cur, 0.85, 0.32]]),
+        "circle-pitch-alignment": "map",
+      },
+    });
+  }
+
   // ---- stations (z ≥ STATION_ZOOM): tiles, plus the selected cities' stations
   const stationCircle = (id: string, src: { source: string; "source-layer"?: string }, minzoom: number, filter?: FilterSpecification, base = true): LayerSpecification =>
     ({
@@ -408,7 +396,7 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
       layout: { "circle-sort-key": ["-", 0, ["get", "rank"]] },
       paint: {
         "circle-radius": ["interpolate", ["linear"], ["zoom"], STATION_ZOOM, ["case", ["==", ["get", "major"], 1], 4.5, 3], 15, ["case", ["==", ["get", "major"], 1], 8, 5.5]],
-        "circle-color": t.markerFill,
+        "circle-color": base ? t.markerFill : ["case", ["==", ["get", "cur"], 1], t.accent, t.markerFill],
         "circle-stroke-color": t.markerStroke,
         "circle-stroke-width": ["case", ["==", ["get", "rail"], 1], 2.2, 1.6],
         "circle-opacity": base ? rampFrom(minzoom, dim ? 0.6 : 1) : dim && base ? 0.6 : 1,

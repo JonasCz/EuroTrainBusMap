@@ -16,10 +16,11 @@ export type View =
   | { kind: "intro" }
   | { kind: "loading"; title: string }
   | { kind: "error"; message: string }
-  | { kind: "reach"; city: number; reach: Reach }
+  | { kind: "reach"; city: number; /** the origin narrowed to this station of the city */ station?: number; reach: Reach }
   | {
       kind: "timetable";
       city: number;
+      station?: number;
       dest: number;
       date: string;
       today: string;
@@ -31,9 +32,10 @@ export type View =
   | { kind: "connections"; legs: LegInfo[]; conns: Connection[]; windowMin: number };
 
 export interface PanelActions {
-  state: { city?: number; dest?: number; filters: Filters; legs: Leg[] };
+  state: { city?: number; station?: string; dest?: number; filters: Filters; legs: Leg[] };
   set(patch: Record<string, unknown>, opts?: { replace?: boolean }): void;
   clickCity(id: number): void;
+  clickStation(id: number, city: number, name: string): void;
   back(): void;
   chooseDeparture(d: Departure): void;
   chooseConnection(c: Connection, stop: OnwardStop, fromCity: number): void;
@@ -237,7 +239,7 @@ export class Panel {
       case "error":
         return [this.header("Something went wrong", null), h("p", { class: "pad error" }, v.message)];
       case "reach":
-        return this.reach(v.city, v.reach);
+        return this.reach(v.city, v.reach, v.station);
       case "timetable":
         return this.timetable(v);
       case "connections":
@@ -289,12 +291,16 @@ export class Panel {
     ];
   }
 
-  private reach(city: number, r: Reach): Node[] {
+  private reach(city: number, r: Reach, station?: number): Node[] {
     const n = this.net;
     const c = n.cities[city]!;
     const dests = [...r.dests.values()].sort((a, b) => n.cities[b.city]!.importance - n.cities[a.city]!.importance || a.minutes - b.minutes);
-    const out: Node[] = [this.header(c.name, `${dests.length} direct destination${dests.length === 1 ? "" : "s"} · ${countryName(c.country)}`)];
-    if (c.stations.length > 1) out.push(this.stationsLine(city));
+    const count = `${dests.length} direct destination${dests.length === 1 ? "" : "s"}`;
+    const out: Node[] =
+      station !== undefined
+        ? [this.header(stationName(n, station), `${count} from this station · ${c.name}, ${countryName(c.country)}`)]
+        : [this.header(c.name, `${count} · ${countryName(c.country)}`)];
+    if (c.stations.length > 1) out.push(this.stationsLine(city, station));
     if (!dests.length) {
       out.push(h("p", { class: "pad muted" }, "No direct services from here with the selected modes."));
       return out;
@@ -369,16 +375,36 @@ export class Panel {
     return ul;
   }
 
-  /** Top stations of a city (rail first, by service), with "+N more". */
-  private stationsLine(city: number): HTMLElement {
+  /**
+   * The stations of a city (rail first, by service), each a button that narrows the origin to that station;
+   * with a station chosen, "all stations" goes back to the whole city. "+N more" expands the list.
+   */
+  private stationsLine(city: number, current?: number): HTMLElement {
     const n = this.net;
     const c = n.cities[city]!;
     const rail = (s: number) => ((n.file.stations[s]!.cats & (Cat.LongDistance | Cat.Regional)) !== 0 ? 0 : 1);
     const order = [...c.stations].sort((a, b) => rail(a) - rail(b) || n.ctx.stationRank[a]! - n.ctx.stationRank[b]!);
-    const names = order.map((s) => shortStationName(stationName(n, s), c.name));
     const TOP = 8;
-    const p = h("p", { class: "stations-line" }, h("span", { class: "muted" }, `${names.length} stations: `), names.slice(0, TOP).join(" · "));
-    if (names.length > TOP) {
+    const btn = (s: number) => {
+      const label = shortStationName(stationName(n, s), c.name);
+      return h(
+        "button",
+        {
+          type: "button",
+          class: `station-pick${s === current ? " is-current" : ""}`,
+          "aria-pressed": String(s === current),
+          title: s === current ? "Show all stations of the city" : `Departures from ${stationName(n, s)} only`,
+          onclick: () => this.actions.clickStation(s, city, label),
+        },
+        label,
+      );
+    };
+    const p = h("p", { class: "stations-line" });
+    p.append(
+      h("span", { class: "muted" }, current !== undefined ? `${order.length} stations in ${c.name}: ` : `${order.length} stations (tap one to see only its departures): `),
+      ...order.slice(0, TOP).flatMap((s, i) => [i ? " " : "", btn(s)]),
+    );
+    if (order.length > TOP) {
       const more = h(
         "button",
         {
@@ -387,13 +413,14 @@ export class Panel {
           "aria-expanded": "false",
           onclick: () => {
             more.remove();
-            p.append(" · ", names.slice(TOP).join(" · "));
+            p.append(...order.slice(TOP).flatMap((s) => [" ", btn(s)]));
           },
         },
-        `+${names.length - TOP} more`,
+        `+${order.length - TOP} more`,
       );
       p.append(" ", more);
     }
+    if (current !== undefined) p.append(" ", h("button", { type: "button", class: "link small", onclick: () => this.actions.set({ station: undefined, legs: [] }) }, `All of ${c.name}`));
     return p;
   }
 
@@ -402,7 +429,8 @@ export class Panel {
     const a = n.cities[v.city]!;
     const b = n.cities[v.dest]!;
     const originTz = cityTz(n, v.city);
-    const title = h("span", { class: "pair" }, a.name, h("span", { class: "pair-arrow", "aria-label": "to" }, icon("arrow", 16)), b.name);
+    const from = v.station !== undefined ? shortStationName(stationName(n, v.station), a.name) : a.name;
+    const title = h("span", { class: "pair" }, v.station !== undefined ? `${from} (${a.name})` : from, h("span", { class: "pair-arrow", "aria-label": "to" }, icon("arrow", 16)), b.name);
     const swap = h(
       "button",
       { type: "button", class: "icon-btn", "aria-label": "Reverse direction", title: "Reverse direction", onclick: () => this.actions.set({ city: v.dest, dest: v.city, legs: [] }) },

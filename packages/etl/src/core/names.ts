@@ -24,6 +24,7 @@ const NOISE = [
   "autobusowy", "autobusni", "autostazione", "estacion de autobuses", "coach", "terminal", "terminus",
   "bahnhofplatz", "bahnhofsplatz", "bahnhofstrasse", "vorplatz", "stop", "halt", "haltestelle", "bstg", "rv", "fv",
   "street", "road", "ul", "str",
+  "kolodvor", "autogara", "otogar", "rodoviaria", "autobuska", "busstasjon", "bussterminal", "bussterminalen", "busstation", "omnibusbahnhof", "autostanice", "dworzec",
 ];
 const NOISE_EXACT_WORDS = new Set(NOISE.filter((w) => !w.includes(" ")));
 
@@ -52,14 +53,22 @@ function tokens(n: string): string[] {
  * one contains the other as whole tokens; otherwise token Jaccard.
  */
 export function nameSimilarity(a: string, b: string): number {
-  const na = normalizeStopName(a), nb = normalizeStopName(b);
+  return normSimilarity(normalizeStopName(a), normalizeStopName(b));
+}
+
+/** nameSimilarity of two already normalised names (see normalizeStopName). */
+export function normSimilarity(na: string, nb: string): number {
   if (!na || !nb) return na === nb ? 1 : 0.5; // both generic ("Hbf") → neutral
   if (na === nb) return 1;
   const ta = tokens(na), tb = tokens(nb);
   const sa = new Set(ta), sb = new Set(tb);
   let inter = 0;
   for (const t of sa) if (sb.has(t)) inter++;
-  if (inter === sa.size || inter === sb.size) return 0.9; // containment
+  if (inter === sa.size || inter === sb.size) {
+    // containment; a lone token (the town name: "Eschwege" ⊂ "Eschwege Post") is only weak evidence
+    const [small, big] = inter === sa.size ? [sa, sb] : [sb, sa];
+    return small.size === 1 && [...big].some((t) => !small.has(t) && t.length >= 4) ? 0.55 : 0.9;
+  }
   // compact compare ignores spacing differences ("Frankfurt(Main)Hbf" vs "Frankfurt Main Hbf")
   if (ta.join("") === tb.join("")) return 1;
   return inter / (sa.size + sb.size - inter);
@@ -117,4 +126,45 @@ export function prettifyName(name: string): string {
     return n.toLowerCase().replace(/(^|[\s\-/(.'])(\p{L})/gu, (_m, p: string, c: string) => p + c.toUpperCase());
   }
   return n;
+}
+
+/**
+ * Names that refer to a bus / coach terminal (not to a rail station) in the main European
+ * languages: "ZOB", "Busbahnhof", "gare routière", "Coach Station", "autobusni kolodvor", "Autogara", "Otogar", …
+ */
+const TERMINAL_RE = new RegExp(
+  "(?:^|[^\\p{L}])(" +
+    [
+      "zob", "busbahnhof", "omnibusbahnhof", "busterminal", "bus terminal", "bus station", "busstation", "bussterminal", "bussterminalen", "busstasjon", "bus stasjon",
+      "coach station", "coach terminal", "coach park", "gare routi[eè]re", "gare des bus", "autobusov[eé]\\s+n[aá]dra[zž][ií]", "autobusov[eé]\\s+stanice", "autobusna\\s+stanica", "autobusni\\s+kolodvor",
+      "autobuska\\s+stanica", "autobuski\\s+kolodvor", "autogara", "autostazione", "stazione\\s+autolinee", "stazione\\s+bus", "estaci[oó]n\\s+de\\s+autobuses", "estaci[oó]\\s+d.autobusos",
+      "terminal\\s+rodovi[aá]ria", "rodovi[aá]ria", "dworzec\\s+autobusowy", "dworzec\\s+pks", "autobusov[eé]\\s+n[aá]stupi[šs]t[eě]", "otogar", "autobus\\s+station", "busstation",
+      "autobuszállomás", "autóbusz-?(?:állomás|pályaudvar)", "autobusu\\s+stacija", "autobusu\\s+osta", "bussijaam", "linja-autoasema", "busstationen", "rutebilstasjon", "rutebilstation",
+    ].join("|") +
+    ")(?![\\p{L}])",
+  "iu",
+);
+export function isTerminalName(name: string): boolean {
+  return TERMINAL_RE.test(name);
+}
+
+/**
+ * Display-safe station name: removes raw ids and prefixes some feeds leave in stop names
+ * ("ROMA | Anagnina (Metro A) # f3583" → "Roma Anagnina (Metro A)"), HTML entities and control characters.
+ */
+export function sanitizeName(name: string): string {
+  let n = name
+    .replace(/[\u0000-\u001f\u007f\u200b-\u200f\u2028\u2029\ufeff]/g, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;|&apos;/gi, "'");
+  // trailing technical id: " # f3583", " #1234", " [id 123]"
+  const id = /\s+#\s*(?=[0-9a-f]*\d)[0-9a-f]{3,}\s*$/i.exec(n);
+  if (id && !/\b(gleis|platform|bay|stand|track|stop|quai|voie|bahnsteig|steig|line|linie|nr|no)\.?\s*$/i.test(n.slice(0, id.index))) n = n.slice(0, id.index);
+  n = n.replace(/\s*[([]\s*id\s*[:=]?\s*\w+\s*[)\]]\s*$/i, "");
+  // "CITY | Stop" → "City Stop" (an ALL-CAPS prefix is title-cased)
+  const m = /^([^|]{2,40}?)\s*\|\s*(.{2,})$/u.exec(n);
+  if (m) n = `${prettifyName(m[1]!)} ${m[2]!}`;
+  n = n.replace(/\s*\|\s*/g, " - ").replace(/\s+/g, " ").trim();
+  return n || name.trim();
 }

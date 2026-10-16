@@ -9,7 +9,7 @@
  * feeds whose stop ids change between releases.
  */
 import { fastDist } from "../util/geo.ts";
-import { fold, stripPlatform } from "./names.ts";
+import { fold, sanitizeName, stripPlatform } from "./names.ts";
 
 export type StopNameEntry =
   | { action: "merge"; station: string; near?: [number, number]; note?: string }
@@ -65,6 +65,8 @@ export interface ApplyStop {
   altKey: string;
   lon: number;
   lat: number;
+  /** the stop's own name: a merge target is also found by the name of any of its stops (stations are renamed when stops merge) */
+  name?: string;
 }
 
 export interface ApplyStation {
@@ -100,21 +102,23 @@ export function applyStopNames(
 ): ApplyResult {
   const res: ApplyResult = { merged: 0, renames: new Map(), missing: [] };
   if (!mapping || !Object.keys(mapping.entries).length) return res;
-  // index stations by normalised name
-  const byName = new Map<string, number[]>();
-  stations.forEach((s, i) => {
-    const k = normName(stripPlatform(s.name)); // reviewed targets may still carry a platform ("Rosyth (Platform 1)")
+  // index stations by normalised name: their display name and the names of their stops
+  const byName = new Map<string, Set<number>>();
+  const add = (name: string, st: number) => {
+    const k = normName(stripPlatform(sanitizeName(name))); // reviewed targets may still carry a platform ("Rosyth (Platform 1)") or a raw id
     let l = byName.get(k);
-    if (!l) byName.set(k, (l = []));
-    l.push(i);
-  });
+    if (!l) byName.set(k, (l = new Set()));
+    l.add(st);
+  };
+  stations.forEach((s, i) => s.name && add(s.name, i));
+  stops.forEach((st, i) => st.name && add(st.name, stationOf[i]!));
   stops.forEach((st, i) => {
     const e = lookupStopName(mapping, st.key, st.altKey);
     if (!e) return;
     if (e.action === "merge") {
       const [x, y] = e.near ?? [st.lon, st.lat];
       let best = -1, bd = Infinity;
-      for (const j of byName.get(normName(stripPlatform(e.station))) ?? []) {
+      for (const j of byName.get(normName(stripPlatform(sanitizeName(e.station)))) ?? new Set<number>()) {
         const s = stations[j]!;
         const d = fastDist(x, y, s.lon, s.lat);
         if (d <= radiusM && d < bd) [best, bd] = [j, d];

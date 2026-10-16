@@ -10,9 +10,6 @@ import {
   type City,
   type CityFile,
   type Corridor,
-  type Link,
-  isLinkCandidate,
-  isMember,
   type Manifest,
   type NetworkFile,
   type Segment,
@@ -30,8 +27,9 @@ import type { FeedsConfig, ResolvedFeed } from "./feeds.ts";
 import type { FeedLoadStats } from "./gtfs/load.ts";
 import type { CliArgs } from "./cli.ts";
 import { BBOX, loadPlaces } from "./geonames.ts";
-import { assignStops, chooseCityName, resolveSatellites, townFromStopName, type Place } from "./core/cities.ts";
+import { adoptStationNames, assignStations, chooseCityName, foldKey, resolveSatellites, townFromStopName, type Place } from "./core/cities.ts";
 import { describeStation, mergeStations, walkMinutes, type StopIn } from "./core/stations.ts";
+import { normalizeStopName, sanitizeName } from "./core/names.ts";
 import { MaskStore, getBit, newMask, popcount, setBit } from "./core/calendar.ts";
 import { isoToEpochDay, tzOffsetMinutes, validTz } from "./core/time.ts";
 import { resolveDuplicates, type DupPair, type DupTrip } from "./core/dedup.ts";
@@ -108,8 +106,11 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     ) x WHERE trips.trip_key = x.trip_key`);
   await db.run(`DELETE FROM trips WHERE cat IS NULL`);
 
-  // ------------------------------------------------------------------ cities
-  timer.start("cities");
+  // ------------------------------------------------------------------ stations, then cities
+  // Stops are merged into stations first (purely spatial, core/stations.ts), then every station is
+  // assigned to a city (core/cities.ts): a station belongs to the place whose catchment contains it
+  // and, for rail / coach stations, whose core or name it matches.
+  timer.start("stations");
   const places = await loadPlaces(ctx.cacheDir, cfg.userAgent, args.assets);
   resolveSatellites(places, { "TR:Istanbul": 50, "TR:Ankara": 30, "RU:Moscow": 40 });
   const stopRows = await db.all<{
@@ -121,42 +122,88 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       ) u USING (stop_key)
       JOIN (SELECT DISTINCT ON (feed) feed, key FROM feeds) f ON f.feed = s.feed
       WHERE s.lat BETWEEN ${BBOX.minLat} AND ${BBOX.maxLat} AND s.lon BETWEEN ${BBOX.minLon} AND ${BBOX.maxLon}`);
-  // Use the parent station's coordinates for city assignment when available (keeps platforms together).
-  const parentPos = new Map<number, { lat: number; lon: number }>();
-  for (const r of await db.all<{ stop_key: number; lat: number; lon: number }>(
-    `SELECT stop_key, lat, lon FROM stops WHERE stop_key IN (SELECT DISTINCT parent_key FROM stops WHERE parent_key IS NOT NULL)`,
-  ))
-    if (r.lat && r.lon) parentPos.set(r.stop_key, r);
   log(`${stopRows.length} used stops`);
-  const assignPts = stopRows.map((s) => (s.parent_key != null && parentPos.get(s.parent_key)) || s);
-  const placeOf = assignStops(places, assignPts);
+  // display-safe stop names (raw ids and "CITY | " prefixes removed); the reviewed-names keys use the raw ones
+  const stopIns: StopIn[] = stopRows.map((s) => ({
+    lon: s.lon,
+    lat: s.lat,
+    name: sanitizeName(s.name),
+    rail: !!s.rail,
+    parent: s.parent_key != null ? `${s.parent_key}` : null,
+    feed: s.feed,
+    weight: s.n,
+  }));
+  const merge = mergeStations(stopIns);
+  const stationOf = merge.stationOf;
+  const nStations = merge.count;
+  log(`${nStations} stations from ${stopIns.length} stops; merges by signal: ${Object.entries(merge.bySignal).map(([k, v]) => `${k} ${v}`).join(", ")}`);
+  for (const [k, v] of Object.entries(merge.bySignal)) stats[`merge_${k}`] = v;
+  /** Stations (name, position, services) from their stops; the city name only matters for "S+U X Bhf" style names. */
+  const describeAll = (cityNameOf?: (station: number) => string) => {
+    const members: number[][] = Array.from({ length: nStations }, () => []);
+    for (let i = 0; i < stopIns.length; i++) members[stationOf[i]!]!.push(i);
+    return members.map((m, st): StationRec => {
+      if (!m.length) return { city: -1, name: "", lon: 0, lat: 0, cats: 0, rail: false, weight: 0 }; // emptied by a merge
+      const ms = m.map((i) => stopIns[i]!);
+      const d = describeStation(ms, cityNameOf?.(st) ?? "");
+      return {
+        city: -1,
+        name: d.name,
+        lon: d.lon,
+        lat: d.lat,
+        cats: ms.reduce((a, s, k) => a | stopRows[m[k]!]!.cats, 0),
+        rail: ms.some((s) => s.rail),
+        weight: ms.reduce((a, s) => a + s.weight, 0),
+      };
+    });
+  };
+  let stations = describeAll();
 
+  // ---- cities
+  timer.start("cities");
+  const stationStops: number[][] = Array.from({ length: nStations }, () => []);
+  for (let i = 0; i < stopIns.length; i++) stationStops[stationOf[i]!]!.push(i);
+  const live: number[] = [];
+  for (let st = 0; st < nStations; st++) if (stationStops[st]!.length) live.push(st);
+  const placeOf = assignStations(
+    places,
+    live.map((st) => ({
+      lon: stations[st]!.lon,
+      lat: stations[st]!.lat,
+      names: [...new Set(stationStops[st]!.map((i) => foldKey(stopIns[i]!.name)))].filter(Boolean),
+      strict: stations[st]!.rail || (stations[st]!.cats & Cat.Coach) !== 0,
+    })),
+  );
+  const adopted = adoptStationNames(
+    live.map((st) => ({ lon: stations[st]!.lon, lat: stations[st]!.lat, norm: normalizeStopName(stations[st]!.name), strict: stations[st]!.rail || (stations[st]!.cats & Cat.Coach) !== 0 })),
+    placeOf,
+  );
+  if (adopted) log(`${adopted} bus-only stations joined the place of the rail / coach station of the same name`);
   const cities: CityRec[] = [];
   const cityOfPlace = new Map<number, number>();
-  const stopCity = new Int32Array(stopRows.length).fill(-1);
-  for (let i = 0; i < stopRows.length; i++) {
-    const p = placeOf[i]!;
-    if (p < 0) continue;
+  const stationCity = new Int32Array(nStations).fill(-1);
+  live.forEach((st, k) => {
+    const p = placeOf[k]!;
+    if (p < 0) return;
     let c = cityOfPlace.get(p);
     if (c === undefined) {
       const pl = places[p]!;
       c = cities.length;
       cityOfPlace.set(p, c);
-      cities.push({
-        place: p, name: pl.name, country: pl.country, lon: pl.lon, lat: pl.lat, population: pl.population, tz: pl.tz, stopNames: [], synthetic: false,
-      });
+      cities.push({ place: p, name: pl.name, country: pl.country, lon: pl.lon, lat: pl.lat, population: pl.population, tz: pl.tz, stopNames: [], synthetic: false });
     }
-    stopCity[i] = c;
-  }
-  // Synthetic cities for unassigned stops: cluster within 2 km.
+    stationCity[st] = c;
+  });
+  // Synthetic cities for stations that belong to no place: clustered within 2 km, busiest first.
   const placeIdx = new GridIndex(places.map((p) => p.lon), places.map((p) => p.lat), 0.5);
   const synth: { lon: number; lat: number; city: number }[] = [];
   const synthGrid = new Map<string, number[]>();
   const sk = (lon: number, lat: number) => `${Math.floor(lon / 0.05)},${Math.floor(lat / 0.05)}`;
   let nSynth = 0;
-  const unassigned = [...Array(stopRows.length).keys()].filter((i) => stopCity[i]! < 0).sort((a, b) => stopRows[b]!.n - stopRows[a]!.n);
-  for (const i of unassigned) {
-    const s = assignPts[i]!;
+  const unassigned = live.filter((st) => stationCity[st]! < 0).sort((a, b) => stations[b]!.weight - stations[a]!.weight);
+  const tzOfStop = (st: number) => validTz(stopRows[stationStops[st]![0]!]!.tz);
+  for (const st of unassigned) {
+    const s = stations[st]!;
     let found = -1;
     const cx = Math.floor(s.lon / 0.05), cy = Math.floor(s.lat / 0.05);
     for (let dx = -1; dx <= 1 && found < 0; dx++)
@@ -188,12 +235,12 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       nSynth++;
       cities.push({
         place: -1,
-        name: townFromStopName(stopRows[i]!.name),
+        name: townFromStopName(s.name),
         country: near?.country ?? "XX",
         lon: s.lon,
         lat: s.lat,
         population: 0,
-        tz: validTz(stopRows[i]!.tz) ?? near?.tz ?? "Europe/Berlin",
+        tz: tzOfStop(st) ?? near?.tz ?? "Europe/Berlin",
         stopNames: [],
         synthetic: true,
       });
@@ -203,15 +250,30 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       arr.push(synth.length - 1);
       synthGrid.set(k, arr);
     }
-    stopCity[i] = found;
+    stationCity[st] = found;
   }
-  // Name matching uses rail stop names (or regional bus names); coach-only stops (often English names) are ignored.
+  // A synthetic town named after a generic stop name ("Road End", "Hotel", "Mairie": at least 4 of them) says nothing:
+  // add the nearest place, "Road End (Strathy)".
+  {
+    const count = new Map<string, number>();
+    for (const c of cities) if (c.synthetic) count.set(c.name, (count.get(c.name) ?? 0) + 1);
+    let renamed = 0;
+    for (const c of cities) {
+      if (!c.synthetic || (count.get(c.name) ?? 0) < 4) continue;
+      const near = placeIdx.within(c.lon, c.lat, 25_000).map((j) => ({ j, d: fastDist(c.lon, c.lat, places[j]!.lon, places[j]!.lat) })).sort((a, b) => a.d - b.d)[0];
+      if (!near) continue;
+      c.name = `${c.name} (${places[near.j]!.name})`;
+      renamed++;
+    }
+    if (renamed) log(`${renamed} synthetic towns with a generic name got the nearest place added`);
+  }
+  // Name matching uses rail station names (or regional bus names); coach-only stops (often English names) are ignored.
   const railNames: string[][] = cities.map(() => []);
-  for (let i = 0; i < stopRows.length; i++) {
-    const c = cities[stopCity[i]!]!;
-    const r = stopRows[i]!;
-    if (r.rail && railNames[stopCity[i]!]!.length < 200) railNames[stopCity[i]!]!.push(r.name);
-    else if (r.cats & Cat.Bus && c.stopNames.length < 100) c.stopNames.push(r.name);
+  for (const st of live) {
+    const c = stationCity[st]!;
+    const s = stations[st]!;
+    if (s.rail && railNames[c]!.length < 200) railNames[c]!.push(s.name);
+    else if (s.cats & Cat.Bus && cities[c]!.stopNames.length < 100) cities[c]!.stopNames.push(s.name);
   }
   for (let ci = 0; ci < cities.length; ci++) {
     const c = cities[ci]!;
@@ -222,57 +284,24 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     c.name = c.stopNames.length ? chooseCityName(cands, c.stopNames) : cands[0]!;
   }
   log(`${cities.length} cities (${nSynth} synthetic)`);
-
-  // ------------------------------------------------------------------ stations
-  timer.start("stations");
-  const stopIns: StopIn[] = stopRows.map((s, i) => ({
-    lon: s.lon,
-    lat: s.lat,
-    name: s.name,
-    rail: !!s.rail,
-    parent: s.parent_key != null ? `${s.parent_key}` : null,
-    feed: s.feed,
-    city: stopCity[i]!,
-    weight: s.n,
-  }));
-  const { stationOf, count: nStations } = mergeStations(stopIns);
-  const describeAll = () => {
-    const members: number[][] = Array.from({ length: nStations }, () => []);
-    for (let i = 0; i < stopIns.length; i++) members[stationOf[i]!]!.push(i);
-    return members.map((m): StationRec => {
-      if (!m.length) return { city: 0, name: "", lon: 0, lat: 0, cats: 0, rail: false, weight: 0 }; // emptied by a merge
-      const ms = m.map((i) => stopIns[i]!);
-      const d = describeStation(ms, cities[ms[0]!.city]!.name);
-      return {
-        city: ms[0]!.city,
-        name: d.name,
-        lon: d.lon,
-        lat: d.lat,
-        cats: ms.reduce((a, s, k) => a | stopRows[m[k]!]!.cats, 0),
-        rail: ms.some((s) => s.rail),
-        weight: ms.reduce((a, s) => a + s.weight, 0),
-      };
-    });
-  };
-  let stations = describeAll();
-  // reviewed coach/bus stop names (data/stop-names.json): forced merges and display names
+  // final station names (the city name helps "S+U Gesundbrunnen Bhf" → "Berlin Gesundbrunnen")
+  const cityNameOf = (st: number) => cities[stationCity[st]!]?.name ?? "";
+  stations = describeAll(cityNameOf);
+  for (const st of live) stations[st]!.city = stationCity[st]!;
+  // reviewed coach/bus stop names (data/stop-names.json): forced merges into a named station (the stop joins its city) and display names
   const stopNames = await loadStopNames(join(import.meta.dirname, "..", "data", "stop-names.json"));
-  const stopKeys = stopRows.map((r) => ({ key: stopKey(r.feed_key, r.stop_id), altKey: stopAltKey(r.name, r.lon, r.lat), lon: r.lon, lat: r.lat }));
+  const stopKeys = stopRows.map((r, i) => ({ key: stopKey(r.feed_key, r.stop_id), altKey: stopAltKey(r.name, r.lon, r.lat), lon: r.lon, lat: r.lat, name: stopIns[i]!.name }));
   const sn = applyStopNames(stopNames, stopKeys, stationOf, stations);
   if (sn.merged) {
-    // merged stops join the target station's city
-    for (let i = 0; i < stopIns.length; i++) {
-      const c = stations[stationOf[i]!]!.city;
-      if (stopIns[i]!.city !== c) stopIns[i]!.city = stopCity[i] = c;
-    }
-    stations = describeAll();
+    stations = describeAll(cityNameOf);
+    for (const st of live) stations[st]!.city = stationCity[st]!;
   }
-  for (const [st, name] of sn.renames) if (stations[st]!.name) stations[st]!.name = name;
   for (const m of sn.missing.slice(0, 20)) warn(`stop-names: ${m}`);
   if (stopNames) log(`stop-names: ${Object.keys(stopNames.entries).length} entries, ${sn.merged} merges, ${sn.renames.size} renames, ${sn.missing.length} merge targets not found`);
   stats.stopNameMerges = sn.merged;
   stats.stopNameRenames = sn.renames.size;
-  log(`${nStations} stations from ${stopIns.length} stops`);
+  for (const [st, name] of sn.renames) if (stations[st]!.name) stations[st]!.name = sanitizeName(name);
+  const stopCity = Int32Array.from(stationOf, (st) => stationCity[st]!);
   if (args.stopCandidates) {
     const n = await writeStopCandidates(args.stopCandidates, { stopRows, stopKeys, stopCity, stationOf, stations, cities, mapping: stopNames, minBusCityPop: cfg.minBusCityPop ?? 1000 });
     log(`stop candidates: ${n} written to ${args.stopCandidates}`);
@@ -534,97 +563,50 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   anchorCitiesAtMainStation(cities, stations, patterns, patternDays, (p) => routes[patterns[p]!.route]!.cat, log);
 
   // ------------------------------------------------------------------ corridors
+  // The drawn network connects stations: every hop between two consecutive, different stations of a
+  // pattern is a corridor (undirected, keyed by the station pair), inside a city as well as between cities.
   timer.start("corridors");
   interface CorrAcc {
     a: number;
     b: number;
     cats: number;
     tpd: Record<number, number>;
-    hops: Map<string, { from: number; to: number; w: number; shapeTrip: number }>;
-    sa: Map<number, number>;
-    sb: Map<number, number>;
+    shapeTrip: number;
+    shapeW: number;
   }
-  const corrIndex = new Map<string, number>();
+  const corrIndex = new Map<number, number>();
   const corrs: CorrAcc[] = [];
-  const linkAcc = new Map<string, { a: number; b: number; cats: number; tpd: Record<number, number>; w: number; shapeTrip: number; shapeW: number }>();
   const patternCorr: number[][] = [];
+  const NSTA = stations.length;
   for (let p = 0; p < patterns.length; p++) {
     const pt = patterns[p]!;
     const w = patternDays[p]!;
     const route = routes[pt.route]!;
     const list: number[] = [];
-    for (let i = 0; i + 1 < pt.cities.length; i++) {
-      const c1 = pt.cities[i]!, c2 = pt.cities[i + 1]!;
-      if (c1 === c2) {
-        // a hop between two stations of one city: not a corridor, but a link inside the city's station complex
-        const s1 = pt.stations[i]!, s2 = pt.stations[i + 1]!;
-        if (s1 === s2 || !w) continue;
-        const [x, y] = s1 < s2 ? [s1, s2] : [s2, s1];
-        const lk = `${x},${y}`;
-        let l = linkAcc.get(lk);
-        if (!l) linkAcc.set(lk, (l = { a: x, b: y, cats: 0, tpd: {}, w: 0, shapeTrip: -1, shapeW: 0 }));
-        l.cats |= route.cat;
-        l.tpd[route.cat] = (l.tpd[route.cat] ?? 0) + w / D;
-        l.w += w;
-        if (pt.shapeTrip >= 0 && w > l.shapeW) [l.shapeTrip, l.shapeW] = [pt.shapeTrip, w];
-        continue;
-      }
-      const [a, b] = c1 < c2 ? [c1, c2] : [c2, c1];
-      const key = `${a},${b}`;
+    for (let i = 0; i + 1 < pt.stations.length; i++) {
+      const s1 = pt.stations[i]!, s2 = pt.stations[i + 1]!;
+      const [a, b] = s1 < s2 ? [s1, s2] : [s2, s1];
+      const key = a * NSTA + b;
       let id = corrIndex.get(key);
       if (id === undefined) {
         id = corrs.length;
         corrIndex.set(key, id);
-        corrs.push({ a, b, cats: 0, tpd: {}, hops: new Map(), sa: new Map(), sb: new Map() });
+        corrs.push({ a, b, cats: 0, tpd: {}, shapeTrip: -1, shapeW: 0 });
       }
       list.push(id);
       if (!w) continue;
       const cr = corrs[id]!;
       cr.cats |= route.cat;
       cr.tpd[route.cat] = (cr.tpd[route.cat] ?? 0) + w / D;
-      const s1 = pt.stations[i]!, s2 = pt.stations[i + 1]!;
-      const [from, to] = c1 === a ? [s1, s2] : [s2, s1];
-      const hk = `${from},${to}`;
-      const h = cr.hops.get(hk);
-      if (h) {
-        h.w += w;
-        if (h.shapeTrip < 0 && pt.shapeTrip >= 0) h.shapeTrip = pt.shapeTrip;
-      } else cr.hops.set(hk, { from, to, w, shapeTrip: pt.shapeTrip });
-      cr.sa.set(from, (cr.sa.get(from) ?? 0) + w);
-      cr.sb.set(to, (cr.sb.get(to) ?? 0) + w);
+      if (pt.shapeTrip >= 0 && w > cr.shapeW) [cr.shapeTrip, cr.shapeW] = [pt.shapeTrip, w];
     }
     patternCorr.push(list);
   }
-  log(`${corrs.length} corridors`);
-
-  // Links inside cities (station complexes): candidates are hops between two of a city's main
-  // stations (rank < 20 in the city's list by service weight, the most any complex member can have).
-  const cityRank = new Map<number, number>();
-  {
-    const per = new Map<number, number[]>();
-    const seenSt = new Set<number>();
-    for (let p = 0; p < patterns.length; p++) {
-      if (!patternDays[p]) continue;
-      for (const s of patterns[p]!.stations) {
-        if (seenSt.has(s)) continue;
-        seenSt.add(s);
-        const c = stations[s]!.city;
-        (per.get(c) ?? per.set(c, []).get(c)!).push(s);
-      }
-    }
-    for (const list of per.values()) {
-      list.sort((x, y) => stations[y]!.weight - stations[x]!.weight);
-      list.forEach((s, i) => cityRank.set(s, i));
-    }
-  }
-  const linkCands = [...linkAcc.values()].filter((l) => (cityRank.get(l.a) ?? 99) < 20 && (cityRank.get(l.b) ?? 99) < 20 && isLinkCandidate(stations[l.a]!, stations[l.b]!));
-  log(`${linkAcc.size} intra-city hops, ${linkCands.length} link candidates`);
+  log(`${corrs.length} corridors (${corrs.filter((c) => stations[c.a]!.city === stations[c.b]!.city).length} inside a city)`);
 
   // shapes for representative hops
   const neededShapes = new Map<number, number>(); // shape_key → trip
-  const hopLists = corrs.map((c) => [...c.hops.values()].sort((x, y) => y.w - x.w).slice(0, 3));
-  for (const hl of hopLists) for (const h of hl) if (h.shapeTrip >= 0) neededShapes.set(tShape[h.shapeTrip]!, h.shapeTrip);
-  for (const l of linkCands) if (l.shapeTrip >= 0) neededShapes.set(tShape[l.shapeTrip]!, l.shapeTrip);
+  for (const c of corrs) if (c.shapeTrip >= 0) neededShapes.set(tShape[c.shapeTrip]!, c.shapeTrip);
   const shapePts = new Map<number, LonLat[]>();
   if (neededShapes.size) {
     await db.run(`DROP TABLE IF EXISTS needshape`);
@@ -646,27 +628,14 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   // fallbacks are smooth curves that only need enough points to stay curved.
   const SNAPPED_TOL_M = 12, CURVE_TOL_M = 60;
   const reqs = corrs.map((c, id) => {
-    const A = cities[c.a]!, B = cities[c.b]!;
-    const hops = hopLists[id]!.map((h) => {
-      const f = stations[h.from]!, t = stations[h.to]!;
-      const hop: { from: [number, number]; to: [number, number]; shape?: [number, number][] } = { from: [f.lon, f.lat], to: [t.lon, t.lat] };
-      const sp = h.shapeTrip >= 0 ? shapePts.get(tShape[h.shapeTrip]!) : undefined;
-      if (sp) {
-        const sl = sliceShape(sp, hop.from, hop.to);
-        if (sl) hop.shape = sl;
-      }
-      return hop;
-    });
-    return { id, mode: (c.cats & RAIL ? "rail" : "road") as "rail" | "road", hops, a: [A.lon, A.lat] as [number, number], b: [B.lon, B.lat] as [number, number], anchored: true };
-  });
-  const linkBase = reqs.length;
-  linkCands.forEach((l, k) => {
-    const f = stations[l.a]!, t = stations[l.b]!;
-    const hop: { from: [number, number]; to: [number, number]; shape?: [number, number][] } = { from: [f.lon, f.lat], to: [t.lon, t.lat] };
-    const sp = l.shapeTrip >= 0 ? shapePts.get(tShape[l.shapeTrip]!) : undefined;
-    const sl = sp && sliceShape(sp, hop.from, hop.to);
-    if (sl) hop.shape = sl;
-    reqs.push({ id: linkBase + k, mode: (l.cats & RAIL ? "rail" : "road") as "rail" | "road", hops: [hop], a: hop.from, b: hop.to, anchored: true });
+    const A = stations[c.a]!, B = stations[c.b]!;
+    const hop: { from: [number, number]; to: [number, number]; shape?: [number, number][] } = { from: [A.lon, A.lat], to: [B.lon, B.lat] };
+    const sp = c.shapeTrip >= 0 ? shapePts.get(tShape[c.shapeTrip]!) : undefined;
+    if (sp) {
+      const sl = sliceShape(sp, hop.from, hop.to);
+      if (sl) hop.shape = sl;
+    }
+    return { id, mode: (c.cats & RAIL ? "rail" : "road") as "rail" | "road", hops: [hop], a: hop.from, b: hop.to, anchored: true };
   });
   if (process.env.ETBM_DUMP_GEOM_REQS) await writeFile(process.env.ETBM_DUMP_GEOM_REQS, JSON.stringify(reqs));
   // The database is not needed any more: close it and release big JS structures
@@ -776,17 +745,17 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       tz: tzId(cr.tz),
     };
   });
-  // corridors
+  // corridors (stations are the endpoints)
   const corrNew = new Int32Array(corrs.length).fill(-1);
   const outCorr: Corridor[] = [];
   const corrTol = new Map<Corridor, number>();
   let snappedN = 0;
   corrs.forEach((c, id) => {
     if (!c.cats) return;
-    const a = usedCity[c.a]!, b = usedCity[c.b]!;
+    const a = usedStation[c.a]!, b = usedStation[c.b]!;
     if (a < 0 || b < 0) return;
     const g = geomById.get(id);
-    const A = cities[c.a]!, B = cities[c.b]!;
+    const A = stations[c.a]!, B = stations[c.b]!;
     const raw = g?.coords ?? greatCircle([A.lon, A.lat], [B.lon, B.lat]);
     const tol = g?.snapped ? SNAPPED_TOL_M : CURVE_TOL_M;
     // full-resolution geometry; simplified per line-graph segment below
@@ -796,44 +765,12 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     if (flip) coords.reverse();
     const tpd: Partial<Record<CatBit, number>> = {};
     for (const k of CAT_BITS) if (c.tpd[k]) tpd[k] = Math.round(c.tpd[k]! * 10) / 10;
-    const top = (m: Map<number, number>) => {
-      let best = -1, bw = -1;
-      for (const [s, w] of m) if (w > bw && usedStation[s]! >= 0) [best, bw] = [s, w];
-      return best >= 0 ? usedStation[best]! : undefined;
-    };
-    const sa = top(c.sa), sb = top(c.sb);
     const cor: Corridor = { id: outCorr.length, a: flip ? b : a, b: flip ? a : b, coords, cats: c.cats, tpd, snapped: !!g?.snapped };
-    const [ea, eb] = flip ? [sb, sa] : [sa, sb];
-    if (ea !== undefined) cor.sa = ea;
-    if (eb !== undefined) cor.sb = eb;
     if (cor.snapped) snappedN++;
     corrTol.set(cor, tol);
     corrNew[id] = outCorr.length;
     outCorr.push(cor);
   });
-  // links inside cities: both ends must be complex members (shared/complex.ts), geometry as routed above
-  const outLinks: Link[] = [];
-  {
-    const rankOut = new Map<number, number>();
-    for (const c of outCities) c.stations.forEach((s, i) => rankOut.set(s, i));
-    linkCands.forEach((l, k) => {
-      const a = usedStation[l.a]!, b = usedStation[l.b]!;
-      if (a < 0 || b < 0) return;
-      const sa = outStations[a]!, sb = outStations[b]!;
-      if (sa.city !== sb.city || !isMember(sa, rankOut.get(a)!) || !isMember(sb, rankOut.get(b)!)) return;
-      const g = geomById.get(linkBase + k);
-      const raw = g?.coords ?? greatCircle([sa.lon, sa.lat], [sb.lon, sb.lat]);
-      let coords = simplifyLine(raw, g?.snapped ? SNAPPED_TOL_M : CURVE_TOL_M).map(([x, y]) => [round5(x), round5(y)] as [number, number]);
-      const flip = a > b;
-      if (flip) coords = coords.reverse();
-      const tpd: Partial<Record<CatBit, number>> = {};
-      for (const kk of CAT_BITS) if (l.tpd[kk]) tpd[kk] = Math.round(l.tpd[kk]! * 10) / 10;
-      outLinks.push({ id: outLinks.length, city: sa.city, a: flip ? b : a, b: flip ? a : b, cats: l.cats, tpd, snapped: !!g?.snapped, coords });
-    });
-    outLinks.sort((x, y) => x.city - y.city || x.a - y.a || x.b - y.b);
-    outLinks.forEach((l, i) => (l.id = i));
-    log(`${outLinks.length} station links`);
-  }
   // Order corridors by (a, b) so ids are stable-ish and pack well.
   {
     const order = outCorr.map((_, i) => i).sort((x, y) => outCorr[x]!.a - outCorr[y]!.a || outCorr[x]!.b - outCorr[y]!.b);
@@ -893,7 +830,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       if (e !== build && e !== "manifest.json" && /^\d{8}-\d{4}/.test(e)) await rm(join(outRoot, e), { recursive: true, force: true });
     }
 
-  const network: NetworkFile = { schema: SCHEMA_VERSION, build, timezones, cities: outCities, stations: outStations, corridors: outCorr, segments: outSegs, links: outLinks };
+  const network: NetworkFile = { schema: SCHEMA_VERSION, build, timezones, cities: outCities, stations: outStations, corridors: outCorr, segments: outSegs };
   const calendars: CalendarsFile = { startDate: args.startDate, days: D, masks: masks.masks };
 
   // city files
@@ -1012,7 +949,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const attribution = buildAttribution(ctx);
   // The network is written in the compact columnar form (NetworkFile.packed).
   const files: [string, unknown][] = [];
-  const packedNet: NetworkFile = { schema: SCHEMA_VERSION, build, timezones, cities: [], stations: [], corridors: [], packed: packNetwork(network), links: outLinks };
+  const packedNet: NetworkFile = { schema: SCHEMA_VERSION, build, timezones, cities: [], stations: [], corridors: [], packed: packNetwork(network) };
   files.push(["network.json", packedNet]);
   files.push(
     ["calendars.json", calendars],

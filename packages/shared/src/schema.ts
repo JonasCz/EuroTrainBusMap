@@ -21,7 +21,7 @@
 
 import type { PackedNetwork } from "./pack.ts";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** Service categories. Bit flags so several can be combined in masks. */
 export const Cat = {
@@ -102,25 +102,23 @@ export interface Station {
 }
 
 /**
- * A corridor is a drawable edge between two adjacent cities (consecutive
- * served cities on at least one trip). Geometry follows the railway/road where
- * known, otherwise a smoothed curve.
+ * A corridor is a drawable edge between two stations that are consecutive stops of at least one
+ * trip (inside a city as well as between cities). Geometry follows the railway/road where known;
+ * otherwise (`snapped` false) it is an approximate alignment, drawn dashed.
  */
 export interface Corridor {
   id: number;
-  a: number; // city id
-  b: number; // city id
-  /** Polyline [lon,lat][] from city a to city b. */
+  /** station ids, a < b */
+  a: number;
+  b: number;
+  /** Polyline [lon,lat][] from station a to station b. */
   coords: [number, number][];
   /** Union of Cat bits running on this corridor. */
   cats: number;
   /** Average trips per day in both directions per category, keyed by Cat bit. */
   tpd: Partial<Record<CatBit, number>>;
-  /** Whether geometry is snapped to real infrastructure (true) or synthesized (false). */
+  /** Whether geometry is snapped to real infrastructure (true) or an approximate alignment (false). */
   snapped: boolean;
-  /** Most-used station at the `a` / `b` end (for drawing to the real station at high zoom). */
-  sa?: number;
-  sb?: number;
   /**
    * Line-graph segments covered by this corridor, in travel order from a to b
    * (see NetworkFile.segments). A reversed traversal is encoded as −(id+1).
@@ -144,25 +142,6 @@ export interface Segment {
   snapped: boolean;
 }
 
-/**
- * A connection between two stations of the same city (a pattern's hop inside a city, e.g.
- * Tipperary – Limerick Junction), drawn at station zoom inside the city's station complex
- * (see complex.ts). Not a corridor: it never takes part in the city graph, LOD or timetable UI.
- */
-export interface Link {
-  id: number;
-  city: number;
-  /** station ids, a < b */
-  a: number;
-  b: number;
-  cats: number;
-  /** trips per day (both directions) per category */
-  tpd: Partial<Record<CatBit, number>>;
-  snapped: boolean;
-  /** polyline from station a to station b */
-  coords: [number, number][];
-}
-
 export interface NetworkFile {
   schema: number;
   build: string;
@@ -172,8 +151,6 @@ export interface NetworkFile {
   corridors: Corridor[];
   /** Line-graph segments (see Segment, Corridor.segs); filled by expandNetwork. */
   segments?: Segment[];
-  /** Station-to-station links inside cities (see Link). */
-  links?: Link[];
   /**
    * Optional continuation files (paths relative to the build directory, e.g.
    * "network-1.json"), each a NetworkPart. Used when the network would exceed
@@ -216,10 +193,8 @@ export interface Route {
 
 /**
  * A stop pattern: ordered list of (station, arrival offset, departure offset)
- * relative to the trip's start time. Only stops at cities in the network are
- * kept (stops in places that are not cities are dropped). Consecutive stops in
- * the same city are kept (they are distinct stations), so callers must handle
- * them.
+ * relative to the trip's start time. Consecutive stops in the same city are kept
+ * (they are distinct stations), so callers must handle them.
  */
 export interface Pattern {
   route: number; // index into CityFile.routes
@@ -229,7 +204,7 @@ export interface Pattern {
   arr: number[];
   /** Departure offsets (minutes from trip start), same length as stations. */
   dep: number[];
-  /** Corridor ids traversed between consecutive *cities* (length = number of city changes). */
+  /** Corridor id of every hop between consecutive stops (length = stations.length − 1; −1 for a hop that never runs). */
   corridors: number[];
   /** Headsign / final destination text. */
   headsign: string;

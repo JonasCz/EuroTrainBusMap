@@ -42,7 +42,7 @@ export interface Segment {
 
 export interface PreparedCity {
   cf: CityFile;
-  /** segments per pattern; corridor k of a pattern joins segment k and k+1 */
+  /** city runs per pattern (consecutive stops in one city); pattern.corridors[i] joins stop i and i+1 */
   segments: Segment[][];
   /** trip indices per pattern */
   tripsByPattern: number[][];
@@ -76,6 +76,12 @@ export function prepare(cf: CityFile, ctx: NetCtx): PreparedCity {
   };
   cache.set(cf, p);
   return p;
+}
+
+/** Index of the stop of pattern `p` at `station` inside a city segment, or −1. */
+export function stopAt(p: Pattern, seg: Segment, station: number): number {
+  for (let i = seg.first; i <= seg.last; i++) if (p.stations[i] === station) return i;
+  return -1;
 }
 
 /** Pick the stop in a segment whose station ranks best (main station first). */

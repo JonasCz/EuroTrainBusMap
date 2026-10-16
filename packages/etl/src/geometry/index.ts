@@ -47,6 +47,8 @@ export interface BuildOptions {
 /** Max routed track length relative to the station distance. */
 export const MAX_DETOUR = (gc: number) => 2.2 * gc + 5000;
 const ROAD_BULGE = 0.05;
+/** Corridors shorter than this (m) are drawn as a straight line without routing. */
+const TRIVIAL_M = 60;
 const SHAPE_TOL = 10;
 
 /** Bus stops in small towns can be a few km from the nearest secondary road; the gap becomes a stub. */
@@ -103,15 +105,20 @@ export function buildWithRouter(
   const t0 = Date.now();
   const cache = new Map<string, RouteResult | null>();
   const roadCache = new Map<string, RouteResult | null>();
-  const counts: Counts = { rail: 0, routed: 0, shape: 0, fallback: 0, road: 0, roadShape: 0, roadRouted: 0, roadFallback: 0 };
+  const counts: Counts = { rail: 0, routed: 0, shape: 0, railRoad: 0, fallback: 0, road: 0, roadShape: 0, roadRouted: 0, roadFallback: 0 };
   const out: GeometryResult[] = [];
   let lastLog = Date.now();
   let tRoad = 0;
   for (let i = 0; i < reqs.length; i++) {
     const r = reqs[i]!;
     let res: GeometryResult;
+    // two stops a few tens of metres apart (two platforms, a bay and the entrance): a plain short line
+    if (dist(r.a, r.b) < TRIVIAL_M) {
+      out.push({ id: r.id, coords: roundCoords([r.a, r.b]), snapped: true });
+      continue;
+    }
     try {
-      if (r.mode === 'rail') res = railGeometry(r, router, cache, counts);
+      if (r.mode === 'rail') res = railGeometry(r, router, cache, counts, roadRouter, roadCache);
       else {
         const t = performance.now();
         res = roadGeometry(r, roadRouter, roadCache, counts);
@@ -128,11 +135,11 @@ export function buildWithRouter(
     }
   }
   const s = (Date.now() - t0) / 1000;
-  log(`geometry: ${reqs.length} corridors in ${s.toFixed(1)} s — rail ${counts.rail} (routed ${counts.routed}, shape ${counts.shape}, fallback ${counts.fallback}), road ${counts.road} (routed ${counts.roadRouted}, shape ${counts.roadShape}, fallback ${counts.roadFallback}; ${(tRoad / 1000).toFixed(1)} s)`);
+  log(`geometry: ${reqs.length} corridors in ${s.toFixed(1)} s — rail ${counts.rail} (routed ${counts.routed}, shape ${counts.shape}, on roads ${counts.railRoad}, approximate ${counts.fallback}), road ${counts.road} (routed ${counts.roadRouted}, shape ${counts.roadShape}, fallback ${counts.roadFallback}; ${(tRoad / 1000).toFixed(1)} s)`);
   return out;
 }
 
-type Counts = { rail: number; routed: number; shape: number; fallback: number; road: number; roadShape: number; roadRouted: number; roadFallback: number };
+type Counts = { rail: number; routed: number; shape: number; railRoad: number; fallback: number; road: number; roadShape: number; roadRouted: number; roadFallback: number };
 
 function orient(h: GeometryRequest['hops'][number], a: LonLat, b: LonLat) {
   if (dist(h.from, a) + dist(h.to, b) <= dist(h.from, b) + dist(h.to, a)) return h;
@@ -154,7 +161,7 @@ function plausibleShape(h: { from: LonLat; to: LonLat; shape?: LonLat[] }): LonL
 
 const key = (p: LonLat, q: LonLat) => `${p[0].toFixed(4)},${p[1].toFixed(4)};${q[0].toFixed(4)},${q[1].toFixed(4)}`;
 
-function railGeometry(r: GeometryRequest, router: Router | null, cache: Map<string, RouteResult | null>, counts: Counts): GeometryResult {
+function railGeometry(r: GeometryRequest, router: Router | null, cache: Map<string, RouteResult | null>, counts: Counts, roadRouter: Router | null = null, roadCache: Map<string, RouteResult | null> = new Map()): GeometryResult {
   counts.rail++;
   let shapeFallback: LonLat[] | null = null;
   for (const raw of r.hops.slice(0, 3)) {
@@ -186,6 +193,20 @@ function railGeometry(r: GeometryRequest, router: Router | null, cache: Map<stri
   if (shapeFallback) {
     counts.shape++;
     return { id: r.id, coords: finish(attach(r.a, simplify(shapeFallback, SHAPE_TOL), r.b, r.anchored), 1), snapped: true };
+  }
+  // Not on any track of the rail graph (a stop far from the railway, a tram-train, a rail replacement bus):
+  // follow the road network if the stations are connected by it, else an approximate alignment (drawn dashed).
+  if (roadRouter) {
+    for (const raw of r.hops.slice(0, 3)) {
+      const h = orient(raw, r.a, r.b);
+      const gc = dist(h.from, h.to);
+      if (gc <= 30) continue;
+      const routed = cachedRoute(roadRouter, roadCache, h.from, h.to, MAX_DETOUR(gc));
+      if (routed) {
+        counts.railRoad++;
+        return { id: r.id, coords: finish(attach(r.a, routed.coords, r.b, r.anchored), 3), snapped: true };
+      }
+    }
   }
   counts.fallback++;
   const [from, to] = curveEnds(r);

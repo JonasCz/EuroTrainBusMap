@@ -371,6 +371,30 @@ h2:focus {
   padding: 0 18px 8px;
   color: var(--muted);
   font-size: 12.5px;
+  line-height: 1.9;
+}
+/* a station of the selected city: tap to see only its departures */
+.station-pick {
+  display: inline-block;
+  margin: 0 2px 0 0;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+.station-pick:hover {
+  background: rgba(127, 127, 127, 0.14);
+}
+.station-pick.is-current {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface);
+  font-weight: 600;
 }
 
 /* destination list */

@@ -51,6 +51,12 @@ describe("stop name mapping", () => {
     expect(applyStopNames(m, sp, stationOf, st).missing).toEqual([]);
     expect([...stationOf]).toEqual([0]);
   });
+  it("matches merge targets that carry a raw id against the sanitised station name", () => {
+    const st = [{ name: "Roma Anagnina (Metro A)", lon: 12.58, lat: 41.84, city: 0, rail: false }];
+    const sp = [{ key: "a:1", altKey: "~a@0,0", lon: 12.58, lat: 41.84 }];
+    const m: StopNamesFile = { version: 1, entries: { "a:1": { action: "merge", station: "ROMA | Anagnina (Metro A) # f3582" } } };
+    expect(applyStopNames(m, sp, Int32Array.from([3]), st).missing).toEqual([]);
+  });
   it("does not rename rail stations", () => {
     const stationOf = Int32Array.from([0, 2, 1]);
     const r = applyStopNames(mapping, stops, stationOf, stations);

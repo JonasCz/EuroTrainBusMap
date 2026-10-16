@@ -28,6 +28,7 @@ async function main(): Promise<void> {
     manifest.mapdata.tiles,
     {
       onCity: (id) => app?.clickCity(id),
+      onStation: (id, city, name) => app?.clickStation(id, city, name),
       onBackground: () => app?.background(),
     },
     padding,

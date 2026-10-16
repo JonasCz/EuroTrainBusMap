@@ -4,8 +4,7 @@
  *   core.json            CoreFile     – cities (+ timezones, tile index); everything the app needs to start
  *   stations.json        StationsFile – station names/coords/cats (lazy, needed once a city is selected)
  *   tiles/{z}/{x}/{y}.pbf.gz          – gzipped Mapbox vector tiles of the drawn network
- *                                       (layers seg, city; at the max zoom also term, st, cx, lk:
- *                                       station complex outlines and the links inside them)
+ *                                       (layers seg, city; at the max zoom also st = stations)
  *   geo/<shard>.json / geo/c<city>.json GeoFile – corridors (+ segment geometry) referenced by the
  *                                       patterns of one timetable shard, for highlighting a selection
  *
@@ -13,22 +12,21 @@
  * ETL (writer) and the web app (reader) share one definition.
  */
 import { decodePolyline, encodePolyline, packCities, packStations, unpackCities, unpackStations, type PackedNetwork } from "./pack.ts";
-import type { CatBit, City, Corridor, Link, Segment, Station } from "./schema.ts";
-import { cityComplexes, complexGeometry } from "./complex.ts";
+import type { CatBit, City, Corridor, Segment, Station } from "./schema.ts";
 import type * as GeoJSON from "geojson";
 import { Cat } from "./schema.ts";
 import { promoteSparse } from "./density.ts";
 import { lineGroups, smoothLevels } from "./lines.ts";
 import { LEVELS, LONG_HOP_ZOOM, catWidth, cityTierZoom, corridorMinZoom, haversineKm, isLongHop, levelIndex, stationLevel } from "./lod.ts";
 
-export const MAPDATA_VERSION = 4;
+export const MAPDATA_VERSION = 5;
 export const CAT_BITS = [Cat.LongDistance, Cat.Regional, Cat.Coach, Cat.Bus] as const;
 /**
  * Vector tiles: zoom range (tileSize 512) and source-layer names. Tiles at the max zoom hold the full
  * stored geometry (8192 units ≈ 6 m at z9, 50° N); the map overzooms them to its max zoom.
  */
 export const TILE_MAXZOOM = 9;
-export const TILE_LAYERS = { seg: "seg", term: "term", city: "city", station: "st", complex: "cx", link: "lk" } as const;
+export const TILE_LAYERS = { seg: "seg", city: "city", station: "st" } as const;
 
 export type Pos = [number, number];
 
@@ -66,37 +64,8 @@ export function ensureSegments(n: { corridors: Corridor[]; segments?: Segment[] 
 export interface NetIndex {
   /** per segment: longest corridor (km, straight line) using it */
   segLen: Float32Array;
-  /** per segment: lead-in between a city point and the stations of every corridor using it */
-  segTerm: Uint8Array;
-  /** per corridor: index (in segs) of the segment closest to its station at the a / b end */
-  cutA: Int32Array;
-  cutB: Int32Array;
   /** per segment × CAT_BITS index: earliest LOD level of the corridors using it */
   segLevel: Int8Array;
-}
-
-/** Segment indices (in c.segs) where the corridor passes closest to its stations. */
-export function cutIndices(net: MapNet, c: Corridor): [number, number] {
-  const segs = c.segs ?? [];
-  const n = segs.length;
-  if (n <= 1) return [0, Math.max(0, n - 1)];
-  const best = (stId: number | undefined, from: number, to: number, dflt: number) => {
-    const st = stId !== undefined ? net.stations[stId] : undefined;
-    if (!st) return dflt;
-    const p: Pos = [st.lon, st.lat];
-    let bi = dflt, bd = Infinity;
-    for (let i = from; i <= to; i++) {
-      for (const q of net.segments[segId(segs[i]!)]?.coords ?? []) {
-        const d = d2(q, p);
-        if (d < bd) [bi, bd] = [i, d];
-      }
-    }
-    return bi;
-  };
-  const half = Math.floor((n - 1) / 2);
-  const ka = best(c.sa, 0, half, 0);
-  const kb = best(c.sb, Math.max(ka, n - 1 - half), n - 1, n - 1);
-  return [ka, Math.max(ka, kb)];
 }
 
 export interface NetIndexOptions {
@@ -111,8 +80,6 @@ export function buildNetIndex(net: MapNet, opts: NetIndexOptions = {}): NetIndex
   const nC = net.corridors.length;
   const nS = net.segments.length;
   const segLen = new Float32Array(nS);
-  const segTerm = new Uint8Array(nS).fill(255);
-  const cutA = new Int32Array(nC), cutB = new Int32Array(nC);
   const NC = CAT_BITS.length;
   const segLevel = new Int8Array(nS * NC).fill(127);
   // corridor × cat level (base rules), and corridor length
@@ -122,8 +89,8 @@ export function buildNetIndex(net: MapNet, opts: NetIndexOptions = {}): NetIndex
   for (const c of net.corridors) {
     if (!c) continue;
     const co = c.coords?.length ? c.coords : null;
-    const ca = net.cities[c.a]!, cb = net.cities[c.b]!;
-    const len = co ? haversineKm(co[0]!, co[co.length - 1]!) : haversineKm([ca.lon, ca.lat], [cb.lon, cb.lat]);
+    const sa = net.stations[c.a], sb = net.stations[c.b];
+    const len = co ? haversineKm(co[0]!, co[co.length - 1]!) : sa && sb ? haversineKm([sa.lon, sa.lat], [sb.lon, sb.lat]) : 0;
     corLen[c.id] = len;
     CAT_BITS.forEach((k, i) => {
       if (!(c.cats & k)) return;
@@ -153,58 +120,13 @@ export function buildNetIndex(net: MapNet, opts: NetIndexOptions = {}): NetIndex
   for (const c of net.corridors) {
     if (!c) continue;
     const len = corLen[c.id]!;
-    const segs = c.segs ?? [];
-    const [ka, kb] = cutIndices(net, c);
-    cutA[c.id] = ka;
-    cutB[c.id] = kb;
-    segs.forEach((code, i) => {
+    for (const code of c.segs ?? []) {
       const s = segId(code);
       for (let k = 0; k < NC; k++) if (corLevel[c.id * NC + k]! < segLevel[s * NC + k]!) segLevel[s * NC + k] = corLevel[c.id * NC + k]!;
       if (len > segLen[s]!) segLen[s] = len;
-      if (i > ka && i < kb) segTerm[s] = 0;
-      else if (segTerm[s] === 255) segTerm[s] = 1;
-    });
+    }
   }
-  for (let i = 0; i < nS; i++) if (segTerm[i] === 255) segTerm[i] = 0;
-  return { segLen, segTerm, cutA, cutB, segLevel };
-}
-
-/**
- * End piece of a corridor at station zoom: the segment at cut index `k`
- * (cutA for end "a", cutB for "b"), cut at the closest approach to the
- * corridor's station and joined to it, in the segment's own orientation.
- */
-export function terminalGeometry(
-  segCoords: (sid: number) => Pos[] | undefined,
-  stationOf: (id: number) => Station | undefined,
-  c: Corridor,
-  ka: number,
-  kb: number,
-  end: "a" | "b",
-): { sid: number; coords: Pos[] } | null {
-  const segs = c.segs;
-  if (!segs?.length) return null;
-  if (end === "b" && ka === kb) return null; // one piece cut at both ends (returned for "a")
-  const code = segs[end === "a" ? ka : kb]!;
-  const sid = segId(code);
-  const co = segCoords(sid);
-  if (!co || co.length < 2) return null;
-  let p: Pos[] = code >= 0 ? [...co] : [...co].reverse();
-  const station = (id: number | undefined): Pos | null => {
-    const st = id !== undefined ? stationOf(id) : undefined;
-    return st ? [st.lon, st.lat] : null;
-  };
-  const nearest = (q: Pos) => {
-    let best = 0;
-    for (let i = 1; i < p.length; i++) if (d2(p[i]!, q) < d2(p[best]!, q)) best = i;
-    return best;
-  };
-  const sa = end === "a" ? station(c.sa) : null;
-  const sb = end === "b" || ka === kb ? station(c.sb) : null;
-  if (sa) p = [sa, ...p.slice(Math.min(nearest(sa), p.length - 1))];
-  if (sb) p = [...p.slice(0, Math.max(nearest(sb), 1) + 1), sb];
-  if (code < 0) p.reverse();
-  return { sid, coords: p };
+  return { segLen, segLevel };
 }
 
 // ---------------------------------------------------------------- tile features
@@ -218,7 +140,7 @@ export function segmentProps(net: MapNet, idx: NetIndex, s: Segment): Record<str
   if (!s.cats || s.coords.length < 2) return null;
   const len = idx.segLen[s.id]!;
   const hop = isLongHop(len, s.snapped);
-  const props: Record<string, number> = { sid: s.id, k: 0, u: s.snapped ? 0 : 1, term: idx.segTerm[s.id]!, hop: hop ? 1 : 0 };
+  const props: Record<string, number> = { sid: s.id, k: 0, u: s.snapped ? 0 : 1, hop: hop ? 1 : 0 };
   CAT_BITS.forEach((k, i) => {
     if (!(s.cats & k)) return;
     const tpd = s.tpd[k] ?? 0;
@@ -251,7 +173,10 @@ export function cityProps(net: MapNet, idx: NetIndex, segProps: (Record<string, 
   const midLevel = levelIndex(7.5);
   for (const c of net.corridors) {
     if (!c?.segs?.length) continue;
-    for (const [city, code] of [[c.a, c.segs[0]!], [c.b, c.segs[c.segs.length - 1]!]] as const) {
+    // a corridor ends at two stations: its first / last piece belongs to the city of that station
+    for (const [station, code] of [[c.a, c.segs[0]!], [c.b, c.segs[c.segs.length - 1]!]] as const) {
+      const city = net.stations[station]?.city;
+      if (city === undefined) continue;
       const p = segProps[segId(code)];
       if (!p) continue;
       let w = 0;
@@ -328,37 +253,6 @@ export function stationProps(c: City, s: Station, rank: number): Record<string, 
   return { id: s.id, name: shortStationName(s.name, c.name), city: s.city, lz, rail: s.cats & (Cat.LongDistance | Cat.Regional) ? 1 : 0, major: lz === 0 ? 1 : 0, rank: rank + (lz === 0 ? 0 : 100) };
 }
 
-/** Station complex outlines (layer `cx`): city, `zi` = STATION_LEVELS index it is shown from, `lv` 0 = whole city, 1 = cluster of a big city. */
-export function complexFeatures(net: MapNet & { links?: Link[] }): { properties: Record<string, number>; geometry: ReturnType<typeof complexGeometry> }[] {
-  const out: { properties: Record<string, number>; geometry: ReturnType<typeof complexGeometry> }[] = [];
-  const linksOf = new Map<number, Link[]>();
-  for (const l of net.links ?? []) (linksOf.get(l.city) ?? linksOf.set(l.city, []).get(l.city)!).push(l);
-  for (const c of net.cities) {
-    for (const cx of cityComplexes(c, net.stations)) {
-      const pts = cx.members.map((m) => [net.stations[m]!.lon, net.stations[m]!.lat] as Pos);
-      // the outline also covers the track / road of the links inside the complex
-      const set = new Set(cx.members);
-      for (const l of linksOf.get(c.id) ?? []) if (set.has(l.a) && set.has(l.b)) pts.push(...l.coords);
-      const geometry = complexGeometry(pts);
-      if (geometry) out.push({ properties: { city: c.id, zi: cx.zi, lv: cx.level }, geometry });
-    }
-  }
-  return out;
-}
-
-/** Link lines (layer `lk`): dominant category `c`, width unit `w`, `zi` = STATION_LEVELS index of the later of its two stations. */
-export function linkProps(net: MapNet, l: Link, cxZi?: number): Record<string, number> | null {
-  const sa = net.stations[l.a], sb = net.stations[l.b];
-  const city = net.cities[l.city];
-  if (!sa || !sb || !city) return null;
-  const rank = (id: number) => city.stations.indexOf(id);
-  // inside a whole-city complex the links come with the outline; else when both stations are drawn
-  const zi = cxZi ?? Math.max(stationLevel(sa.cats, rank(l.a)), stationLevel(sb.cats, rank(l.b)));
-  const c = CAT_BITS.find((k) => l.cats & k) ?? Cat.Bus;
-  const w = catWidth(c, l.tpd[c] ?? 0, l.snapped);
-  return { city: l.city, c, w: Math.round(w * 2) / 2, zi: Math.min(zi, 1), u: l.snapped ? 0 : 1 };
-}
-
 // ---------------------------------------------------------------- core / stations files
 
 export interface TileIndex {
@@ -425,15 +319,9 @@ export interface GeoFile {
     /** trips/day × 10 for Cat bits 1, 2, 4, 8 */
     tpd: [number[], number[], number[], number[]];
     snapped: number[];
-    /** station ids (−1 = none) */
-    sa: number[];
-    sb: number[];
     /** number of segment codes per corridor; codes zigzag-delta-encoded across corridors */
     segN: number[];
     segs: number[];
-    /** NetIndex.cutA / cutB */
-    cutA: number[];
-    cutB: number[];
   };
   segments: {
     /** delta-encoded sorted segment ids */
@@ -464,7 +352,6 @@ export interface GeoFile {
 export interface GeoData {
   stations: Station[];
   corridors: Corridor[];
-  cut: Map<number, [number, number]>;
   segments: Map<number, { coords: Pos[]; snapped: boolean; hop: boolean }>;
 }
 
@@ -475,7 +362,7 @@ export function packGeo(net: MapNet, idx: NetIndex, corridorIds: Iterable<number
   const ids = [...new Set(corridorIds)].filter((id) => net.corridors[id]).sort((x, y) => x - y);
   const f: GeoFile = {
     mapdata: MAPDATA_VERSION,
-    corridors: { id: [], a: [], b: [], cats: [], tpd: [[], [], [], []], snapped: [], sa: [], sb: [], segN: [], segs: [], cutA: [], cutB: [] },
+    corridors: { id: [], a: [], b: [], cats: [], tpd: [[], [], [], []], snapped: [], segN: [], segs: [] },
     segments: { id: [], poly: [], flags: [] },
     stations: { id: [], name: [], lon: [], lat: [], cats: [], tpd: [] },
   };
@@ -509,8 +396,6 @@ export function packGeo(net: MapNet, idx: NetIndex, corridorIds: Iterable<number
     k.cats.push(c.cats);
     CAT_BITS.forEach((cat, i) => k.tpd[i]!.push(Math.round((c.tpd[cat] ?? 0) * 10)));
     k.snapped.push(c.snapped ? 1 : 0);
-    k.sa.push(c.sa ?? -1);
-    k.sb.push(c.sb ?? -1);
     const segs = c.segs ?? [];
     k.segN.push(segs.length);
     for (const code of segs) {
@@ -519,8 +404,6 @@ export function packGeo(net: MapNet, idx: NetIndex, corridorIds: Iterable<number
       prevCode = u;
       segIds.add(segId(code));
     }
-    k.cutA.push(idx.cutA[id]!);
-    k.cutB.push(idx.cutB[id]!);
   }
   const ref = { lat: 0, lon: 0 };
   let prevS = 0;
@@ -557,7 +440,6 @@ export function unpackGeo(f: GeoFile, cityOf: (station: number) => City | undefi
     });
   });
   const corridors: Corridor[] = [];
-  const cut = new Map<number, [number, number]>();
   const k = f.corridors;
   let id = 0, prevCode = 0, pos = 0;
   for (let i = 0; i < k.id.length; i++) {
@@ -573,10 +455,7 @@ export function unpackGeo(f: GeoFile, cityOf: (station: number) => City | undefi
       segs.push(prevCode & 1 ? -((prevCode - 1) / 2) - 1 : prevCode / 2);
     }
     const c: Corridor = { id, a: k.a[i]!, b: k.b[i]!, coords: [], cats: k.cats[i]!, tpd, snapped: k.snapped[i] === 1, segs };
-    if (k.sa[i]! >= 0) c.sa = k.sa[i];
-    if (k.sb[i]! >= 0) c.sb = k.sb[i];
     corridors.push(c);
-    cut.set(id, [k.cutA[i]!, k.cutB[i]!]);
   }
   const segments: GeoData["segments"] = new Map();
   const ref = { lat: 0, lon: 0 };
@@ -586,7 +465,7 @@ export function unpackGeo(f: GeoFile, cityOf: (station: number) => City | undefi
     const fl = f.segments.flags[i]!;
     segments.set(gid, { coords: decodePolyline(f.segments.poly[i]!, ref), snapped: (fl & 1) === 1, hop: (fl & 2) === 2 });
   });
-  return { stations, corridors, cut, segments };
+  return { stations, corridors, segments };
 }
 
 /**

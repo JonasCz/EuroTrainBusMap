@@ -3,7 +3,7 @@
  * calendar horizon, respecting filters.
  */
 import type { CityFile } from "@etbm/shared";
-import { prepare, type NetCtx } from "./context.ts";
+import { prepare, stopAt, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
 
 export interface ReachDest {
@@ -21,7 +21,11 @@ export interface Reach {
   corridors: Map<number, number>;
 }
 
-export function computeReach(cf: CityFile, ctx: NetCtx, f: Filters): Reach {
+/**
+ * Direct destinations of a city, or – with `originStation` – of that one station of the city only
+ * (its trips board there; the other stations of the city are not used).
+ */
+export function computeReach(cf: CityFile, ctx: NetCtx, f: Filters, originStation?: number): Reach {
   const prep = prepare(cf, ctx);
   const dests = new Map<number, ReachDest>();
   const corridors = new Map<number, number>();
@@ -33,7 +37,13 @@ export function computeReach(cf: CityFile, ctx: NetCtx, f: Filters): Reach {
     const segs = prep.segments[pi]!;
     segs.forEach((sa, si) => {
       if (sa.city !== cf.city || si === segs.length - 1) return;
-      const depMin = p.dep[sa.last]!;
+      // boarding stop: the station chosen, else any stop of the city's run (corridors from its first stop on; the fastest time from its last)
+      let first = sa.first, last = sa.last;
+      if (originStation !== undefined) {
+        first = last = stopAt(p, sa, originStation);
+        if (first < 0) return;
+      }
+      const depMin = p.dep[last]!;
       for (let sj = si + 1; sj < segs.length; sj++) {
         const sb = segs[sj]!;
         if (sb.city === cf.city) break; // pattern loops back: stop here
@@ -44,8 +54,11 @@ export function computeReach(cf: CityFile, ctx: NetCtx, f: Filters): Reach {
           d.minutes = Math.min(d.minutes, min);
           d.cats |= route.cat;
         }
-        const c = p.corridors[sj - 1];
-        if (c !== undefined) corridors.set(c, (corridors.get(c) ?? 0) | route.cat);
+        // every hop from the boarding stop to the first stop in the destination city
+        for (let k = first; k < sb.first; k++) {
+          const c = p.corridors[k];
+          if (c !== undefined && c >= 0) corridors.set(c, (corridors.get(c) ?? 0) | route.cat);
+        }
       }
     });
   });

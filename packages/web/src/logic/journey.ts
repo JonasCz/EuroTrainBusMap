@@ -33,8 +33,6 @@ export function resolveLeg(cf: CityFile, ctx: NetCtx, leg: Leg): LegInfo | null 
   if (!p || leg.board >= leg.alight || leg.alight >= p.stations.length) return null;
   const prep = prepare(cf, ctx);
   const tz = prep.tz[t[0]]!;
-  const segs = prep.segments[t[0]]!;
-  const segOf = (i: number) => segs.findIndex((s) => i >= s.first && i <= s.last);
   const from = ctx.stationCity[p.stations[leg.board]!]!;
   if (from !== leg.from) return null;
   const route = cf.routes[p.route]!;
@@ -48,7 +46,7 @@ export function resolveLeg(cf: CityFile, ctx: NetCtx, leg: Leg): LegInfo | null 
     route,
     ...(t[3] !== undefined ? { number: t[3] } : {}),
     headsign: p.headsign,
-    corridors: p.corridors.slice(segOf(leg.board), segOf(leg.alight)),
+    corridors: p.corridors.slice(leg.board, leg.alight),
   };
 }
 

@@ -7,6 +7,8 @@ import { decodeLegs, encodeLegs, type Leg } from "../logic/journey.ts";
 
 export interface AppState {
   city?: number;
+  /** Origin narrowed to one station of `city` (slug of its short name, see stationSlug); unset = the whole city. */
+  station?: string;
   dest?: number;
   /** Selected date (origin-local), undefined = today. */
   date?: string;
@@ -19,11 +21,13 @@ export function parseHash(net: Net, hash: string): AppState {
   const q = new URLSearchParams(hash.replace(/^#/, ""));
   const city = cityByRef(net, q.get("from"));
   const dest = city !== undefined ? cityByRef(net, q.get("to")) : undefined;
+  const station = city !== undefined ? q.get("station") : null;
   const date = q.get("date");
   const f = q.get("modes");
   const legs = city !== undefined && dest !== undefined ? decodeLegs(q.get("legs"), city) : [];
   return {
     ...(city !== undefined ? { city } : {}),
+    ...(station && /^[a-z0-9-]{1,80}$/.test(station) ? { station } : {}),
     ...(dest !== undefined && dest !== city ? { dest } : {}),
     ...(isValidDate(date) ? { date } : {}),
     filters: { cats: f === null ? ALL_CATS : decodeCats(f) },
@@ -34,6 +38,7 @@ export function parseHash(net: Net, hash: string): AppState {
 export function toHash(net: Net, s: AppState): string {
   const q: string[] = [];
   if (s.city !== undefined) q.push(`from=${net.slug[s.city]}`);
+  if (s.city !== undefined && s.station) q.push(`station=${s.station}`);
   if (s.city !== undefined && s.dest !== undefined) q.push(`to=${net.slug[s.dest]}`);
   if (s.date && s.city !== undefined) q.push(`date=${s.date}`);
   if (s.legs.length && s.dest !== undefined) q.push(`legs=${encodeLegs(s.legs)}`);

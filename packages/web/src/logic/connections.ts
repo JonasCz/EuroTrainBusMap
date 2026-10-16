@@ -22,7 +22,7 @@ export interface OnwardStop {
   city: number;
   station: number;
   arrUtc: number;
-  /** corridors from the boarding city to this stop */
+  /** corridors from the boarding stop to this stop */
   corridors: number[];
   /** Set when the stop comes from another trip of a merged row (split train): ride that one. */
   via?: { trip: number; serviceDate: string; board: number };
@@ -115,7 +115,7 @@ export function connections(cf: CityFile, ctx: NetCtx, f: Filters, arrival: Arri
               city: s.city,
               station: p.stations[i]!,
               arrUtc: serviceTimeToUtc(svc, start + p.arr[i]!, tz),
-              corridors: p.corridors.slice(si, sj),
+              corridors: p.corridors.slice(chosen.stop, i),
             });
           }
           if (!stops.length) continue;

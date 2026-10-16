@@ -1,10 +1,11 @@
 /**
- * "Lines" for the level of detail: a corridor is one hop between two consecutive cities, and
+ * "Lines" for the level of detail: a corridor is one hop between two consecutive stations, and
  * different patterns of one route (all stops / skipping stops) give its hops different traffic,
  * hence different LOD levels - a route would be revealed piece by piece. Per category, hops are
- * therefore grouped into chains: corridors meeting in a city where exactly two corridors of that
+ * therefore grouped into chains: corridors meeting in a station where exactly two corridors of that
  * category meet belong to the same chain; chains end at junctions (3+ corridors) and at dead
  * ends. A chain gets the earliest level of its members, so it appears as a whole.
+ * (`a` / `b` are plain node ids: stations.)
  */
 
 /**
@@ -27,7 +28,7 @@ export function lineGroups(
     return x;
   };
   for (let k = 0; k < NC; k++) {
-    // corridors of this category per city
+    // corridors of this category per node (station)
     const at = new Map<number, number[]>();
     for (let c = 0; c < corridors.length; c++) {
       const cr = corridors[c];

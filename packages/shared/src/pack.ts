@@ -37,7 +37,7 @@ export interface PackedNetwork {
     tpd?: number[];
   };
   corridors: {
-    /** Delta-encoded city a (corridors are sorted by a). */
+    /** Delta-encoded station a (corridors are sorted by a). */
     a: number[];
     /** b − a */
     db: number[];
@@ -45,9 +45,6 @@ export interface PackedNetwork {
     /** Trips per day × 10 (integers) for Cat bits 1, 2, 4, 8. */
     tpd: [number[], number[], number[], number[]];
     snapped: number[];
-    /** Index of the station within city a's / b's station list, or −1. */
-    sa: number[];
-    sb: number[];
     /** Google encoded polyline (precision 5) from a to b; v2: only for corridors without segments (segN 0), in order. */
     poly: string[];
     /**
@@ -231,10 +228,9 @@ export function packNetwork(n: Pick<NetworkFile, "cities" | "stations" | "corrid
     countries,
     cities,
     stations: packStations(n.cities, n.stations),
-    corridors: { a: [], db: [], cats: [], tpd: [[], [], [], []], snapped: [], sa: [], sb: [], poly: [] },
+    corridors: { a: [], db: [], cats: [], tpd: [[], [], [], []], snapped: [], poly: [] },
   };
   let pa = 0, prevCode = 0;
-  const first = (city: number) => n.cities[city]!.stations[0] ?? 0;
   for (const co of n.corridors) {
     p.corridors.a.push(co.a - pa);
     pa = co.a;
@@ -242,8 +238,6 @@ export function packNetwork(n: Pick<NetworkFile, "cities" | "stations" | "corrid
     p.corridors.cats.push(co.cats);
     CATS.forEach((cat, k) => p.corridors.tpd[k]!.push(Math.round((co.tpd[cat] ?? 0) * 10)));
     p.corridors.snapped.push(co.snapped ? 1 : 0);
-    p.corridors.sa.push(co.sa != null ? co.sa - first(co.a) : -1);
-    p.corridors.sb.push(co.sb != null ? co.sb - first(co.b) : -1);
     if (n.segments && co.segs) {
       (p.corridors.segN ??= []).push(co.segs.length);
       for (const c of co.segs) {
@@ -326,8 +320,6 @@ export function unpackNetwork(p: PackedNetwork): { cities: City[]; stations: Sta
       tpd,
       snapped: pk.snapped[i] === 1,
     };
-    if (pk.sa[i]! >= 0) co.sa = cities[a]!.stations[0]! + pk.sa[i]!;
-    if (pk.sb[i]! >= 0) co.sb = cities[b]!.stations[0]! + pk.sb[i]!;
     if (segs) co.segs = segs;
     corridors.push(co);
   }

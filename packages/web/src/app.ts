@@ -1,14 +1,15 @@
 /** Application controller: state → data → map highlight + panel. */
 import type { CityFile } from "@etbm/shared";
 import { loadCity } from "./data/load.ts";
-import { cityTz, ensureDetail, type Net } from "./data/net.ts";
+import { cityTz, ensureDetail, stationBySlug, stationName, stationSlug, type Net } from "./data/net.ts";
 import { addDays, inHorizon } from "./logic/calendar.ts";
 import { connections, type Connection, type OnwardStop } from "./logic/connections.ts";
 import { sameFilters, type Filters } from "./logic/filters.ts";
 import { resolveLeg, type Leg, type LegInfo } from "./logic/journey.ts";
 import { computeReach } from "./logic/reach.ts";
-import { nextServiceDates, pairCorridors, timetable, type Departure } from "./logic/timetable.ts";
+import { nextServiceDates, pairCandidates, pairCorridors, timetable, type Departure } from "./logic/timetable.ts";
 import { localDate } from "./logic/tz.ts";
+import { STATION_ZOOM } from "./map/lod.ts";
 import type { MapView, Highlight } from "./map/mapview.ts";
 import { Panel, type View } from "./ui/panel.ts";
 import { parseHash, toHash, type AppState } from "./ui/state.ts";
@@ -43,8 +44,11 @@ export class App {
   set(patch: Partial<AppState>, opts: { replace?: boolean } = {}): void {
     const next: AppState = { ...this.state, ...patch };
     for (const k of Object.keys(patch) as (keyof AppState)[]) if (patch[k] === undefined) delete next[k];
+    // a station belongs to its city: another origin city (or none) drops it, unless the patch names one
+    if (patch.city !== this.state.city && !("station" in patch)) delete next.station;
     if (next.city === undefined) {
       delete next.dest;
+      delete next.station;
       next.legs = [];
     }
     if (next.dest === undefined) next.legs = [];
@@ -70,14 +74,30 @@ export class App {
     else this.set({ dest: id, legs: [] });
   }
 
+  /**
+   * A station was clicked (station zoom). With no selection it becomes the origin: the reach is that
+   * one station's, the whole city's stations stay highlighted around it. Inside the origin city it
+   * switches (or, clicked again, drops) the origin station; elsewhere it is a destination, like its city.
+   */
+  clickStation(id: number, city: number, name: string): void {
+    const s = this.state;
+    const c = this.net.cities[city];
+    if (!c) return;
+    const slug = stationSlug(c.name, name);
+    if (s.city === undefined) this.set({ city, station: slug, dest: undefined, legs: [] });
+    else if (city === s.city) this.set({ station: s.station === slug ? undefined : slug, legs: [] });
+    else this.clickCity(city);
+  }
+
   background(): void {
-    if (this.state.city !== undefined) this.set({ city: undefined, dest: undefined, legs: [], date: undefined });
+    if (this.state.city !== undefined) this.set({ city: undefined, station: undefined, dest: undefined, legs: [], date: undefined });
   }
 
   back(): void {
     const s = this.state;
     if (s.legs.length) this.set({ legs: s.legs.slice(0, -1) });
     else if (s.dest !== undefined) this.set({ dest: undefined });
+    else if (s.station !== undefined) this.set({ station: undefined });
     else if (s.city !== undefined) this.set({ city: undefined, date: undefined });
   }
 
@@ -118,22 +138,31 @@ export class App {
       return;
     }
     if (stale()) return;
+    // the origin station (URL: slug of its name) is known once the city's geo file is loaded
+    const originStation = s.station !== undefined ? stationBySlug(net, origin, s.station) : undefined;
+    if (s.station !== undefined && originStation === undefined) {
+      this.set({ station: undefined }, { replace: true }); // unknown station: the whole city
+      return;
+    }
 
-    // ---- one city: reachable destinations
+    // ---- one city (or one station of it): reachable destinations
     if (s.dest === undefined) {
       const tReach = performance.now();
-      const reach = computeReach(cf, net.ctx, s.filters);
+      const reach = computeReach(cf, net.ctx, s.filters, originStation);
       if (import.meta.env.DEV) console.debug(`[perf] reach ${reach.dests.size} dests ${Math.round(performance.now() - tReach)} ms`);
       const focus = new Set([origin, ...reach.dests.keys()]);
       // panel first (the list is what the user waits for), then the map highlight
-      document.title = `${originName} – EuroTrainBusMap`;
-      this.panel.show({ kind: "reach", city: origin, reach });
+      const label = originStation !== undefined ? `${stationName(net, originStation)}` : originName;
+      document.title = `${label} – EuroTrainBusMap`;
+      this.panel.show({ kind: "reach", city: origin, ...(originStation !== undefined ? { station: originStation } : {}), reach });
       await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
       if (stale()) return;
-      await this.map.setHighlight({ emphasis: { focus, active: true, origin }, corridors: reach.corridors });
+      await this.map.setHighlight({ emphasis: { focus, active: true, origin, ...(originStation !== undefined ? { originStation } : {}) }, corridors: reach.corridors });
       // frame the origin and its most important destinations (not every bus stop)
       const top = [...reach.dests.keys()].sort((a, b) => net.cities[b]!.importance - net.cities[a]!.importance).slice(0, 25);
-      this.frame([origin, ...top], `r${origin}`);
+      // a station picked at station zoom keeps the view (the panel lists its destinations); a city fits its destinations
+      if (originStation !== undefined && this.map.map.getZoom() >= STATION_ZOOM) this.lastFocusKey = `r${origin}`;
+      else this.frame([origin, ...top], `r${origin}`);
       return;
     }
 
@@ -142,14 +171,19 @@ export class App {
 
     // ---- pair timetable
     if (!s.legs.length) {
-      const deps = timetable(cf, net.ctx, s.filters, dest, date);
-      const corridors = pairCorridors(cf, net.ctx, s.filters, dest);
-      const next = deps.length ? [] : nextServiceDates(cf, net.ctx, s.filters, dest, date);
-      await this.map.setHighlight({ emphasis: { focus: this.withCorridorEnds(new Set([origin, dest]), corridors), active: true, origin, dest }, corridors });
-      document.title = `${originName} → ${net.cities[dest]!.name} – EuroTrainBusMap`;
+      const deps = timetable(cf, net.ctx, s.filters, dest, date, pairCandidates(cf, net.ctx, s.filters, dest, originStation));
+      const corridors = pairCorridors(cf, net.ctx, s.filters, dest, originStation);
+      const next = deps.length ? [] : nextServiceDates(cf, net.ctx, s.filters, dest, date, 5, originStation);
+      await this.map.setHighlight({
+        emphasis: { focus: this.withCorridorEnds(new Set([origin, dest]), corridors), active: true, origin, dest, ...(originStation !== undefined ? { originStation } : {}) },
+        corridors,
+      });
+      const fromName = originStation !== undefined ? stationName(net, originStation) : originName;
+      document.title = `${fromName} → ${net.cities[dest]!.name} – EuroTrainBusMap`;
       this.panel.show({
         kind: "timetable",
         city: origin,
+        ...(originStation !== undefined ? { station: originStation } : {}),
         dest,
         date,
         today: this.today(origin),
@@ -215,9 +249,14 @@ export class App {
   }
 
   private withCorridorEnds(focus: Set<number>, corridors: Map<number, number>): Set<number> {
+    // corridors join stations: their cities are emphasised too
     for (const cid of corridors.keys()) {
       const c = this.net.geo.corridors.get(cid);
-      if (c) focus.add(c.a).add(c.b);
+      if (!c) continue;
+      for (const st of [c.a, c.b]) {
+        const city = this.net.ctx.stationCity[st];
+        if (city !== undefined) focus.add(city);
+      }
     }
     return focus;
   }

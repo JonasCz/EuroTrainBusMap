@@ -5,7 +5,7 @@ import type * as GeoJSON from "geojson";
 import type { Net } from "../data/net.ts";
 import { DEFAULT_FILTERS, sameFilters, type Filters } from "../logic/filters.ts";
 import { focusCityData, highlightData, stationData, type Emphasis } from "./features.ts";
-import { CITY_LAYERS, COMPLEX_LAYERS, FOCUS_LAYERS, STATION_LAYERS, STATION_ZOOM, cityFilter, geojsonSources, networkLayers, type LayerState } from "./layers.ts";
+import { CITY_AREA_LAYER, CITY_LAYERS, FOCUS_LAYERS, STATION_LAYERS, STATION_ZOOM, cityFilter, geojsonSources, networkLayers, type LayerState } from "./layers.ts";
 import { prefetchBasemapIndex, registerBasemapProtocol } from "./basemap.ts";
 import { prefetchGz, registerGzProtocol } from "./protocol.ts";
 import { baseLayers, baseStyle, glyphPrefetchUrls } from "./style.ts";
@@ -21,7 +21,10 @@ export interface Padding {
 }
 
 export interface MapCallbacks {
+  /** A city (zoomed out: its dot or label, or its name over the stations) was clicked. */
   onCity(id: number): void;
+  /** A station (station zoom: its dot or label) was clicked. `name` is its map label. */
+  onStation(id: number, city: number, name: string): void;
   onBackground(): void;
   onMove?(): void;
 }
@@ -129,8 +132,9 @@ export class MapView {
     };
     this.map.on("sourcedata", onData);
     this.map.on("click", (e) => {
-      const id = this.cityAt(e.point);
-      if (id !== null) cb.onCity(id);
+      const hit = this.hitAt(e.point);
+      if (hit?.kind === "station") cb.onStation(hit.id, hit.city, hit.name);
+      else if (hit) cb.onCity(hit.id);
       else cb.onBackground();
     });
     this.map.on("mousemove", (e) => {
@@ -184,20 +188,15 @@ export class MapView {
   // ---- interaction ------------------------------------------------------------
 
   private interactiveLayers(): string[] {
-    return [...CITY_LAYERS, ...FOCUS_LAYERS, ...STATION_LAYERS].filter((l) => this.map.getLayer(l));
+    return [...CITY_LAYERS, CITY_AREA_LAYER, ...FOCUS_LAYERS, ...STATION_LAYERS].filter((l) => this.map.getLayer(l));
   }
 
-  /** City under a screen point (with tolerance for touch). */
-  cityAt(p: maplibregl.Point): number | null {
+  /** City or station under a screen point (with tolerance for touch). */
+  hitAt(p: maplibregl.Point): { kind: "city"; id: number } | { kind: "station"; id: number; city: number; name: string } | null {
     const f = this.featureAt(p);
-    if (!f) {
-      // inside a station complex outline: its city
-      const layers = COMPLEX_LAYERS.filter((l) => this.map.getLayer(l));
-      const cx = layers.length ? this.map.queryRenderedFeatures(p, { layers })[0] : undefined;
-      return cx ? (cx.properties as Record<string, number>).city! : null;
-    }
-    const props = f.properties as Record<string, number>;
-    return isStation(f) ? props.city! : props.id!;
+    if (!f) return null;
+    const props = f.properties as Record<string, number | string>;
+    return isStation(f) ? { kind: "station", id: props.id as number, city: props.city as number, name: String(props.name ?? "") } : { kind: "city", id: props.id as number };
   }
 
   private featureAt(p: maplibregl.Point): MapGeoJSONFeature | null {
@@ -274,12 +273,12 @@ export class MapView {
     if (!net) return;
     const t0 = performance.now();
     const em = h.emphasis;
-    const d = highlightData(net.geo, net.file.stations, h.corridors);
+    const d = highlightData(net.geo, h.corridors);
     this.setData("hl-casing", d.casing);
     this.setData("hl", d.lines);
     this.setData("focus", focusCityData(net.cities, em));
     const sel = new Set([em.origin, em.dest].filter((x): x is number => x !== undefined));
-    this.setData("focus-stations", stationData(net.cities, net.file.stations, sel));
+    this.setData("focus-stations", stationData(net.cities, net.file.stations, sel, em.originStation));
     const next: LayerState = { ...this.state, dimmed: em.active, focus: [...em.focus], selected: [...sel] };
     const dimChanged = next.dimmed !== this.state.dimmed;
     this.state = next;

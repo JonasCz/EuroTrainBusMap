@@ -4,7 +4,7 @@ import { connections, transferMinutes } from "./connections.ts";
 import { ALL_CATS, decodeCats, encodeCats } from "./filters.ts";
 import { decodeLegs, encodeLegs, resolveLeg } from "./journey.ts";
 import { computeReach } from "./reach.ts";
-import { nextServiceDates, pairCorridors, timetable } from "./timetable.ts";
+import { nextServiceDates, pairCandidates, pairCorridors, timetable } from "./timetable.ts";
 import { fmtTime, wallToUtc } from "./tz.ts";
 import { alpha, calendars, ctx, network } from "./testdata.ts";
 import { buildCalIndex, encodeMask } from "./calendar.ts";
@@ -31,7 +31,7 @@ describe("reach", () => {
     expect(r.dests.get(2)!.minutes).toBe(590);
     expect(r.dests.get(4)!.minutes).toBe(30);
     expect(r.dests.has(3)).toBe(false); // Delta is upstream only
-    expect([...r.corridors.keys()].sort()).toEqual([10, 11, 13]); // never-running coach (14) excluded
+    expect([...r.corridors.keys()].sort()).toEqual([10, 11, 13, 9]); // 9 = Alpha Hbf → Alpha Süd inside the city; never-running coach (14) excluded
   });
   it("respects filters", () => {
     const r = computeReach(alpha, ctx, { cats: Cat.Regional });
@@ -39,6 +39,31 @@ describe("reach", () => {
     expect([...r.corridors]).toEqual([[13, Cat.Regional]]);
     const c = computeReach(alpha, ctx, { cats: Cat.Coach });
     expect([...c.dests.keys()]).toEqual([1]);
+  });
+});
+
+describe("reach from one station", () => {
+  it("only uses trips that board at the station", () => {
+    const sued = computeReach(alpha, ctx, all, 1); // Alpha Süd
+    expect([...sued.dests.keys()].sort()).toEqual([1, 2]);
+    expect(sued.dests.get(1)!.minutes).toBe(110);
+    expect([...sued.corridors.keys()].sort()).toEqual([10, 11]);
+    const hbf = computeReach(alpha, ctx, all, 0); // Alpha Hbf: ICE (not the coach from Süd), both REs
+    expect([...hbf.dests.keys()].sort()).toEqual([1, 2, 4]);
+    expect(hbf.dests.get(1)!.minutes).toBe(120);
+    expect(hbf.dests.get(1)!.cats).toBe(Cat.LongDistance);
+    expect([...hbf.corridors.keys()].sort()).toEqual([10, 13, 9, 11].sort());
+    expect(computeReach(alpha, ctx, all, 4).dests.size).toBe(0); // a station of another city
+  });
+  it("lists the departures of that station only", () => {
+    const hbf = timetable(alpha, ctx, all, 1, "2026-10-09", pairCandidates(alpha, ctx, all, 1, 0));
+    expect(hbf.map((d) => fmtTime(d.depUtc, BER))).toEqual(["10:00", "23:50"]);
+    expect(hbf[0]!.altBoard).toEqual([]); // no "also from Alpha Süd"
+    const sued = timetable(alpha, ctx, all, 1, "2026-10-09", pairCandidates(alpha, ctx, all, 1, 1));
+    expect(sued.map((d) => fmtTime(d.depUtc, BER))).toEqual(["10:10"]);
+    expect(sued[0]!.depStation).toBe(1);
+    expect([...pairCorridors(alpha, ctx, all, 1, 1).keys()]).toEqual([10]);
+    expect([...pairCorridors(alpha, ctx, all, 1, 0).keys()].sort((a, b) => a - b)).toEqual([9, 10]);
   });
 });
 
@@ -73,7 +98,8 @@ describe("timetable", () => {
     expect(nextServiceDates(alpha, ctx, all, 1, "2026-10-10", 2)).toEqual(["2026-10-11", "2026-10-12"]);
   });
   it("pair corridors", () => {
-    expect([...pairCorridors(alpha, ctx, all, 2)]).toEqual([[10, Cat.LongDistance], [11, Cat.LongDistance]]);
+    // the ride from Alpha Hbf: its first hop is inside Alpha (Hbf → Süd), then Beta and Gamma
+    expect([...pairCorridors(alpha, ctx, all, 2)]).toEqual([[9, Cat.LongDistance], [10, Cat.LongDistance], [11, Cat.LongDistance]]);
   });
 });
 
@@ -106,7 +132,7 @@ describe("journey", () => {
     const leg = { from: 0, trip: 0, date: "2026-10-10", board: 0, alight: 2 };
     const info = resolveLeg(alpha, ctx, leg)!;
     expect(info.to).toBe(1);
-    expect(info.corridors).toEqual([10]);
+    expect(info.corridors).toEqual([9, 10]);
     expect(fmtTime(info.arrUtc, "Europe/Prague")).toBe("12:00");
     const s = encodeLegs([leg]);
     expect(s).toBe("0.20261010.0.2");

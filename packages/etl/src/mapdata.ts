@@ -22,8 +22,6 @@ import {
   TILE_LAYERS,
   TILE_MAXZOOM,
   buildNetIndex,
-  complexFeatures,
-  linkProps,
   ensureSegments,
   mergeLines,
   cityMinZoom,
@@ -34,7 +32,6 @@ import {
   segmentMinZoom,
   segmentProps,
   stationProps,
-  terminalGeometry,
   type CityFile,
   type CityShardFile,
   type MapNet,
@@ -89,21 +86,6 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
     if (!p) return;
     segFeatures.push({ f: { type: "Feature", properties: tileProps(p), geometry: { type: "LineString", coordinates: s.coords } }, z: segmentMinZoom(p) });
   });
-  const termFeatures: Feature[] = [];
-  const doneTerm = new Set<string>();
-  for (const c of network.corridors) {
-    for (const end of ["a", "b"] as const) {
-      const t = terminalGeometry((sid) => segments[sid]?.coords, (id) => network.stations[id], c, idx.cutA[c.id]!, idx.cutB[c.id]!, end);
-      if (!t) continue;
-      const p = segProps[t.sid];
-      if (!p || p.hop) continue;
-      const st = end === "a" ? c.sa : c.sb;
-      const key = `${t.sid}:${st}`;
-      if (doneTerm.has(key)) continue;
-      doneTerm.add(key);
-      termFeatures.push({ type: "Feature", properties: tileProps(p), geometry: { type: "LineString", coordinates: t.coords } });
-    }
-  }
   const cityFeatures: { f: Feature; z: number }[] = [];
   cityProps(net, idx, segProps).forEach((p, i) => {
     if (!p) return;
@@ -117,16 +99,7 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
       stationFeatures.push({ type: "Feature", id: sid, properties: stationProps(c, s, rank), geometry: { type: "Point", coordinates: [s.lon, s.lat] } });
     });
   }
-  const cxFeatures: Feature[] = complexFeatures({ ...net, links: network.links }).map((x) => ({ type: "Feature", properties: x.properties, geometry: x.geometry as GeoJSON.Geometry }));
-  const linkFeatures: Feature[] = [];
-  const wholeCity = new Map<number, number>();
-  for (const f of cxFeatures) if (f.properties!.lv === 0) wholeCity.set(f.properties!.city as number, f.properties!.zi as number);
-  for (const l of network.links ?? []) {
-    const p = linkProps(net, l, wholeCity.get(l.city));
-    if (p && l.coords.length >= 2) linkFeatures.push({ type: "Feature", properties: p, geometry: { type: "LineString", coordinates: l.coords } });
-  }
-  log(`mapdata: ${cxFeatures.length} station complexes, ${linkFeatures.length} station links`);
-  log(`mapdata: ${segFeatures.length} segments, ${termFeatures.length} terminal pieces, ${cityFeatures.length} cities, ${stationFeatures.length} stations`);
+  log(`mapdata: ${segFeatures.length} segments, ${cityFeatures.length} cities, ${stationFeatures.length} stations`);
 
   // ---- vector tiles (tileSize 512: tile zoom z is shown from map zoom z to z+1, and overzoomed past TILE_MAXZOOM)
   const tileDir = join(buildDir, "tiles");
@@ -145,10 +118,7 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
       [TILE_LAYERS.city]: geojsonvt(fc(cityFeatures.filter((x) => last || x.z - CITY_LEAD - FADE_ZOOM < z + 1).map((x) => x.f)), { ...opts, buffer: 64 }),
     };
     if (last) {
-      layers[TILE_LAYERS.term] = geojsonvt(fc(mergeLines(termFeatures)), opts);
       layers[TILE_LAYERS.station] = geojsonvt(fc(stationFeatures), { ...opts, buffer: 64 });
-      layers[TILE_LAYERS.complex] = geojsonvt(fc(cxFeatures), { ...opts, tolerance: 2 });
-      layers[TILE_LAYERS.link] = geojsonvt(fc(mergeLines(linkFeatures)), opts);
     }
     const keys = new Map<string, [number, number]>();
     for (const l of Object.values(layers)) {

@@ -4,7 +4,7 @@
  * only draw what depends on the selection: the highlighted corridors (from the
  * per-shard geo files), the reachable cities and the selected cities' stations.
  */
-import { CAT_BITS, catWidth, cityTierZoom, levelIndex, mergeLines, segId, shortStationName, stationLevel, terminalGeometry, type City, type Corridor, type Station } from "@etbm/shared";
+import { CAT_BITS, catWidth, cityTierZoom, levelIndex, mergeLines, segId, shortStationName, stationLevel, type City, type Station } from "@etbm/shared";
 import { Cat } from "@etbm/shared";
 import type * as GeoJSON from "geojson";
 import type { GeoStore } from "../data/load.ts";
@@ -33,17 +33,15 @@ export function pack(widths: number[]): { offsets: number[]; total: number } {
 }
 
 /**
- * Highlighted corridors (selection), drawn on their segments with the traffic
- * of the highlighted corridors only. g = 0: city-level geometry; g = 1:
- * station zoom (end pieces re-drawn to the stations).
+ * Highlighted corridors (selection), drawn on their segments with the traffic of the highlighted
+ * corridors only. Corridors join stations, so there are no end pieces to add; approximate
+ * alignments (not on any track or road) are drawn dashed.
  */
-export function highlightData(geo: GeoStore, stations: (Station | undefined)[], hl: Map<number, number>): { lines: FC; casing: FC } {
+export function highlightData(geo: GeoStore, hl: Map<number, number>): { lines: FC; casing: FC } {
   const lines: Feature[] = [];
   const casing: Feature[] = [];
   const segCats = new Map<number, number>();
   const segTpd = new Map<number, Record<number, number>>();
-  const interior = new Set<number>();
-  const ends: { c: Corridor; ka: number; kb: number }[] = [];
   for (const [cid, cats] of hl) {
     const c = geo.corridors.get(cid);
     if (!c?.segs?.length || !cats) continue;
@@ -57,47 +55,23 @@ export function highlightData(geo: GeoStore, stations: (Station | undefined)[], 
       for (const k of CAT_BITS) if (cats & k && c.tpd[k]) t[k] = (t[k] ?? 0) + c.tpd[k]!;
       segTpd.set(s, t);
     }
-    const [ka, kb] = geo.cut.get(cid) ?? [0, c.segs.length - 1];
-    c.segs.forEach((code, i) => {
-      if (i > ka && i < kb) interior.add(segId(code));
-    });
-    ends.push({ c, ka, kb });
   }
-  // g: 0 = city-level geometry only, 1 = station zoom only, 2 = both
-  const bundle = (sid: number, coords: [number, number][], g: number) => {
-    const s = geo.segments.get(sid)!;
-    const cats = segCats.get(sid)!;
+  for (const [sid, cats] of segCats) {
+    const s = geo.segments.get(sid);
+    if (!s || s.coords.length < 2) continue;
+    if (s.hop || !s.snapped) {
+      for (const k of CAT_BITS) if (cats & k) lines.push({ type: "Feature", properties: { cat: k, w: 1.6, o: 0, hop: 1, k: 0 }, geometry: { type: "LineString", coordinates: s.coords } });
+      continue;
+    }
     const tpd = segTpd.get(sid)!;
     const present = CAT_BITS.filter((k) => cats & k);
     // quantised widths / sort keys so neighbouring segments merge into long lines
     const widths = present.map((k) => Math.round(Math.max(1.6, catWidth(k, tpd[k] ?? 0, s.snapped)) * 4) / 4);
     const p = pack(widths);
     present.forEach((k, i) =>
-      lines.push({ type: "Feature", properties: { cat: k, w: widths[i]!, o: p.offsets[i], g, hop: 0, k: Math.round(Math.log2(1 + (tpd[k] ?? 0)) * 2) }, geometry: { type: "LineString", coordinates: coords } }),
+      lines.push({ type: "Feature", properties: { cat: k, w: widths[i]!, o: p.offsets[i], hop: 0, k: Math.round(Math.log2(1 + (tpd[k] ?? 0)) * 2) }, geometry: { type: "LineString", coordinates: s.coords } }),
     );
-    casing.push({ type: "Feature", properties: { t: p.total, g }, geometry: { type: "LineString", coordinates: coords } });
-  };
-  for (const [sid, cats] of segCats) {
-    const s = geo.segments.get(sid);
-    if (!s || s.coords.length < 2) continue;
-    if (s.hop) {
-      for (const k of CAT_BITS) if (cats & k) lines.push({ type: "Feature", properties: { cat: k, w: 1.6, o: 0, g: 0, hop: 1, k: 0 }, geometry: { type: "LineString", coordinates: s.coords } });
-      continue;
-    }
-    bundle(sid, s.coords, interior.has(sid) ? 2 : 0);
-  }
-  // station-zoom end pieces
-  const done = new Set<string>();
-  for (const { c, ka, kb } of ends) {
-    for (const end of ["a", "b"] as const) {
-      const t = terminalGeometry((sid) => geo.segments.get(sid)?.coords, (id) => stations[id], c, ka, kb, end);
-      if (!t) continue;
-      if (geo.segments.get(t.sid)?.hop) continue;
-      const key = `${t.sid}:${end === "a" ? c.sa : c.sb}`;
-      if (done.has(key)) continue;
-      done.add(key);
-      bundle(t.sid, t.coords, 1);
-    }
+    casing.push({ type: "Feature", properties: { t: p.total }, geometry: { type: "LineString", coordinates: s.coords } });
   }
   return { lines: { type: "FeatureCollection", features: mergeLines(lines) }, casing: { type: "FeatureCollection", features: mergeLines(casing) } };
 }
@@ -108,6 +82,8 @@ export interface Emphasis {
   /** When true, everything not in focus is greyed out. */
   active: boolean;
   origin?: number;
+  /** The origin narrowed to one of its stations. */
+  originStation?: number;
   dest?: number;
 }
 
@@ -137,8 +113,8 @@ export function focusCityData(cities: City[], em: Emphasis): FC {
   return { type: "FeatureCollection", features };
 }
 
-/** Stations of the given (selected) cities. */
-export function stationData(cities: City[], stations: (Station | undefined)[], only: Set<number>): FC {
+/** Stations of the given (selected) cities; `current` is the one chosen as origin. */
+export function stationData(cities: City[], stations: (Station | undefined)[], only: Set<number>, current?: number): FC {
   const features: Feature[] = [];
   for (const cid of only) {
     const c = cities[cid];
@@ -150,7 +126,7 @@ export function stationData(cities: City[], stations: (Station | undefined)[], o
       features.push({
         type: "Feature",
         id: sid,
-        properties: { name: shortStationName(s.name, c.name), city: s.city, lz, rail: s.cats & (Cat.LongDistance | Cat.Regional) ? 1 : 0, major: lz === 0 ? 1 : 0, rank: rank + (lz === 0 ? 0 : 100) },
+        properties: { id: sid, name: shortStationName(s.name, c.name), city: s.city, lz, cur: sid === current ? 1 : 0, rail: s.cats & (Cat.LongDistance | Cat.Regional) ? 1 : 0, major: lz === 0 ? 1 : 0, rank: rank + (lz === 0 ? 0 : 100) },
         geometry: { type: "Point", coordinates: [s.lon, s.lat] },
       });
     });

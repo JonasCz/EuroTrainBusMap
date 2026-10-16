@@ -24,7 +24,7 @@ import { levelIndex, mergeLines, TILE_MAXZOOM } from "@etbm/shared";
 import { forZoom, tileProps, writeMapData } from "../src/mapdata.ts";
 
 const net: NetworkFile = {
-  schema: 1,
+  schema: 3,
   build: "t",
   timezones: ["Europe/Berlin"],
   cities: [
@@ -39,9 +39,9 @@ const net: NetworkFile = {
     { id: 3, city: 2, name: "Brandenburg Hbf", lon: 12.5664, lat: 52.4006, cats: 3 },
   ],
   corridors: [
-    { id: 0, a: 0, b: 1, coords: [], cats: Cat.Regional, tpd: { 2: 60 }, snapped: true, sa: 1, sb: 2, segs: [0, 1] },
-    { id: 1, a: 1, b: 2, coords: [], cats: Cat.Regional, tpd: { 2: 40 }, snapped: true, sa: 2, sb: 3, segs: [2] },
-    { id: 2, a: 0, b: 2, coords: [], cats: Cat.LongDistance, tpd: { 1: 10 }, snapped: true, sa: 0, sb: 3, segs: [0, 1, 2] },
+    { id: 0, a: 1, b: 2, coords: [], cats: Cat.Regional, tpd: { 2: 60 }, snapped: true, segs: [0, 1] },
+    { id: 1, a: 2, b: 3, coords: [], cats: Cat.Regional, tpd: { 2: 40 }, snapped: true, segs: [2] },
+    { id: 2, a: 0, b: 3, coords: [], cats: Cat.LongDistance, tpd: { 1: 10 }, snapped: true, segs: [0, 1, 2] },
   ],
   segments: [
     { id: 0, coords: [[13.4105, 52.5244], [13.37, 52.525], [13.33, 52.507]], cats: 3, tpd: { 1: 10, 2: 60 }, snapped: true },
@@ -59,8 +59,7 @@ describe("map data (netmap)", () => {
     expect(p.w2).toBeGreaterThan(p.w1!);
     expect(p.l1).toBe(0); // long distance ≥ 4 trips/day: overview
     expect(LEVELS[p.l2!]).toBeGreaterThan(0);
-    // the express runs through the middle segment: it is not a lead-in
-    expect(idx.segTerm[1]).toBe(0);
+    expect(p.term).toBeUndefined(); // corridors end at their own stations: no lead-in pieces any more
   });
   it("gives cities the earliest zoom of their lines per category", () => {
     const sp = net.segments!.map((s) => segmentProps(mnet, idx, s));
@@ -70,7 +69,7 @@ describe("map data (netmap)", () => {
     expect(cp[2]!.tz).toBeGreaterThan(0);
   });
   it("round-trips core, stations and geo files", () => {
-    const core = packCore({ schema: 1, build: "t", timezones: net.timezones, cityList: net.cities, nStations: 4, counts: { stations: 4, corridors: 3, segments: 3 }, tiles: { minzoom: 2, maxzoom: 7, tiles: { 2: [1, 2] }, url: "x" } });
+    const core = packCore({ schema: 3, build: "t", timezones: net.timezones, cityList: net.cities, nStations: 4, counts: { stations: 4, corridors: 3, segments: 3 }, tiles: { minzoom: 2, maxzoom: 7, tiles: { 2: [1, 2] }, url: "x" } });
     const cities = unpackCore(JSON.parse(JSON.stringify(core)) as CoreFile);
     expect(cities.map((c) => c.name)).toEqual(net.cities.map((c) => c.name));
     expect(cities[0]!.lon).toBeCloseTo(13.4105, 4);
@@ -88,7 +87,6 @@ describe("map data (netmap)", () => {
     expect(g.corridors.map((c) => c.id)).toEqual([0, 2]);
     expect(g.corridors[1]!.segs).toEqual([0, 1, 2]);
     expect(g.corridors[0]!.tpd).toEqual({ 2: 60 });
-    expect(g.cut.get(0)).toEqual([idx.cutA[0], idx.cutB[0]]);
     expect([...g.segments.keys()]).toEqual([0, 1, 2]);
     expect(g.segments.get(1)!.coords).toEqual(net.segments![1]!.coords);
   });
@@ -97,7 +95,7 @@ describe("map data (netmap)", () => {
     const merged = mergeLines([f(0, 1, { w1: 1 }), f(1, 2, { w1: 1 }), f(2, 3, { w1: 2 })]);
     expect(merged).toHaveLength(2);
     expect((merged[0]!.geometry as { coordinates: number[][] }).coordinates).toHaveLength(3);
-    const p = tileProps({ sid: 4, k: 10, u: 0, term: 0, hop: 0, l1: 0, w1: 2.33, l2: 7, w2: 1.2 });
+    const p = tileProps({ sid: 4, k: 10, u: 0, hop: 0, l1: 0, w1: 2.33, l2: 7, w2: 1.2 });
     expect(p.sid).toBeUndefined();
     expect(p.w1).toBe(2.25);
     const z2 = forZoom(f(0, 1, p), 2).properties as Record<string, number>;
@@ -119,7 +117,7 @@ describe("map data (netmap)", () => {
       const zm = r.mapdata.tiles.tiles[String(TILE_MAXZOOM)]!;
       expect(zm.length).toBeGreaterThan(0);
       const tile = gunzipSync(await readFile(join(dir, "tiles", String(TILE_MAXZOOM), String(zm[0]), `${zm[1]}.pbf.gz`)));
-      expect(tile.length).toBeGreaterThan(100);
+      expect(tile.length).toBeGreaterThan(50);
       const geo = unpackGeo(JSON.parse(await readFile(join(dir, "geo", "0.json"), "utf8")));
       expect(geo.corridors.map((c) => c.id)).toEqual([2]);
       expect(geo.stations.map((s) => s.id)).toEqual([0, 1, 3]);

@@ -25,7 +25,7 @@ describe("packNetwork", () => {
         { id: 2, city: 1, name: "Potsdam Hbf", lon: 13.06664, lat: 52.39176, cats: 2 },
       ],
       corridors: [
-        { id: 0, a: 0, b: 1, coords: [[13.41053, 52.52437], [13.06566, 52.39886]], cats: 3, tpd: { 2: 120.5 }, snapped: true, sa: 0, sb: 2 },
+        { id: 0, a: 0, b: 2, coords: [[13.41053, 52.52437], [13.06566, 52.39886]], cats: 3, tpd: { 2: 120.5 }, snapped: true },
       ],
     };
     const packed: NetworkFile = { ...net, cities: [], stations: [], corridors: [], packed: packNetwork(net) };

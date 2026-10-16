@@ -4,7 +4,7 @@
 import type { CityFile, Route } from "@etbm/shared";
 import { addDays, dayNumber, inHorizon, lastDate, runsOnDate } from "./calendar.ts";
 import { ServiceDays, mergeRows, serviceKey } from "./merge.ts";
-import { bestStop, prepare, type NetCtx } from "./context.ts";
+import { bestStop, prepare, stopAt, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
 import { localDate, serviceTimeToUtc } from "./tz.ts";
 
@@ -51,8 +51,8 @@ interface Candidate {
   corridors: number[];
 }
 
-/** Pattern/stop combinations that go from cf.city directly to `dest`. */
-export function pairCandidates(cf: CityFile, ctx: NetCtx, f: Filters, dest: number): Candidate[] {
+/** Pattern/stop combinations that go from cf.city (or only from `originStation` of it) directly to `dest`. */
+export function pairCandidates(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, originStation?: number): Candidate[] {
   const prep = prepare(cf, ctx);
   const out: Candidate[] = [];
   cf.patterns.forEach((p, pi) => {
@@ -72,32 +72,36 @@ export function pairCandidates(cf: CityFile, ctx: NetCtx, f: Filters, dest: numb
     if (ib < 0) return;
     const sa = segs[ia]!;
     const sb = segs[ib]!;
+    const board = originStation !== undefined ? stopAt(p, sa, originStation) : bestStop(p, sa, ctx);
+    if (board < 0) return;
+    const alight = bestStop(p, sb, ctx);
     out.push({
       pattern: pi,
-      board: bestStop(p, sa, ctx),
-      alight: bestStop(p, sb, ctx),
-      boardSeg: [sa.first, sa.last],
+      board,
+      alight,
+      // with a chosen station there are no "also from …" alternatives
+      boardSeg: originStation !== undefined ? [board, board] : [sa.first, sa.last],
       alightSeg: [sb.first, sb.last],
-      corridors: p.corridors.slice(ia, ib),
+      corridors: p.corridors.slice(board, alight),
     });
   });
   return out;
 }
 
 /** corridor id → Cat bits of services running between the pair (any day). */
-export function pairCorridors(cf: CityFile, ctx: NetCtx, f: Filters, dest: number): Map<number, number> {
+export function pairCorridors(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, originStation?: number): Map<number, number> {
   const s = new Map<number, number>();
   const prep = prepare(cf, ctx);
-  for (const c of pairCandidates(cf, ctx, f, dest)) {
+  for (const c of pairCandidates(cf, ctx, f, dest, originStation)) {
     if (!prep.tripsByPattern[c.pattern]!.some((ti) => ctx.cal.anyDay[cf.trips[ti]![2]])) continue;
     const cat = cf.routes[cf.patterns[c.pattern]!.route]!.cat;
-    c.corridors.forEach((x) => s.set(x, (s.get(x) ?? 0) | cat));
+    c.corridors.forEach((x) => x >= 0 && s.set(x, (s.get(x) ?? 0) | cat));
   }
   return s;
 }
 
 /** Departures from cf.city to dest whose departure falls on `date` (origin-local). */
-export function timetable(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, date: string, cands = pairCandidates(cf, ctx, f, dest)): Departure[] {
+export function timetable(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, date: string, cands = pairCandidates(cf, ctx, f, dest, undefined)): Departure[] {
   const prep = prepare(cf, ctx);
   const originTz = ctx.cityTz[cf.city]!;
   const out: Departure[] = [];
@@ -158,8 +162,8 @@ export function timetable(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, d
 }
 
 /** Next dates (after `date`) with at least one departure, up to `limit`. */
-export function nextServiceDates(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, date: string, limit = 5): string[] {
-  const cands = pairCandidates(cf, ctx, f, dest);
+export function nextServiceDates(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, date: string, limit = 5, originStation?: number): string[] {
+  const cands = pairCandidates(cf, ctx, f, dest, originStation);
   if (!cands.length) return [];
   const out: string[] = [];
   const end = dayNumber(lastDate(ctx.cal)) + 1;

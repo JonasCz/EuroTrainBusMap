@@ -296,6 +296,23 @@ describe('road graph (connector topology)', () => {
     const [noGraph] = buildWithRouter([req(4)], null, () => {}, null);
     expect(noGraph!.snapped).toBe(false);
   });
+  it('routes rail hops that are not on any track along the road network, else approximate (unsnapped)', () => {
+    const rail = new Router(synthetic()); // the rail graph has nothing near lat 48
+    const road = new Router(roads(), { snapRadius: 2000, minComponent: 1000 });
+    const r = (id: number, extra: Partial<GeometryRequest> = {}): GeometryRequest => ({
+      id, mode: 'rail', a: [0.05, 48.01], b: [0.5, 48.45], hops: [{ from: [0.06, 48.002], to: [0.5, 48.44] }], ...extra,
+    });
+    const [onRoad, noRoad] = buildWithRouter([r(1), r(2, { a: [5, 50], b: [5.5, 50.2], hops: [{ from: [5, 50], to: [5.5, 50.2] }] })], rail, () => {}, road);
+    expect(onRoad!.snapped).toBe(true);
+    expect(onRoad!.coords.some((c) => Math.abs(c[0] - 0.5) < 0.005 && Math.abs(c[1] - 48) < 0.005)).toBe(true);
+    expect(noRoad!.snapped).toBe(false);
+    expect(buildWithRouter([r(3)], rail, () => {}, null)[0]!.snapped).toBe(false);
+  });
+  it('draws two stations a few tens of metres apart as a plain line, never as an approximate alignment', () => {
+    const [near] = buildWithRouter([{ id: 1, mode: 'rail', a: [0.1, 40], b: [0.1003, 40], hops: [{ from: [0.1, 40], to: [0.1003, 40] }] }], null);
+    expect(near!.snapped).toBe(true);
+    expect(near!.coords).toEqual([[0.1, 40], [0.1003, 40]]);
+  });
   it('round-trips a road graph file with its kind', () => {
     const buf = serializeRailGraph(roads(), { kind: 'road', release: 'r', bbox: [0, 0, 1, 1], simplifyTol: 50, minComponent: 0 });
     const { header, graph } = deserializeRailGraph(buf);
