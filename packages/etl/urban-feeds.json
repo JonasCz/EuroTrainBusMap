@@ -550,6 +550,36 @@
      "transitous": "ua_lviv.gtfs.zip"
     }
    ]
+  },
+  {
+   "id": "u-de-vbb",
+   "country": "DE",
+   "name": "VBB",
+   "sources": [
+    {
+     "transitous": "de_VBB.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-de-kvv",
+   "country": "DE",
+   "name": "KVV",
+   "sources": [
+    {
+     "transitous": "de_KVV.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-de-avv-aachen",
+   "country": "DE",
+   "name": "AVV-Aachen",
+   "sources": [
+    {
+     "transitous": "de_AVV-Aachen.gtfs.zip"
+    }
+   ]
   }
  ]
 }

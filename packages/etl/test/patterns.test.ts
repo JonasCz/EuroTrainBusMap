@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Cat } from "@etbm/shared";
-import { PatternStore, localizeStart, processTripStops } from "../src/core/patterns.ts";
+import { PatternStore, localizeStart, processTripStops, repairTimes } from "../src/core/patterns.ts";
 import { resolveDuplicates, type DupTrip } from "../src/core/dedup.ts";
 import { sliceShape } from "../src/core/shapes.ts";
 
@@ -117,5 +117,38 @@ describe("sliceShape", () => {
     const r = sliceShape(pts, [10.07, 50], [10.02, 50])!;
     expect(r[0]).toEqual([10.07, 50]);
     expect(sliceShape(pts, [11, 51], [10.07, 50])).toBeNull();
+  });
+});
+
+describe("repairTimes (zero-duration hops between distant stations)", () => {
+  // Milano 08:00 -> Dijon 13:00 -> Paris GdL 15:00 -> Lyon 15:00 (bogus copy) -> Marseille 18:00
+  const pos: [number, number][] = [[9.2, 45.5], [5.0, 47.3], [2.37, 48.84], [4.86, 45.76], [5.37, 43.3]];
+  it("interpolates the bogus times by distance", () => {
+    const arr = [480, 780, 900, 900, 1080], dep = [480, 785, 900, 900, 1080];
+    const n = repairTimes(arr, dep, pos, Cat.LongDistance);
+    expect(n).toBe(1);
+    expect(arr[3]).toBeGreaterThan(900 + 60);
+    expect(arr[3]).toBeLessThan(1080);
+    expect(dep[3]).toBe(arr[3]);
+    expect(arr[2]).toBe(900); // the first stop of the run keeps its time
+  });
+  it("leaves plausible times and short zero hops alone", () => {
+    const arr = [480, 780, 900, 1010, 1080], dep = [480, 785, 905, 1010, 1080];
+    expect(repairTimes(arr, dep, pos, Cat.LongDistance)).toBe(0);
+    const a2 = [0, 0], d2 = [0, 0];
+    expect(repairTimes(a2, d2, [[2.37, 48.84], [2.38, 48.85]], Cat.Regional)).toBe(0); // 1 km apart
+  });
+  it("extrapolates at a typical speed when the run reaches the end of the trip", () => {
+    const arr = [600, 700, 700], dep = [600, 700, 700];
+    expect(repairTimes(arr, dep, [[2.0, 48.0], [3.0, 48.0], [4.5, 48.0]], Cat.Regional)).toBe(1);
+    expect(arr[2]).toBeGreaterThan(700);
+  });
+  it("is applied by processTripStops when positions are known", () => {
+    const stationPos = (s: number) => pos[s]!;
+    const t = processTripStops(
+      pos.map((_, i) => ({ station: i, city: i, arr: [480, 780, 900, 900, 1080][i]!, dep: [480, 785, 900, 900, 1080][i]! })),
+      { ...base, cat: Cat.LongDistance, stationPos },
+    )!;
+    expect(t.arr[3]! - t.dep[2]!).toBeGreaterThan(30);
   });
 });

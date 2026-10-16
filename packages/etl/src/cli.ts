@@ -23,6 +23,8 @@ export interface CliArgs {
   reuseDb: boolean;
   geometry: boolean;
   basemap: boolean;
+  /** Build the local-transport layer (metro / tram / city bus tiles). */
+  urban: boolean;
   maxAgeH?: number;
   build?: string;
   /** Directory mirroring the R2 asset bucket (GeoNames places, basemap, rail graph). */
@@ -47,7 +49,7 @@ function parseArgs(argv: string[]): CliArgs {
   if (!out) {
     console.error(
       "usage: build-data --out <dir> [--feeds id1,id2] [--work <dir>] [--subset full|core] [--days 60] [--start YYYY-MM-DD]\n" +
-        "                  [--reuse-db] [--no-geometry] [--no-basemap] [--max-age-h N] [--assets <dir>] [--extract-rail]",
+        "                  [--reuse-db] [--no-geometry] [--no-basemap] [--no-urban] [--max-age-h N] [--assets <dir>] [--extract-rail]",
     );
     process.exit(2);
   }
@@ -63,6 +65,7 @@ function parseArgs(argv: string[]): CliArgs {
     reuseDb: has("--reuse-db"),
     geometry: !has("--no-geometry"),
     basemap: !has("--no-basemap"),
+    urban: !has("--no-urban"),
     maxAgeH: get("--max-age-h") ? Number(get("--max-age-h")) : undefined,
     build: get("--build"),
     assets: resolve(get("--assets") ?? join(resolve(get("--work") ?? join(repoRoot, "work")), "assets")),

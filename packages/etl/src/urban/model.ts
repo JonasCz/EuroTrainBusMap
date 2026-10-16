@@ -1,6 +1,8 @@
 /** Pure logic of the local-transport layer: de-duplication, stations, zoom levels. */
 import { fastDist } from "../util/geo.ts";
 import { mergeStations, describeStation, type StopIn } from "../core/stations.ts";
+import { DiscIndex, readableColor, stripCityName } from "./classify.ts";
+import { normalizeStopName, normSimilarity } from "../core/names.ts";
 import { UMode, type LonLat, type UModeCode, type UrbanFeed, type UrbanPattern } from "./types.ts";
 
 /** A line alignment ready to be drawn. */
@@ -37,9 +39,9 @@ export interface UrbanStation {
 
 /** First zoom at which a line is drawn: metro first, then trams, buses by frequency. */
 export function lineZoom(mode: UModeCode, tpd: number): number {
-  if (mode === UMode.Metro) return 10;
-  if (mode === UMode.Tram) return tpd >= 100 ? 10.6 : 11;
-  if (mode === UMode.Cable) return 12;
+  if (mode === UMode.Metro) return tpd >= 100 ? 10 : 10.8;
+  if (mode === UMode.Tram) return tpd >= 150 ? 11.2 : tpd >= 60 ? 12 : 12.6;
+  if (mode === UMode.Cable) return 12.5;
   if (tpd >= 90) return 12.4;
   if (tpd >= 50) return 13;
   if (tpd >= 25) return 13.6;
@@ -188,7 +190,7 @@ export const BUS_STATION_LEVELS = [14, 14.8];
  * Combine the extracted feeds: de-duplicated alignments, merged stations (name / proximity based, the same
  * rules as the intercity stations), line lists and zoom levels.
  */
-export function buildUrban(feeds: UrbanFeed[], intercity: { lon: number; lat: number }[] = [], attachM = 100): BuiltUrban {
+export function buildUrban(feeds: UrbanFeed[], intercity: { lon: number; lat: number; name?: string }[] = [], cities?: DiscIndex, attachM = 90): BuiltUrban {
   // ---- global stops
   const stopBase: number[] = [];
   const stopsIn: StopIn[] = [];
@@ -206,7 +208,7 @@ export function buildUrban(feeds: UrbanFeed[], intercity: { lon: number; lat: nu
     for (const l of f.lines)
       for (const p of l.patterns) {
         if (p.coords.length < 2) continue;
-        items.push({ mode: l.mode, name: l.name, desc: l.desc, agency: l.agency, color: l.color, tpd: l.tpd, coords: p.coords, geom: p.geom, stops: p.stops.map((s) => stopBase[fi]! + s), lz: lineZoom(l.mode, l.tpd), fi });
+        items.push({ mode: l.mode, name: l.name, desc: l.desc, agency: l.agency, color: readableColor(l.color), tpd: l.tpd, coords: p.coords, geom: p.geom, stops: p.stops.map((s) => stopBase[fi]! + s), lz: lineZoom(l.mode, l.tpd), fi });
         for (const s of p.stops) {
           const g = stopBase[fi]! + s;
           stopMode[g]! |= 1 << l.mode;
@@ -230,7 +232,8 @@ export function buildUrban(feeds: UrbanFeed[], intercity: { lon: number; lat: nu
     const d = describeStation(m.map((g) => stopsIn[g]!));
     let modes = 0;
     for (const g of m) modes |= stopMode[g]!;
-    return { name: d.name, lon: d.lon, lat: d.lat, modes, lines: [], imp: 0, z: 15, ix: false };
+    const name = cities ? stripCityName(d.name, cities.cityAt(d.lon, d.lat)) : d.name;
+    return { name, lon: d.lon, lat: d.lat, modes, lines: [], imp: 0, z: 15, ix: false };
   });
   // lines per station, importance
   const lineSets: Map<string, number>[] = stations.map(() => new Map());
@@ -255,14 +258,34 @@ export function buildUrban(feeds: UrbanFeed[], intercity: { lon: number; lat: nu
   for (const l of lines) l.stops = [...new Set(l.stops.map((g) => stationOfStop[g]!).filter((x) => x >= 0))];
   // ---- attach to intercity stations
   if (intercity.length) {
-    const grid = new PointGrid(attachM * 2);
-    for (const c of intercity) grid.add(c.lon, c.lat);
-    for (const s of stations) if (grid.any(s.lon, s.lat, attachM)) s.ix = true;
+    // an intercity station's own stop (≤ attachM) or one with the same name nearby (the tram stop in front of the
+    // station) belongs to the station: no second dot, no second label
+    const near = new PointGrid(attachM * 2), named = new PointGrid(400);
+    const byCell = new Map<string, string[]>();
+    for (const c of intercity) {
+      near.add(c.lon, c.lat);
+      if (c.name) {
+        named.add(c.lon, c.lat);
+        const k = `${Math.round(c.lon * 250)},${Math.round(c.lat * 400)}`;
+        (byCell.get(k) ?? byCell.set(k, []).get(k)!).push(normalizeStopName(c.name));
+      }
+    }
+    for (const s of stations) {
+      if (near.any(s.lon, s.lat, attachM)) {
+        s.ix = true;
+        continue;
+      }
+      if (!named.any(s.lon, s.lat, 350)) continue;
+      const ns = normalizeStopName(s.name);
+      const cx = Math.round(s.lon * 250), cy = Math.round(s.lat * 400);
+      for (let dx = -2; dx <= 2 && !s.ix; dx++)
+        for (let dy = -2; dy <= 2 && !s.ix; dy++) if (byCell.get(`${cx + dx},${cy + dy}`)?.some((n) => n && ns && normSimilarity(ns, n) >= 0.8)) s.ix = true;
+    }
   }
   // ---- zoom levels of the stations
   const rail = stations.map((s, i) => i).filter((i) => stations[i]!.modes & ~(1 << UMode.Bus));
   const bus = stations.map((s, i) => i).filter((i) => !(stations[i]!.modes & ~(1 << UMode.Bus)));
-  for (const [set, levels, px] of [[rail, RAIL_STATION_LEVELS, 15], [bus, BUS_STATION_LEVELS, 10]] as const) {
+  for (const [set, levels, px] of [[rail, RAIL_STATION_LEVELS, 24], [bus, BUS_STATION_LEVELS, 12]] as const) {
     const z = thinZooms(set.map((i) => stations[i]!), levels, px);
     set.forEach((i, k) => (stations[i]!.z = z[k]!));
   }

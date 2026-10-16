@@ -27,6 +27,7 @@ export interface CityDisc {
   lon: number;
   lat: number;
   r: number;
+  name: string;
 }
 
 /**
@@ -36,7 +37,7 @@ export interface CityDisc {
 export function cityDiscs(places: Place[], minPop: number): CityDisc[] {
   return places
     .filter((p) => p.population >= minPop)
-    .map((p) => ({ lon: p.lon, lat: p.lat, r: Math.min(16_000, Math.max(3500, 4000 * Math.sqrt(p.population / 100_000))) }));
+    .map((p) => ({ lon: p.lon, lat: p.lat, r: Math.min(16_000, Math.max(3500, 4000 * Math.sqrt(p.population / 100_000))), name: p.name }));
 }
 
 /** Grid lookup of the discs. */
@@ -53,6 +54,13 @@ export class DiscIndex {
           a.push(d);
         }
     }
+  }
+  /** Name of the biggest-disc city around a point (for tidying "City, Stop" names), or "". */
+  cityAt(lon: number, lat: number): string {
+    const a = this.cells.get(`${Math.floor(lon * 2)},${Math.floor(lat * 2)}`);
+    let best: CityDisc | null = null;
+    if (a) for (const d of a) if (fastDist(lon, lat, d.lon, d.lat) <= d.r && (!best || d.r > best.r)) best = d;
+    return best?.name ?? "";
   }
   /** Whether a point lies in one of the discs. */
   contains(lon: number, lat: number): boolean {
@@ -79,4 +87,43 @@ export function isCityBus(stops: { lon: number; lat: number }[], idx: DiscIndex,
   }
   const span = fastDist(minLon, minLat, maxLon, maxLat) / 1000;
   return span <= maxSpanKm && inside / stops.length >= share;
+}
+
+const fold = (s: string) => s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+/**
+ * "Freiburg, Hauptstraße" / "Hauptstraße (Freiburg)" / "Hauptstraße, Freiburg" → "Hauptstraße": the map already says
+ * which city a stop is in. Only comma and parenthesis forms are touched (a plain "Berlin Hbf" is a name).
+ */
+export function stripCityName(name: string, city: string): string {
+  if (!city) return name;
+  const c = fold(city).trim();
+  const n = name.trim();
+  const f = fold(n);
+  let out = n;
+  if (f.startsWith(c + ", ")) out = n.slice(city.length + 2);
+  else if (f.endsWith(", " + c)) out = n.slice(0, n.length - city.length - 2);
+  else if (f.endsWith(" (" + c + ")")) out = n.slice(0, n.length - city.length - 3);
+  out = out.trim();
+  return out.length >= 2 ? out : name;
+}
+
+/**
+ * Line colours from feeds range from white to black: keep them readable on the light and the dark map
+ * (relative luminance clamped to 0.07 … 0.55 by mixing with black or white).
+ */
+export function readableColor(hex: string): string {
+  const h = hex.replace(/^#/, "").toLowerCase();
+  if (!/^[0-9a-f]{6}$/.test(h)) return "";
+  let rgb = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const lum = (v: number[]) => {
+    const [r, g, b] = v.map((x) => {
+      const s = x / 255;
+      return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+  };
+  for (let i = 0; i < 12 && lum(rgb) > 0.55; i++) rgb = rgb.map((x) => Math.round(x * 0.88));
+  for (let i = 0; i < 12 && lum(rgb) < 0.07; i++) rgb = rgb.map((x) => Math.round(x + (255 - x) * 0.16));
+  return rgb.map((x) => x.toString(16).padStart(2, "0")).join("");
 }

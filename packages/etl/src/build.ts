@@ -44,6 +44,7 @@ import { GridIndex, fastDist, greatCircle, haversine, round5, simplifyLine, type
 import { log, warn, type StageTimer } from "./util/log.ts";
 import { runSanity } from "./sanity.ts";
 import { writeMapData } from "./mapdata.ts";
+import { writeUrbanLayer } from "./urban/index.ts";
 import { BASEMAP_DIR, BASEMAP_MAXZOOM, BASEMAP_MINZOOM, BASEMAP_TILES_KEY, BASEMAP_VERSION, EUROPE_BBOX, installBasemapTiles } from "./basemap/tiles.ts";
 
 export interface BuildCtx {
@@ -466,7 +467,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
         const c = busCanon[r.city]!;
         if (c >= 0 && stations[r.station]!.cats === Cat.Bus) r.station = c;
       }
-    const shape = processTripStops(raw, { cat, cityPop, stationWeight, cityHasRail, minBusCityPop: cfg.minBusCityPop ?? 1000 });
+    const shape = processTripStops(raw, { cat, cityPop, stationWeight, cityHasRail, minBusCityPop: cfg.minBusCityPop ?? 1000, stationPos: (s) => [stations[s]!.lon, stations[s]!.lat] });
     if (!shape) {
       droppedTrips++;
       return;
@@ -1006,6 +1007,22 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   totalBytes += md.bytes;
   fileCount += md.files;
 
+  // ------------------------------------------------------------------ local transport (display layer, own pass over the feed zips)
+  let urbanInfo: Manifest["urban"];
+  let urbanStats: Record<string, number> = {};
+  if (args.urban) {
+    timer.start("urban");
+    try {
+      const ur = await writeUrbanLayer({ buildDir: outDir, work: args.work, assets: args.assets, startDate: args.startDate, stations: network.stations, licenses: ctx.licenses, log });
+      urbanInfo = ur.info;
+      urbanStats = ur.stats;
+      totalBytes += ur.bytes;
+      fileCount += ur.files;
+    } catch (e) {
+      warn(`urban: local transport layer failed, building without it: ${(e as Error).stack ?? e}`);
+    }
+  }
+
   // ------------------------------------------------------------------ stats, sanity, manifest
   timer.start("sanity");
   const catTrips: Record<string, number> = {};
@@ -1030,6 +1047,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     files: fileCount,
     outputBytes: totalBytes,
   });
+  Object.assign(stats, urbanStats);
   for (const [k, v] of Object.entries(catTrips)) stats[`trips${k}`] = v;
   for (const [k, v] of Object.entries(catRoutes)) stats[`routes${k}`] = v;
 
@@ -1052,7 +1070,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   timer.end();
 
   stats.durationSec = Math.round((Date.now() - ctx.t0) / 1000);
-  const manifest: Manifest = { schema: SCHEMA_VERSION, build, generatedAt: new Date().toISOString(), startDate: args.startDate, days: D, stats, mapdata: md.mapdata, ...(basemapInfo ? { basemap: basemapInfo } : {}) };
+  const manifest: Manifest = { schema: SCHEMA_VERSION, build, generatedAt: new Date().toISOString(), startDate: args.startDate, days: D, stats, mapdata: md.mapdata, ...(basemapInfo ? { basemap: basemapInfo } : {}), ...(urbanInfo ? { urban: urbanInfo } : {}) };
   Object.assign(report, {
     build,
     stats,

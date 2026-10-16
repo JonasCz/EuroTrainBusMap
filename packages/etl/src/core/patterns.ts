@@ -27,6 +27,63 @@ export interface ProcessOptions {
   collapseBusBelowPop?: number;
   /** Bus: whether a city has rail stations (bus runs there keep entry/exit stops only). */
   cityHasRail?: (city: number) => boolean;
+  /** Position [lon, lat] of a station: enables the repair of impossible stop times (see repairTimes). */
+  stationPos?: (station: number) => [number, number];
+}
+
+/** Zero-duration hops shorter than this (km) are plausible (same-platform, walking-distance stops). */
+export const ZERO_HOP_KM = 3;
+/** Fastest plausible average speed per category (km/h): a hop faster than this has invalid times. */
+const MAX_KMH = { rail: 450, road: 160 };
+/** Average speed (km/h) used where a run of invalid times has no valid time on one side. */
+const FILL_KMH = { [Cat.LongDistance]: 100, [Cat.Regional]: 50, [Cat.Coach]: 65, [Cat.Bus]: 45 } as Record<number, number>;
+
+const distKm = (a: [number, number], b: [number, number]): number => {
+  const kx = 111.32 * Math.cos((((a[1] + b[1]) / 2) * Math.PI) / 180);
+  return Math.hypot((a[0] - b[0]) * kx, (a[1] - b[1]) * 110.54);
+};
+
+/**
+ * Feeds sometimes list several stops of a trip with identical (or placeholder) times, e.g. a Milan–Paris–Lyon
+ * train whose Paris and Lyon calls both read 12:00. Hops between stations that are more than ZERO_HOP_KM apart
+ * but take no time (or would need a speed above any vehicle's) have invalid timing: the stops of such a run get
+ * times interpolated by distance between the surrounding valid times, or – where one side has none (the run
+ * touches the start or the end of the trip) – extrapolated at a typical speed of the category.
+ * Mutates `arr` / `dep` (minutes, any common origin); returns the number of stops whose time was replaced.
+ */
+export function repairTimes(arr: number[], dep: number[], pos: [number, number][], cat: number): number {
+  const n = arr.length;
+  if (n < 2) return 0;
+  const vmax = cat === Cat.Coach || cat === Cat.Bus ? MAX_KMH.road : MAX_KMH.rail;
+  const cum = [0];
+  for (let i = 1; i < n; i++) cum.push(cum[i - 1]! + distKm(pos[i - 1]!, pos[i]!));
+  const bad = (i: number): boolean => {
+    const d = cum[i]! - cum[i - 1]!;
+    if (d <= ZERO_HOP_KM) return false;
+    const dt = arr[i]! - dep[i - 1]!;
+    return dt <= 0 || (d / dt) * 60 > vmax;
+  };
+  let fixed = 0;
+  for (let i = 1; i < n; ) {
+    if (!bad(i)) {
+      i++;
+      continue;
+    }
+    // the run of unreliable times: stops lo..hi; stop lo (reached by a plausible hop) keeps its time and so does
+    // the first stop after the run. A zero-duration hop right behind the run belongs to it whatever its length.
+    let j = i;
+    while (j + 1 < n && (bad(j + 1) || arr[j + 1]! - dep[j]! <= 0)) j++;
+    const lo = i - 1, hi = j, R = hi + 1;
+    const v = FILL_KMH[cat] ?? 50;
+    for (let k = lo + 1; k <= hi; k++) {
+      const span = R < n ? cum[R]! - cum[lo]! : 0;
+      const t = R < n && span > 0 ? dep[lo]! + ((arr[R]! - dep[lo]!) * (cum[k]! - cum[lo]!)) / span : dep[lo]! + ((cum[k]! - cum[lo]!) / v) * 60;
+      arr[k] = dep[k] = Math.round(t);
+      fixed++;
+    }
+    i = j + 1;
+  }
+  return fixed;
 }
 
 /**
@@ -76,6 +133,10 @@ export function processTripStops(raw: RawStop[], o: ProcessOptions): TripShape |
   if (st.length < 2) return null;
   const distinct = new Set(st.map((s) => s.city));
   if (distinct.size < 2) return null;
+  if (o.stationPos && st.length >= 2) {
+    const a = st.map((s) => s.arr), d = st.map((s) => s.dep);
+    if (repairTimes(a, d, st.map((s) => o.stationPos!(s.station)), o.cat)) st.forEach((s, i) => ((s.arr = a[i]!), (s.dep = d[i]!)));
+  }
   // monotonic times (repair small inversions)
   const start = st[0]!.dep;
   const arr: number[] = [], dep: number[] = [];

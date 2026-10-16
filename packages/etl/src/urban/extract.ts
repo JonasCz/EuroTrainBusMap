@@ -6,7 +6,7 @@ import { c, columns, csv, extract, listZip } from "../gtfs/load.ts";
 import { simplifyLine } from "../util/geo.ts";
 import { warn } from "../util/log.ts";
 import { BBOX } from "../geonames.ts";
-import { DiscIndex, NOT_LOCAL_RE, isCityBus, urbanModeOf } from "./classify.ts";
+import { DiscIndex, NOT_LOCAL_RE, isCityBus, readableColor, urbanModeOf } from "./classify.ts";
 import { EXTRACT_VERSION, UMode, type LonLat, type UrbanFeed, type UrbanLine, type UrbanPattern, type UrbanStop } from "./types.ts";
 
 export interface ExtractOptions {
@@ -77,8 +77,7 @@ export async function extractFeed(db: Db, key: string, zip: string, opt: Extract
         drop("coach");
         continue;
       }
-      const col = (r.color ?? "").replace(/^#/, "").toLowerCase();
-      routes.set(r.route_id, { mode, short: r.short, long: r.long, agency, color: /^[0-9a-f]{6}$/.test(col) ? col : "" });
+      routes.set(r.route_id, { mode, short: r.short, long: r.long, agency, color: readableColor(r.color ?? "") });
     }
     if (!routes.size) return null;
     await db.run(`DROP TABLE IF EXISTS u_keep; CREATE TEMP TABLE u_keep(route_id VARCHAR)`);

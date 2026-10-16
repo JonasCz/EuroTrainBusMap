@@ -43,7 +43,7 @@ export function refWeekday(start: string): string {
  * and the extra local feeds of urban-feeds.json (downloaded into the same cache). Extractions are cached
  * per feed in work/urban/ keyed by zip size and extractor version.
  */
-export async function gatherFeeds(o: GatherOptions): Promise<UrbanFeed[]> {
+export async function gatherFeeds(o: GatherOptions): Promise<{ feeds: UrbanFeed[]; cities: DiscIndex }> {
   const cacheDir = join(o.workDir, "cache");
   const outDir = join(o.workDir, "urban");
   await mkdir(join(outDir, "feeds"), { recursive: true });
@@ -106,5 +106,5 @@ export async function gatherFeeds(o: GatherOptions): Promise<UrbanFeed[]> {
     if (feed && feed.lines.length) result.push({ ...feed, key: rf.key });
   }
   db.close();
-  return result;
+  return { feeds: result, cities: cityIdx };
 }

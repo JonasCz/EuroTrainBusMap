@@ -338,7 +338,8 @@ export class Panel {
           { type: "button", class: "dest", onclick: () => this.actions.set({ dest: d.city, legs: [] }) },
           h("span", { class: "dest-cats" }, CAT_ORDER.filter((k) => d.cats & k).map((k) => catDot(k, CAT_LABEL[k]))),
           h("span", { class: "dest-name" }, dc.name, dc.country !== c.country ? h("span", { class: "cc" }, dc.country) : null),
-          h("span", { class: "dest-time" }, h("span", { class: "muted small" }, "from "), fmtDuration(d.minutes)),
+          // a trip whose feed has no real times between two cities gives 0 minutes: show no duration rather than "0 min"
+          h("span", { class: "dest-time" }, d.minutes >= 1 ? [h("span", { class: "muted small" }, "from "), fmtDuration(d.minutes)] : null),
         ),
       );
     };
@@ -520,7 +521,7 @@ export class Panel {
                 h("span", { class: "tt-stations" }, stationName(n, d.depStation), h("span", { class: "arr" }, " → "), stationName(n, d.arrStation)),
                 meta.length ? h("span", { class: "tt-meta" }, meta.map((m, i) => [i ? h("span", { class: "sep" }, "·") : null, m])) : null,
               ),
-              h("span", { class: "tt-dur" }, fmtDuration(d.minutes)),
+              h("span", { class: "tt-dur" }, d.minutes >= 1 ? fmtDuration(d.minutes) : "–"),
             ),
           );
         }),

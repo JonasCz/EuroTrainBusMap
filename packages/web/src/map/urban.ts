@@ -144,7 +144,7 @@ export function urbanLayers(t: Theme, dim: boolean): LayerSpecification[] {
     source,
     "source-layer": stop,
     minzoom,
-    filter: ["all", shown, ["<=", ["+", ["get", "z"], rail ? 1.2 : 0.4], ["zoom"]]] as unknown as FilterSpecification,
+    filter: ["all", shown, ["!", ["has", "x"]], ["<=", ["+", ["get", "z"], rail ? 1.2 : 0.4], ["zoom"]]] as unknown as FilterSpecification,
     layout: {
       "text-field": ["get", "n"],
       "text-font": rail ? FONT_MEDIUM : FONT_REGULAR,

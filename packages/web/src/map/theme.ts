@@ -45,7 +45,7 @@ export const LIGHT: Theme = {
     [Cat.Coach]: "#14a065",
     [Cat.Bus]: "#9558d1",
   },
-  urban: { metro: "#c2570c", tram: "#0f8f83", bus: "#7f8794", cable: "#8a5ac8" },
+  urban: { metro: "#e0651a", tram: "#9a6b34", bus: "#7f8794", cable: "#6b7a99" },
 };
 
 export const DARK: Theme = {
@@ -71,7 +71,7 @@ export const DARK: Theme = {
     [Cat.Coach]: "#34d08a",
     [Cat.Bus]: "#b98bff",
   },
-  urban: { metro: "#f08a3c", tram: "#34c3b4", bus: "#8f99a6", cable: "#b48cf0" },
+  urban: { metro: "#ff8a3d", tram: "#d19a5c", bus: "#8f99a6", cable: "#9aa9c6" },
 };
 
 export function currentTheme(): Theme {

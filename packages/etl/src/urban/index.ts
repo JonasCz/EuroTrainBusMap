@@ -27,7 +27,7 @@ export interface UrbanOptions {
   assets: string;
   startDate: string;
   /** intercity stations (urban stops at them get no dot of their own) */
-  stations: { lon: number; lat: number }[];
+  stations: { lon: number; lat: number; name?: string }[];
   licenses?: unknown[];
   log?: (m: string) => void;
 }
@@ -40,20 +40,24 @@ export interface UrbanResult {
 }
 
 export async function loadUrbanFeedDefs(): Promise<FeedDef[]> {
-  return (JSON.parse(await readFile(join(here, "../../urban-feeds.json"), "utf8")) as { feeds: FeedDef[] }).feeds;
+  const defs = (JSON.parse(await readFile(join(here, "../../urban-feeds.json"), "utf8")) as { feeds: Partial<FeedDef>[] }).feeds;
+  // the file lists only id, country, name and sources; the rest is what resolveFeeds expects
+  return defs.map((d) => ({ tier: "core", keep: ["bus"], ...d }) as FeedDef);
 }
 
 export async function writeUrbanLayer(o: UrbanOptions): Promise<UrbanResult> {
   const log = o.log ?? defaultLog;
   const cfg = await loadFeedsConfig(join(here, "../../feeds.json"));
   const urbanFeeds = await loadUrbanFeedDefs();
-  const feeds = await gatherFeeds({ cfg, urbanFeeds, workDir: o.work, assetsDir: o.assets, startDate: o.startDate, download: true });
+  const gathered = await gatherFeeds({ cfg, urbanFeeds, workDir: o.work, assetsDir: o.assets, startDate: o.startDate, download: true });
+  const feeds = gathered.feeds;
+  const cities = gathered.cities;
   log(`urban: ${feeds.length} feeds with local lines`);
   const al = loadAligners(o.work, o.assets, log);
   const astats: AlignStats = { patterns: {} };
   for (const f of feeds) alignFeed(f, al, astats);
   log(`urban: alignment ${JSON.stringify(astats.patterns)}`);
-  const built = buildUrban(feeds, o.stations);
+  const built = buildUrban(feeds, o.stations, cities);
   const w = await writeUrbanTiles(o.buildDir, built, log);
   const stats: Record<string, number> = { urbanFeeds: feeds.length, urbanLines: built.lines.length, urbanStations: built.stations.length, urbanFiles: w.files, urbanBytes: w.bytes };
   for (const m of [0, 1, 2, 3]) stats[`urban_${UMODE_NAME[m]}`] = built.lines.filter((l) => l.mode === m).length;
