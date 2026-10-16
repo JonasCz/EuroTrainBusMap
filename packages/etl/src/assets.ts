@@ -6,15 +6,16 @@
  *   basemap/{borders,labels}.json   Natural Earth 1:10m borders + country labels (GeoJSON)
  *   basemap/tiles-v2.tar            OSM land polygons + NE lakes as gzipped vector tiles (ONE object, unpacked by every build)
  *   rail/rail-graph-v1.bin          rail graph for corridor geometry (Overture → pruned graph)
+ *   rail/urbanrail-graph-v1.bin     tram / metro / light-rail track graph (aligns local-transport lines without shapes)
  *   road/road-graph-v1.bin          major-road graph for coach/bus corridor geometry (same format)
  *   manifest.json                   list of the keys above (read by the weekly build)
  *
- * Usage: node --import tsx src/assets.ts --out <assetsDir> [--work <dir>] [--only geonames,basemap,tiles,rail,road]
+ * Usage: node --import tsx src/assets.ts --out <assetsDir> [--work <dir>] [--only geonames,basemap,tiles,rail,urbanrail,road]
  * The weekly build reads the same directory layout via `build-data --assets <dir>`.
  */
 import { existsSync } from "node:fs";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
-import { RAIL_GRAPH_KEY, ROAD_GRAPH_KEY, buildRailAsset, buildRoadAsset } from "./geometry/refresh-rail.ts";
+import { RAIL_GRAPH_KEY, ROAD_GRAPH_KEY, URBAN_RAIL_GRAPH_KEY, buildRailAsset, buildRoadAsset, buildUrbanRailAsset } from "./geometry/refresh-rail.ts";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLACES_ASSET, loadPlaces } from "./geonames.ts";
@@ -47,7 +48,7 @@ async function main() {
   const get = (n: string) => (a.indexOf(n) >= 0 ? a[a.indexOf(n) + 1] : undefined);
   const out = resolve(get("--out") ?? join(repoRoot, "work", "assets"));
   const work = resolve(get("--work") ?? join(repoRoot, "work"));
-  const only = new Set((get("--only") ?? "geonames,basemap,tiles,rail,road").split(","));
+  const only = new Set((get("--only") ?? "geonames,basemap,tiles,rail,urbanrail,road").split(","));
   const cacheDir = join(work, "cache");
   await mkdir(out, { recursive: true });
   const cfg = await loadFeedsConfig(join(here, "..", "feeds.json"));
@@ -94,6 +95,18 @@ async function main() {
       log(`assets: ${r.key} (${(r.bytes / 1e6).toFixed(1)} MB, Overture ${r.release})`);
     } catch (e) {
       warn(`assets: rail asset failed: ${(e as Error).stack ?? e}`);
+      failed = true;
+    }
+  }
+
+  if (only.has("urbanrail")) {
+    await mkdir(join(out, "rail"), { recursive: true });
+    try {
+      // Tram / metro / light-rail track graph: aligns local-transport lines that come without shapes.
+      const r = await buildUrbanRailAsset(work, join(out, URBAN_RAIL_GRAPH_KEY), log);
+      log(`assets: ${r.key} (${(r.bytes / 1e6).toFixed(1)} MB, Overture ${r.release})`);
+    } catch (e) {
+      warn(`assets: urban rail asset failed: ${(e as Error).stack ?? e}`);
       failed = true;
     }
   }

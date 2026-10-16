@@ -1,0 +1,555 @@
+{
+ "note": "Extra GTFS feeds that only feed the local-transport layer (packages/etl/src/urban). Kept apart from feeds.json so the intercity pipeline and its --reuse-db key are untouched. Intercity feeds in feeds.json are scanned for local routes too.",
+ "feeds": [
+  {
+   "id": "u-fr-reseau-urbain-et-interurbain-dile-de-france-mobilites",
+   "country": "FR",
+   "name": "reseau-urbain-et-interurbain-dile-de-france-mobilites",
+   "sources": [
+    {
+     "transitous": "fr_reseau-urbain-et-interurbain-dile-de-france-mobilites.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-fr-lyon-tcl",
+   "country": "FR",
+   "name": "lyon-tcl",
+   "sources": [
+    {
+     "transitous": "fr_lyon-tcl.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-fr-tisseo-reseau-transport-urbain-toulousain",
+   "country": "FR",
+   "name": "tisseo-reseau-transport-urbain-toulousain",
+   "sources": [
+    {
+     "transitous": "fr_tisseo-reseau-transport-urbain-toulousain.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-fr-reseau-de-transports-collectifs-naolib",
+   "country": "FR",
+   "name": "reseau-de-transports-collectifs-naolib",
+   "sources": [
+    {
+     "transitous": "fr_reseau-de-transports-collectifs-naolib.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-fr-donnees-theoriques-gtfs-et-temps-reel-siri-lite-du-reseau",
+   "country": "FR",
+   "name": "donnees-theoriques-gtfs-et-temps-reel-siri-lite-du-reseau-cts",
+   "sources": [
+    {
+     "transitous": "fr_donnees-theoriques-gtfs-et-temps-reel-siri-lite-du-reseau-cts.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-fr-ilevia-localisation-des-arrets-bus-metro-et-tram-gtfs",
+   "country": "FR",
+   "name": "ilevia-localisation-des-arrets-bus-metro-et-tram-gtfs",
+   "sources": [
+    {
+     "transitous": "fr_ilevia-localisation-des-arrets-bus-metro-et-tram-gtfs.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-fr-reseau-urbain-star",
+   "country": "FR",
+   "name": "reseau-urbain-STAR",
+   "sources": [
+    {
+     "transitous": "fr_reseau-urbain-STAR.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-fr-offre-de-transport-tam-en-temps-reel-gtfs-rt-urbain-et-su",
+   "country": "FR",
+   "name": "offre-de-transport-tam-en-temps-reel-gtfs-rt-urbain-et-suburbain",
+   "sources": [
+    {
+     "transitous": "fr_offre-de-transport-tam-en-temps-reel-gtfs-rt-urbain-et-suburbain.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-fr-donnees-statiques-et-temps-reel-du-reseau-astuce-metropol",
+   "country": "FR",
+   "name": "donnees-statiques-et-temps-reel-du-reseau-astuce-metropole-rouen-normandie",
+   "sources": [
+    {
+     "transitous": "fr_donnees-statiques-et-temps-reel-du-reseau-astuce-metropole-rouen-normandie.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-es-metro-de-madrid",
+   "country": "ES",
+   "name": "Metro-de-Madrid",
+   "sources": [
+    {
+     "transitous": "es_Metro-de-Madrid.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-es-autobús-urbano-de-madrid-(crtm)",
+   "country": "ES",
+   "name": "Autobús-urbano-de-Madrid-(CRTM)",
+   "sources": [
+    {
+     "transitous": "es_Autobús-urbano-de-Madrid-(CRTM).gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-es-transporte-metropolitano-de-barcelona-(bus-y-metro)",
+   "country": "ES",
+   "name": "Transporte-metropolitano-de-Barcelona-(Bus-y-Metro)",
+   "sources": [
+    {
+     "transitous": "es_Transporte-metropolitano-de-Barcelona-(Bus-y-Metro).gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-es-tram-barcelona",
+   "country": "ES",
+   "name": "TRAM-Barcelona",
+   "sources": [
+    {
+     "transitous": "es_TRAM-Barcelona.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-es-ferrocarriles-de-la-generalitat-de-cataluña",
+   "country": "ES",
+   "name": "Ferrocarriles-de-la-Generalitat-de-Cataluña",
+   "sources": [
+    {
+     "transitous": "es_Ferrocarriles-de-la-Generalitat-de-Cataluña.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-es-metro-bilbao",
+   "country": "ES",
+   "name": "Metro-Bilbao",
+   "sources": [
+    {
+     "transitous": "es_Metro-Bilbao.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-es-metro-de-valencia",
+   "country": "ES",
+   "name": "Metro-de-Valencia",
+   "sources": [
+    {
+     "transitous": "es_Metro-de-Valencia.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-es-emt-valencia",
+   "country": "ES",
+   "name": "EMT-Valencia",
+   "sources": [
+    {
+     "transitous": "es_EMT-Valencia.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-es-autobús-y-tranvía-de-sevilla",
+   "country": "ES",
+   "name": "Autobús-y-tranvía-de-Sevilla",
+   "sources": [
+    {
+     "transitous": "es_Autobús-y-tranvía-de-Sevilla.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-es-metro-de-sevilla",
+   "country": "ES",
+   "name": "Metro-de-Sevilla",
+   "sources": [
+    {
+     "transitous": "es_Metro-de-Sevilla.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-es-metro-de-málaga",
+   "country": "ES",
+   "name": "Metro-de-Málaga",
+   "sources": [
+    {
+     "transitous": "es_Metro-de-Málaga.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-es-transporte-urbano-de-zaragoza",
+   "country": "ES",
+   "name": "Transporte-urbano-de-Zaragoza",
+   "sources": [
+    {
+     "transitous": "es_Transporte-urbano-de-Zaragoza.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-es-metrotenerife",
+   "country": "ES",
+   "name": "Metrotenerife",
+   "sources": [
+    {
+     "transitous": "es_Metrotenerife.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-it-lombardia-atm",
+   "country": "IT",
+   "name": "Lombardia-ATM",
+   "sources": [
+    {
+     "transitous": "it_Lombardia-ATM.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-it-lazio-rome",
+   "country": "IT",
+   "name": "Lazio-Rome",
+   "sources": [
+    {
+     "transitous": "it_Lazio-Rome.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-it-piemonte-gruppo-torinese-trasporti",
+   "country": "IT",
+   "name": "Piemonte-Gruppo-Torinese-Trasporti",
+   "sources": [
+    {
+     "transitous": "it_Piemonte-Gruppo-Torinese-Trasporti.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-it-campania-anm",
+   "country": "IT",
+   "name": "Campania-ANM",
+   "sources": [
+    {
+     "transitous": "it_Campania-ANM.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-it-liguria-genova",
+   "country": "IT",
+   "name": "Liguria-Genova",
+   "sources": [
+    {
+     "transitous": "it_Liguria-Genova.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-it-emilia-romagna-tper-bologna",
+   "country": "IT",
+   "name": "Emilia-Romagna-TPER-Bologna",
+   "sources": [
+    {
+     "transitous": "it_Emilia-Romagna-TPER-Bologna.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-pt-metro-lisboa",
+   "country": "PT",
+   "name": "Metro-Lisboa",
+   "sources": [
+    {
+     "transitous": "pt_Metro-Lisboa.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-pt-carris",
+   "country": "PT",
+   "name": "Carris",
+   "sources": [
+    {
+     "transitous": "pt_Carris.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-pt-metro-porto",
+   "country": "PT",
+   "name": "Metro-Porto",
+   "sources": [
+    {
+     "transitous": "pt_Metro-Porto.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-pt-porto-stcp",
+   "country": "PT",
+   "name": "Porto-STCP",
+   "sources": [
+    {
+     "transitous": "pt_Porto-STCP.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-cz-pid",
+   "country": "CZ",
+   "name": "PID",
+   "sources": [
+    {
+     "transitous": "cz_PID.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-cz-pmdp",
+   "country": "CZ",
+   "name": "PMDP",
+   "sources": [
+    {
+     "transitous": "cz_PMDP.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-cz-dpmo",
+   "country": "CZ",
+   "name": "DPMO",
+   "sources": [
+    {
+     "transitous": "cz_DPMO.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-hu-bkk",
+   "country": "HU",
+   "name": "bkk",
+   "sources": [
+    {
+     "transitous": "hu_bkk.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-pl-warszawa",
+   "country": "PL",
+   "name": "Warszawa",
+   "sources": [
+    {
+     "transitous": "pl_Warszawa.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-pl-ztp-kraków-t",
+   "country": "PL",
+   "name": "ZTP-Kraków-T",
+   "sources": [
+    {
+     "transitous": "pl_ZTP-Kraków-T.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-pl-ztp-kraków-a",
+   "country": "PL",
+   "name": "ZTP-Kraków-A",
+   "sources": [
+    {
+     "transitous": "pl_ZTP-Kraków-A.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-pl-poznań",
+   "country": "PL",
+   "name": "Poznań",
+   "sources": [
+    {
+     "transitous": "pl_Poznań.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-pl-mpk-wrocław",
+   "country": "PL",
+   "name": "MPK-Wrocław",
+   "sources": [
+    {
+     "transitous": "pl_MPK-Wrocław.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-pl-transportgzm",
+   "country": "PL",
+   "name": "TransportGZM",
+   "sources": [
+    {
+     "transitous": "pl_TransportGZM.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-sk-bratislava",
+   "country": "SK",
+   "name": "Bratislava",
+   "sources": [
+    {
+     "transitous": "sk_Bratislava.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-ro-bucuresti-ilfov",
+   "country": "RO",
+   "name": "Bucuresti-Ilfov",
+   "sources": [
+    {
+     "transitous": "ro_Bucuresti-Ilfov.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-bg-sofia",
+   "country": "BG",
+   "name": "sofia",
+   "sources": [
+    {
+     "transitous": "bg_sofia.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-gr-athens-bus",
+   "country": "GR",
+   "name": "Athens-Bus",
+   "sources": [
+    {
+     "transitous": "gr_Athens-Bus.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-gr-athens-rail",
+   "country": "GR",
+   "name": "Athens-Rail",
+   "sources": [
+    {
+     "transitous": "gr_Athens-Rail.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-hr-zet",
+   "country": "HR",
+   "name": "zet",
+   "sources": [
+    {
+     "transitous": "hr_zet.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-rs-beograd",
+   "country": "RS",
+   "name": "Beograd",
+   "sources": [
+    {
+     "transitous": "rs_Beograd.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-si-lpp",
+   "country": "SI",
+   "name": "lpp",
+   "sources": [
+    {
+     "transitous": "si_lpp.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-be-stib",
+   "country": "BE",
+   "name": "stib",
+   "sources": [
+    {
+     "transitous": "be_stib.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-fi-hsl",
+   "country": "FI",
+   "name": "hsl",
+   "sources": [
+    {
+     "transitous": "fi_hsl.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-tr-izmir-metro",
+   "country": "TR",
+   "name": "izmir-metro",
+   "sources": [
+    {
+     "transitous": "tr_izmir-metro.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-ua-kyiv",
+   "country": "UA",
+   "name": "kyiv",
+   "sources": [
+    {
+     "transitous": "ua_kyiv.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-ua-lviv",
+   "country": "UA",
+   "name": "lviv",
+   "sources": [
+    {
+     "transitous": "ua_lviv.gtfs.zip"
+    }
+   ]
+  }
+ ]
+}

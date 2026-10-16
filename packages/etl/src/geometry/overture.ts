@@ -121,7 +121,7 @@ export async function resolveRelease(c: DuckDBConnection | null, log: Log): Prom
 /** What to extract from Overture transportation segments. */
 export interface ExtractSpec {
   /** file prefix: <kind>-europe-<release>.parquet */
-  kind: 'rail' | 'road';
+  kind: 'rail' | 'road' | 'urbanrail';
   /** env var with a parquet path that overrides the extraction */
   env: string;
   /** SELECT list */
@@ -150,6 +150,16 @@ export const ROAD_SPEC: ExtractSpec = {
   where: `subtype = 'road' AND class IN (${ROAD_CLASSES.map((k) => `'${k}'`).join(',')})
     AND ${flagFilter('road_flags', ['is_abandoned', 'is_under_construction'])}`,
 };
+
+/** Tram, metro, light rail, funicular and monorail track (only used to align local-transport lines that come without shapes). */
+export const URBAN_RAIL_CLASSES = ['tram', 'subway', 'light_rail', 'funicular', 'monorail'];
+export const URBAN_RAIL_SPEC: ExtractSpec = {
+  kind: 'urbanrail',
+  env: 'ETBM_URBAN_RAIL_PARQUET',
+  select: 'class, geometry',
+  where: `subtype = 'rail' AND class IN (${URBAN_RAIL_CLASSES.map((k) => `'${k}'`).join(',')})`,
+};
+export const ensureUrbanRailExtract = (workDir: string, log: Log): Promise<string> => ensureOvertureExtract(workDir, log, URBAN_RAIL_SPEC);
 
 /** Ensure the Europe rail extract exists in the work dir; returns its path. */
 export const ensureRailExtract = (workDir: string, log: Log): Promise<string> => ensureOvertureExtract(workDir, log, RAIL_SPEC);
@@ -236,11 +246,11 @@ export const HIGH_SPEED_NAME =
 export const NEW_LINE_NAME = '(schnellfahrstrecke|neubaustrecke|snabbtåg)';
 
 /** Read the extract (WKB linestrings) into a RailGraph. */
-export async function loadRailGraph(parquet: string, workDir: string, log: Log, simplifyTol = 20): Promise<RailGraph> {
+export async function loadRailGraph(parquet: string, workDir: string, log: Log, simplifyTol = 20, opts: { plain?: boolean } = {}): Promise<RailGraph> {
   const c = await openDuckDB(workDir, log, ['spatial']);
   const t0 = Date.now();
   const b = new RailGraphBuilder();
-  const res = await c.stream(`
+  const res = await c.stream(opts.plain ? `SELECT 1.0 AS mult, ST_AsWKB(geometry) AS wkb FROM read_parquet('${parquet}')` : `
     SELECT
       CASE class WHEN 'unknown' THEN ${COST.unknown} WHEN 'narrow_gauge' THEN ${COST.narrowGauge} ELSE 1.0 END
       * CASE WHEN coalesce(list_bool_or(list_transform(rail_flags, f -> f.between IS NULL

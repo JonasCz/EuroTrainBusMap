@@ -50,7 +50,7 @@ export async function initSchema(db: Db): Promise<void> {
   `);
 }
 
-function listZip(zip: string): string[] {
+export function listZip(zip: string): string[] {
   return execFileSync("unzip", ["-Z1", zip], { maxBuffer: 1 << 26 })
     .toString("utf8")
     .split("\n")
@@ -58,7 +58,7 @@ function listZip(zip: string): string[] {
     .filter(Boolean);
 }
 
-function extract(zip: string, entry: string, dir: string): string {
+export function extract(zip: string, entry: string, dir: string): string {
   execFileSync("unzip", ["-o", "-j", "-q", zip, entry, "-d", dir], { stdio: ["ignore", "ignore", "pipe"] });
   return join(dir, entry.split("/").pop()!);
 }
@@ -68,12 +68,12 @@ async function nextKey(db: Db, table: string, col: string): Promise<number> {
 }
 
 /** read_csv expression for a GTFS file (all varchar, tolerant). */
-function csv(path: string): string {
+export function csv(path: string): string {
   return `read_csv(${sqlStr(path)}, all_varchar=true, header=true, delim=',', quote='"', escape='"', strict_mode=false, null_padding=true, ignore_errors=true, sample_size=-1)`;
 }
 
 /** Map of normalized column name → SQL expression (quoted original). */
-async function columns(db: Db, path: string): Promise<Map<string, string>> {
+export async function columns(db: Db, path: string): Promise<Map<string, string>> {
   const rows = await db.all<{ column_name: string }>(`DESCRIBE SELECT * FROM ${csv(path)}`);
   const m = new Map<string, string>();
   for (const r of rows) {
@@ -83,7 +83,7 @@ async function columns(db: Db, path: string): Promise<Map<string, string>> {
   return m;
 }
 
-function c(cols: Map<string, string>, name: string, fallback = "NULL::VARCHAR", alias = ""): string {
+export function c(cols: Map<string, string>, name: string, fallback = "NULL::VARCHAR", alias = ""): string {
   const q = cols.get(name);
   return q ? `nullif(trim(${alias ? alias + "." : ""}${q}), '')` : fallback;
 }

@@ -25,7 +25,7 @@ import { assemble, type RailGraph } from './graph.ts';
 
 export const RAIL_FORMAT = 1;
 /** The same format stores the rail graph and the major-road graph. */
-export type GraphKind = 'rail' | 'road';
+export type GraphKind = 'rail' | 'road' | 'urbanrail';
 const MAGIC = 'ETBMRAIL';
 
 export interface RailBinHeader {

@@ -60,6 +60,8 @@ export interface Manifest {
   mapdata?: { version: number; core: string; tiles: import("./netmap.ts").TileIndex };
   /** Land / lake vector tiles (shared by all builds); without it the web app falls back to basemap/{land,lakes}.json. */
   basemap?: BasemapInfo;
+  /** Local transport (metro / tram / city bus) vector tiles, see urban.ts; absent in builds without the layer. */
+  urban?: import("./urban.ts").UrbanInfo;
 }
 
 export interface City {
