@@ -240,6 +240,9 @@ h2:focus {
   background: var(--surface-2);
   border-color: transparent;
 }
+.chip[hidden] {
+  display: none;
+}
 .chip:disabled {
   opacity: 0.35;
   cursor: not-allowed;

@@ -1,6 +1,6 @@
 ---
 name: refresh-geometry-assets
-description: Rebuild the prebuilt routing graphs used to draw corridors along real infrastructure. These are the rail graph (rail/rail-graph-v1.bin, for trains) and the major-road graph (road/road-graph-v1.bin, for coaches and buses). Both are built from Overture Maps and stored in R2. Use when Overture publishes a new release, when lines look wrong or miss new track or roads, after changing the graph format, costs, or road classes in packages/etl/src/geometry, or when the weekly build warns "no rail graph" or "no road graph".
+description: Rebuild the prebuilt routing graphs used to draw corridors along real infrastructure. These are the rail graph (rail/rail-graph-v1.bin, for trains), the major-road graph (road/road-graph-v1.bin, for coaches and buses) and the tram / metro track graph (rail/urbanrail-graph-v1.bin, aligns local-transport lines that come without shapes). Both are built from Overture Maps and stored in R2. Use when Overture publishes a new release, when lines look wrong or miss new track or roads, after changing the graph format, costs, or road classes in packages/etl/src/geometry, or when the weekly build warns "no rail graph" or "no road graph".
 ---
 
 # Refresh geometry assets (rail + road graphs)
@@ -12,6 +12,7 @@ The bucket is `eurotrainbusmap-assets`:
 | key | content | size |
 |---|---|---|
 | `rail/rail-graph-v1.bin` | standard, narrow and unknown gauge rail (disused / abandoned / under-construction kept at ×4 / ×6 / ×3 cost), 20 m geometry, gaps < 300 m bridged, fragments < 3 km dropped | ~27 MB |
+| `rail/urbanrail-graph-v1.bin` | Overture rail classes `tram`, `subway`, `light_rail`, `funicular`, `monorail` (the other graphs drop them), 20 m geometry, dead ends within 60 m of other track joined, fragments < 600 m dropped; ~2 MB (23 MB extract, ~23 min to extract, 5 s to build). Used only by the local-transport layer (`packages/etl/src/urban/align.ts`), `ETBM_URBAN_RAIL_GRAPH` overrides | ~2 MB |
 | `road/road-graph-v1.bin` | motorway, trunk, primary, secondary and tertiary roads plus their `_link` ramps, 30 m geometry, fragments < 20 km dropped | ~114 MB (3.5 M nodes, ~530 MB RAM) |
 
 `v1` is `RAIL_FORMAT` in `packages/etl/src/geometry/railbin.ts`. The file format is shared and
@@ -27,7 +28,7 @@ missing, the corridors become unsnapped curves and the log shows a `WARNING`.
 
 Run the **refresh-assets** workflow: Actions → "Refresh build assets (R2)" → Run workflow. It
 also runs monthly on the 4th.
-- `only` takes a comma-separated subset of `geonames,basemap,rail,road`. Use `rail,road` to rebuild only the graphs.
+- `only` takes a comma-separated subset of `geonames,basemap,tiles,rail,urbanrail,road`. Use `rail,road` to rebuild only the graphs.
 - It runs `packages/etl/src/assets.ts`. That calls `buildRailAsset` / `buildRoadAsset` from
   `packages/etl/src/geometry/refresh-rail.ts`, then uploads the results and `manifest.json` (last).
 - The Overture extracts are kept in the Actions cache (`overture-v2-*`). A re-run on the same
@@ -41,6 +42,7 @@ also runs monthly on the 4th.
 cd packages/etl
 pnpm rail:refresh ../../work            # -> ../../work/geometry/rail-graph-v1.bin
 pnpm rail:refresh ../../work --road     # -> ../../work/geometry/road-graph-v1.bin
+pnpm assets -- --out ../../work/assets --work ../../work --only urbanrail   # -> work/assets/rail/urbanrail-graph-v1.bin
 # all assets, like CI:
 pnpm assets -- --out ../../work/assets --work ../../work --only rail,road
 ```

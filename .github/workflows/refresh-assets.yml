@@ -3,7 +3,7 @@ name: Refresh build assets (R2)
 # Rebuilds the slow-changing inputs of the weekly data build and uploads them to the
 # R2 bucket `eurotrainbusmap-assets`:
 #   geonames/places-europe.tsv.gz   basemap/{borders,labels}.json   basemap/tiles-v2.tar (land + lakes vector tiles)
-#   rail/rail-graph-v1.bin   road/road-graph-v1.bin
+#   rail/rail-graph-v1.bin   rail/urbanrail-graph-v1.bin (tram / metro track)   road/road-graph-v1.bin
 #   manifest.json
 # Overture publishes monthly; GeoNames / Natural Earth change rarely.
 on:
@@ -12,8 +12,8 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Comma-separated subset to rebuild (geonames,basemap,tiles,rail,road); others are kept from R2"
-        default: "geonames,basemap,tiles,rail,road"
+        description: "Comma-separated subset to rebuild (geonames,basemap,tiles,rail,urbanrail,road); others are kept from R2"
+        default: "geonames,basemap,tiles,rail,urbanrail,road"
 
 concurrency:
   group: refresh-assets
@@ -83,7 +83,7 @@ jobs:
       - name: Build assets
         run: |
           unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_REGION AWS_REGION
-          pnpm --filter @etbm/etl run assets -- --out "$WORK/assets" --work "$WORK" --only "${{ inputs.only || 'geonames,basemap,tiles,rail,road' }}"
+          pnpm --filter @etbm/etl run assets -- --out "$WORK/assets" --work "$WORK" --only "${{ inputs.only || 'geonames,basemap,tiles,rail,urbanrail,road' }}"
           cat work/assets/manifest.json
           du -ah work/assets
 

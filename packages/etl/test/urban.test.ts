@@ -107,6 +107,8 @@ describe("buildUrban", () => {
     // the interchange is more important than the terminus
     expect(beta.imp).toBeGreaterThan(b.stations.find((s) => s.name === "Gamma")!.imp - 1e-9);
     expect(b.lines).toHaveLength(3);
+    // no stop before its first line
+    for (const s of b.stations) expect(s.z).toBeGreaterThanOrEqual(Math.min(s.lz, 99) - 1e-9);
     expect(b.lines.find((l) => l.name === "T1")!.stops.length).toBe(3);
   });
   it("makes tile features with compact properties", () => {

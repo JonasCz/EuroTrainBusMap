@@ -35,6 +35,8 @@ export interface UrbanStation {
   z: number;
   /** attached to an intercity station (no dot of its own) */
   ix: boolean;
+  /** first zoom of the earliest line that calls here (a stop never shows before its lines) */
+  lz: number;
 }
 
 /** First zoom at which a line is drawn: metro first, then trams, buses by frequency. */
@@ -233,10 +235,11 @@ export function buildUrban(feeds: UrbanFeed[], intercity: { lon: number; lat: nu
     let modes = 0;
     for (const g of m) modes |= stopMode[g]!;
     const name = cities ? stripCityName(d.name, cities.cityAt(d.lon, d.lat)) : d.name;
-    return { name, lon: d.lon, lat: d.lat, modes, lines: [], imp: 0, z: 15, ix: false };
+    return { name, lon: d.lon, lat: d.lat, modes, lines: [], imp: 0, z: 15, ix: false, lz: 99 };
   });
   // lines per station, importance
   const lineSets: Map<string, number>[] = stations.map(() => new Map());
+  const railLz: number[] = stations.map(() => 99), busLz: number[] = stations.map(() => 99);
   for (const l of lines) {
     const w = MODE_W[l.mode] * (1 + Math.min(l.tpd, 200) / 100);
     const seen = new Set<number>();
@@ -244,6 +247,8 @@ export function buildUrban(feeds: UrbanFeed[], intercity: { lon: number; lat: nu
       const si = stationOfStop[g]!;
       if (si < 0 || seen.has(si)) continue;
       seen.add(si);
+      if (l.mode === UMode.Bus) busLz[si] = Math.min(busLz[si]!, l.lz);
+      else railLz[si] = Math.min(railLz[si]!, l.lz);
       const key = `${l.mode}:${l.name}`;
       const m = lineSets[si]!;
       m.set(key, Math.max(m.get(key) ?? 0, w));
@@ -287,7 +292,12 @@ export function buildUrban(feeds: UrbanFeed[], intercity: { lon: number; lat: nu
   const bus = stations.map((s, i) => i).filter((i) => !(stations[i]!.modes & ~(1 << UMode.Bus)));
   for (const [set, levels, px] of [[rail, RAIL_STATION_LEVELS, 24], [bus, BUS_STATION_LEVELS, 12]] as const) {
     const z = thinZooms(set.map((i) => stations[i]!), levels, px);
-    set.forEach((i, k) => (stations[i]!.z = z[k]!));
+    set.forEach((i, k) => {
+      const s = stations[i]!;
+      s.lz = set === rail ? railLz[i]! : busLz[i]!;
+      // a stop shows with its first line, not before: a dot in the middle of nowhere reads as an error
+      s.z = Math.max(z[k]!, s.lz < 99 ? s.lz : 0);
+    });
   }
   return { lines: lines.map(({ fi: _fi, ...l }) => l as DrawnLine), stations };
 }

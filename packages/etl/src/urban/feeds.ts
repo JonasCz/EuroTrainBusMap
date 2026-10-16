@@ -62,6 +62,7 @@ export async function gatherFeeds(o: GatherOptions): Promise<{ feeds: UrbanFeed[
   const todo: { rf: ResolvedFeed; extra: boolean }[] = [...baseFeeds.map((rf) => ({ rf, extra: false })), ...extra.map((rf) => ({ rf, extra: true }))];
   // downloads of extra feeds run a few ahead of the extraction
   const dl = new Map<string, Promise<string | null>>();
+  const extraKeys = new Set(extra.map((e) => e.key));
   const startDl = (rf: ResolvedFeed) => {
     if (dl.has(rf.key)) return;
     const dest = join(cacheDir, "feeds", rf.key + ".zip");
@@ -69,7 +70,7 @@ export async function gatherFeeds(o: GatherOptions): Promise<{ feeds: UrbanFeed[
       rf.key,
       (existsSync(dest) && !o.maxAgeH
         ? Promise.resolve(dest)
-        : o.download
+        : o.download && extraKeys.has(rf.key) // the intercity feeds were downloaded by the main stage (cache/feeds)
           ? downloadWithFallback(rf.urls, dest, o.cfg.userAgent, o.maxAgeH).then(() => dest)
           : Promise.resolve(existsSync(dest) ? dest : null)
       ).catch((e) => {

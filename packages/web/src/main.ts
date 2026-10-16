@@ -41,6 +41,7 @@ async function main(): Promise<void> {
   const ds = await loadDataSet(manifest, Promise.race([map.firstNetPaint, new Promise((r) => setTimeout(r, 2000))]));
   const net = buildNet(ds);
   panel = new Panel(net, side);
+  panel.showLocalChip(!!manifest.urban);
   map.attachNet(net);
   app = new App(net, map, panel, padding);
   panel.actions = app as unknown as PanelActions;

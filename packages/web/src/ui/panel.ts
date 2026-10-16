@@ -132,6 +132,12 @@ export class Panel {
     this.chips.replaceChildren(...items);
   }
 
+  /** The local-transport chip only makes sense when the build has the layer. */
+  showLocalChip(on: boolean): void {
+    const b = this.chips.querySelector<HTMLElement>(".chip-local");
+    if (b) b.hidden = !on;
+  }
+
   setFilters(f: Filters): void {
     for (const b of this.chips.querySelectorAll<HTMLButtonElement>(".chip")) {
       if (b.dataset.local) {
