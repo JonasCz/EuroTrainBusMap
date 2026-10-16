@@ -17,26 +17,38 @@ export function glyphsUrl(): string {
   return "etbmgz://" + absUrl("glyphs/") + "{fontstack}/{range}.pbf.gz";
 }
 
-export function baseStyle(theme: Theme, basemapUrl: (name: string) => string): StyleSpecification {
+/**
+ * `tiles`: root URL of the land / lake vector tiles (BasemapInfo), or null to draw the 1:50m GeoJSON
+ * land / lakes in `basemap/` (dev fixtures).
+ */
+export function baseStyle(theme: Theme, basemapUrl: (name: string) => string, tiles: { root: string; minzoom: number; maxzoom: number; bounds: [number, number, number, number] } | null = null): StyleSpecification {
   return {
     version: 8,
     glyphs: glyphsUrl(),
     projection: { type: "globe" },
     sources: {
-      land: { type: "geojson", data: basemapUrl("land"), buffer: 4, tolerance: 0.3 },
-      lakes: { type: "geojson", data: basemapUrl("lakes"), tolerance: 0.3 },
+      ...(tiles
+        ? { base: { type: "vector", tiles: [`etbmbase://${tiles.root}tiles/{z}/{x}/{y}.pbf.gz`], minzoom: tiles.minzoom, maxzoom: tiles.maxzoom, bounds: tiles.bounds } }
+        : {
+            land: { type: "geojson", data: basemapUrl("land"), buffer: 4, tolerance: 0.3 },
+            lakes: { type: "geojson", data: basemapUrl("lakes"), tolerance: 0.3 },
+          }),
       borders: { type: "geojson", data: basemapUrl("borders"), tolerance: 0.3 },
       countries: { type: "geojson", data: basemapUrl("labels") },
     },
-    layers: baseLayers(theme),
+    layers: baseLayers(theme, !!tiles),
   };
 }
 
-export function baseLayers(t: Theme): LayerSpecification[] {
+export function baseLayers(t: Theme, tiles = false): LayerSpecification[] {
   return [
     { id: "ocean", type: "background", paint: { "background-color": t.ocean } },
-    { id: "land", type: "fill", source: "land", paint: { "fill-color": t.land, "fill-antialias": true } },
-    { id: "lakes", type: "fill", source: "lakes", paint: { "fill-color": t.lake } },
+    tiles
+      ? { id: "land", type: "fill", source: "base", "source-layer": "land", paint: { "fill-color": t.land, "fill-antialias": true } }
+      : { id: "land", type: "fill", source: "land", paint: { "fill-color": t.land, "fill-antialias": true } },
+    tiles
+      ? { id: "lakes", type: "fill", source: "base", "source-layer": "lake", paint: { "fill-color": t.lake, "fill-antialias": true } }
+      : { id: "lakes", type: "fill", source: "lakes", paint: { "fill-color": t.lake } },
     {
       id: "borders",
       type: "line",

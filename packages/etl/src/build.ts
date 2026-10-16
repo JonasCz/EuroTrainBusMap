@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -46,6 +46,7 @@ import { GridIndex, fastDist, greatCircle, haversine, round5, simplifyLine, type
 import { log, warn, type StageTimer } from "./util/log.ts";
 import { runSanity } from "./sanity.ts";
 import { writeMapData } from "./mapdata.ts";
+import { BASEMAP_DIR, BASEMAP_MAXZOOM, BASEMAP_MINZOOM, BASEMAP_TILES_KEY, BASEMAP_VERSION, EUROPE_BBOX, installBasemapTiles } from "./basemap/tiles.ts";
 
 export interface BuildCtx {
   db: Db;
@@ -1024,27 +1025,38 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     fileCount++;
   }
 
-  // basemap (frontend script)
+  // basemap: small GeoJSON layers (borders, country labels) per build + land / lake vector tiles shared by all builds
+  let basemapInfo: Manifest["basemap"];
   if (args.basemap) {
     timer.start("basemap");
     try {
       const bmOut = join(outDir, "basemap");
       const bmAsset = join(args.assets, "basemap");
       const modPath = join(import.meta.dirname, "../../web/scripts/basemap.ts");
-      const have = BASEMAP_FILES.every((f) => existsSync(join(bmAsset, f)));
+      const tarFile = join(args.assets, BASEMAP_TILES_KEY);
+      const haveTiles = existsSync(tarFile);
+      const files = haveTiles ? BASEMAP_FILES : [...BASEMAP_FILES, "land.json", "lakes.json"];
+      const have = files.every((f) => existsSync(join(bmAsset, f)));
       if (have || existsSync(modPath)) {
         if (have) log(`basemap: using asset ${bmAsset}`);
         else {
-          const mod = (await import(modPath)) as { buildBasemap: (o: { outDir: string; cacheDir?: string; log?: (s: string) => void }) => Promise<void> };
-          await mod.buildBasemap({ outDir: bmAsset, cacheDir: join(ctx.cacheDir, "basemap"), log });
+          const mod = (await import(modPath)) as { buildBasemap: (o: { outDir: string; cacheDir?: string; legacyLayers?: boolean; log?: (s: string) => void }) => Promise<void> };
+          await mod.buildBasemap({ outDir: bmAsset, cacheDir: join(ctx.cacheDir, "basemap"), legacyLayers: !haveTiles, log });
         }
         await mkdir(bmOut, { recursive: true });
-        for (const f of BASEMAP_FILES) if (existsSync(join(bmAsset, f))) await copyFile(join(bmAsset, f), join(bmOut, f));
+        for (const f of files) if (existsSync(join(bmAsset, f))) await copyFile(join(bmAsset, f), join(bmOut, f));
         for (const f of await readdir(bmOut)) {
           totalBytes += (await stat(join(bmOut, f))).size;
           fileCount++;
         }
       } else warn("basemap script not found, skipping");
+      if (haveTiles) {
+        const n = await installBasemapTiles(tarFile, outRoot);
+        const bytes = (await readFile(join(outRoot, BASEMAP_DIR, "index.json"), "utf8")).length;
+        basemapInfo = { version: BASEMAP_VERSION, dir: BASEMAP_DIR, minzoom: BASEMAP_MINZOOM, maxzoom: BASEMAP_MAXZOOM, bounds: EUROPE_BBOX };
+        stats.basemapTiles = n - 1;
+        log(`basemap: ${n} tile files unpacked to ${join(outRoot, BASEMAP_DIR)} (index ${(bytes / 1024).toFixed(0)} KiB)`);
+      } else warn(`basemap: ${BASEMAP_TILES_KEY} not in the assets; drawing the coarse 1:50m land / lakes (run the refresh-assets workflow)`);
     } catch (e) {
       warn(`basemap failed: ${(e as Error).message}`);
     }
@@ -1103,7 +1115,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   timer.end();
 
   stats.durationSec = Math.round((Date.now() - ctx.t0) / 1000);
-  const manifest: Manifest = { schema: SCHEMA_VERSION, build, generatedAt: new Date().toISOString(), startDate: args.startDate, days: D, stats, mapdata: md.mapdata };
+  const manifest: Manifest = { schema: SCHEMA_VERSION, build, generatedAt: new Date().toISOString(), startDate: args.startDate, days: D, stats, mapdata: md.mapdata, ...(basemapInfo ? { basemap: basemapInfo } : {}) };
   Object.assign(report, {
     build,
     stats,
@@ -1195,10 +1207,11 @@ function buildAttribution(ctx: BuildCtx): AttributionFile {
     { name: "Transitous (feed mirror)", license: "various", url: "https://transitous.org/" },
     { name: "GeoNames", license: "CC-BY-4.0", url: "https://www.geonames.org/" },
     { name: "OpenStreetMap via Overture Maps (rail geometry)", license: "ODbL-1.0", url: "https://www.openstreetmap.org/copyright", attribution: "© OpenStreetMap contributors" },
-    { name: "Natural Earth (basemap)", license: "Public Domain", url: "https://www.naturalearthdata.com/" },
+    { name: "Natural Earth (borders, lakes)", license: "Public Domain", url: "https://www.naturalearthdata.com/" },
+    { name: "OpenStreetMap land polygons (coastline)", license: "ODbL-1.0", url: "https://osmdata.openstreetmap.de/data/land-polygons.html", attribution: "© OpenStreetMap contributors" },
   );
   return { sources };
 }
 
-export const BASEMAP_FILES = ["land.json", "borders.json", "lakes.json", "labels.json"];
+export const BASEMAP_FILES = ["borders.json", "labels.json"];
 

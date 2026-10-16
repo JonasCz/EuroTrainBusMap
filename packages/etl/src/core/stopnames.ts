@@ -9,7 +9,7 @@
  * feeds whose stop ids change between releases.
  */
 import { fastDist } from "../util/geo.ts";
-import { fold } from "./names.ts";
+import { fold, stripPlatform } from "./names.ts";
 
 export type StopNameEntry =
   | { action: "merge"; station: string; near?: [number, number]; note?: string }
@@ -103,7 +103,7 @@ export function applyStopNames(
   // index stations by normalised name
   const byName = new Map<string, number[]>();
   stations.forEach((s, i) => {
-    const k = normName(s.name);
+    const k = normName(stripPlatform(s.name)); // reviewed targets may still carry a platform ("Rosyth (Platform 1)")
     let l = byName.get(k);
     if (!l) byName.set(k, (l = []));
     l.push(i);
@@ -114,7 +114,7 @@ export function applyStopNames(
     if (e.action === "merge") {
       const [x, y] = e.near ?? [st.lon, st.lat];
       let best = -1, bd = Infinity;
-      for (const j of byName.get(normName(e.station)) ?? []) {
+      for (const j of byName.get(normName(stripPlatform(e.station))) ?? []) {
         const s = stations[j]!;
         const d = fastDist(x, y, s.lon, s.lat);
         if (d <= radiusM && d < bd) [best, bd] = [j, d];

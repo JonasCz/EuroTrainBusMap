@@ -1,5 +1,5 @@
 import { fastDist } from "../util/geo.ts";
-import { fold, nameSimilarity, nameQuality, prettifyName } from "./names.ts";
+import { fold, nameSimilarity, nameQuality, prettifyName, stripPlatform } from "./names.ts";
 
 export interface StopIn {
   lon: number;
@@ -131,20 +131,36 @@ export function mergeStations(stops: StopIn[], opts: MergeOptions = DEFAULT_MERG
   return { stationOf, count: ids.size };
 }
 
-/** Pick display name + coordinate for a station from its member stops. */
+/**
+ * Pick display name + coordinate for a station from its member stops. Platform / track / stand
+ * qualifiers are removed first ("Paddington (Platform 6)" → "Paddington"), so that stops of one
+ * station that only differ by platform count as the same name (and back each other up slightly).
+ */
 export function describeStation(members: StopIn[], cityName = ""): { name: string; lon: number; lat: number } {
   const anyRail = members.some((m) => m.rail);
   const pool = anyRail ? members.filter((m) => m.rail) : members;
-  let best = pool[0]!;
-  let bestQ = Infinity;
   const cityFold = cityName ? fold(cityName).split(/[^a-z0-9]+/)[0]! : "";
+  // score every stop by its platform-free name (as before: shorter, rail, city prefix and busy stops win);
+  // stops that share a name back each other up a little ("most common name")
+  const byName = new Map<string, { q: number; n: number }>();
   for (const m of pool) {
-    let q = nameQuality(m.name, m.rail) - Math.min(10, Math.log2(1 + m.weight));
-    if (/^(S\+U|S|U)\s/.test(m.name) || /\sBhf\.?$/.test(m.name)) q += 25;
-    if (cityFold && fold(m.name).startsWith(cityFold)) q -= 10;
-    if (q < bestQ) {
-      bestQ = q;
-      best = m;
+    const nm = stripPlatform(m.name);
+    let q = nameQuality(nm, m.rail) - Math.min(10, Math.log2(1 + m.weight));
+    if (/^(S\+U|S|U)\s/.test(nm) || /\sBhf\.?$/.test(nm)) q += 25;
+    if (cityFold && fold(nm).startsWith(cityFold)) q -= 10;
+    const e = byName.get(nm);
+    if (e) {
+      e.n++;
+      e.q = Math.min(e.q, q);
+    } else byName.set(nm, { q, n: 1 });
+  }
+  let best = stripPlatform(pool[0]!.name);
+  let bestQ = Infinity;
+  for (const [nm, e] of byName) {
+    const score = e.q - Math.min(2, e.n - 1);
+    if (score < bestQ) {
+      bestQ = score;
+      best = nm;
     }
   }
   // coordinate: weighted mean of the preferred pool
@@ -155,7 +171,7 @@ export function describeStation(members: StopIn[], cityName = ""): { name: strin
     sy += m.lat * w;
     sw += w;
   }
-  return { name: cleanStationName(best.name, cityName, best.rail), lon: sx / sw, lat: sy / sw };
+  return { name: cleanStationName(best, cityName, anyRail), lon: sx / sw, lat: sy / sw };
 }
 
 /** Clean VBB-style names ("S+U Gesundbrunnen Bhf" → "Berlin Gesundbrunnen") and ALL-CAPS names. */

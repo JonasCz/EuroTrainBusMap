@@ -3,12 +3,13 @@
  * `eurotrainbusmap-assets` (see .github/workflows/refresh-assets.yml):
  *
  *   geonames/places-europe.tsv.gz   pruned GeoNames places with local names
- *   basemap/{land,borders,lakes,labels}.json   Natural Earth basemap layers
+ *   basemap/{borders,labels}.json   Natural Earth 1:10m borders + country labels (GeoJSON)
+ *   basemap/tiles-v2.tar            OSM land polygons + NE lakes as gzipped vector tiles (ONE object, unpacked by every build)
  *   rail/rail-graph-v1.bin          rail graph for corridor geometry (Overture → pruned graph)
  *   road/road-graph-v1.bin          major-road graph for coach/bus corridor geometry (same format)
  *   manifest.json                   list of the keys above (read by the weekly build)
  *
- * Usage: node --import tsx src/assets.ts --out <assetsDir> [--work <dir>] [--only geonames,basemap,rail,road]
+ * Usage: node --import tsx src/assets.ts --out <assetsDir> [--work <dir>] [--only geonames,basemap,tiles,rail,road]
  * The weekly build reads the same directory layout via `build-data --assets <dir>`.
  */
 import { existsSync } from "node:fs";
@@ -19,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { PLACES_ASSET, loadPlaces } from "./geonames.ts";
 import { loadFeedsConfig } from "./feeds.ts";
 import { BASEMAP_FILES } from "./build.ts";
+import { BASEMAP_TILES_KEY, buildBasemapTiles } from "./basemap/tiles.ts";
 import { log, warn } from "./util/log.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -45,7 +47,7 @@ async function main() {
   const get = (n: string) => (a.indexOf(n) >= 0 ? a[a.indexOf(n) + 1] : undefined);
   const out = resolve(get("--out") ?? join(repoRoot, "work", "assets"));
   const work = resolve(get("--work") ?? join(repoRoot, "work"));
-  const only = new Set((get("--only") ?? "geonames,basemap,rail,road").split(","));
+  const only = new Set((get("--only") ?? "geonames,basemap,tiles,rail,road").split(","));
   const cacheDir = join(work, "cache");
   await mkdir(out, { recursive: true });
   const cfg = await loadFeedsConfig(join(here, "..", "feeds.json"));
@@ -61,10 +63,25 @@ async function main() {
     const mod = (await import("../../web/scripts/basemap.ts")) as {
       buildBasemap: (o: { outDir: string; cacheDir?: string; log?: (s: string) => void }) => Promise<void>;
     };
-    await mod.buildBasemap({ outDir: join(out, "basemap"), log });
+    await mod.buildBasemap({ outDir: join(out, "basemap"), cacheDir: join(cacheDir, "basemap-src"), log });
+    // superseded by the vector tiles (kept out of the manifest, so the weekly build no longer downloads them)
+    for (const f of ["land.json", "lakes.json"]) await rm(join(out, "basemap", f), { force: true });
     const missing = BASEMAP_FILES.filter((f) => !existsSync(join(out, "basemap", f)));
     if (missing.length) {
       warn(`assets: basemap files missing: ${missing.join(", ")}`);
+      failed = true;
+    }
+  }
+
+  if (only.has("tiles")) {
+    try {
+      // Land polygons (~0.9 GB download, 5-10 min) → tiles; one tar so R2 gets a single object
+      const r = await buildBasemapTiles({ cacheDir: join(cacheDir, "basemap-src"), log });
+      await mkdir(join(out, "basemap"), { recursive: true });
+      await writeFile(join(out, BASEMAP_TILES_KEY), r.tar);
+      log(`assets: ${BASEMAP_TILES_KEY} (${(r.tar.length / 1e6).toFixed(1)} MB)`);
+    } catch (e) {
+      warn(`assets: basemap tiles failed: ${(e as Error).stack ?? e}`);
       failed = true;
     }
   }

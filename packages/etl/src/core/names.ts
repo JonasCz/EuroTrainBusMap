@@ -65,6 +65,41 @@ export function nameSimilarity(a: string, b: string): number {
   return inter / (sa.size + sb.size - inter);
 }
 
+/** Platform / track / stand / bay words in common European languages (matched case-insensitively). */
+const PLATFORM_WORDS =
+  "platforms?|plat|gleis(?:e)?|gl|bahnsteig(?:e)?|bussteig(?:e)?|bstg|steig|quai|quais|voie|voies|binario|binari|" +
+  "andén|anden|plataforma|peron|perron|spoor|perrong|nástupiště|nastupiste|stanowisko|" +
+  "track|tracks|bay|bays|stand|stands|stance|stop|stops|spår|raide|vágány|vagany|kolej";
+/** A designator: 1-3 digits with optional letter, or a single letter; ranges/lists allowed. */
+const DESIG = "(?:[0-9]{1,3}[a-z]?|[a-z])";
+const DESIG_LIST = `${DESIG}(?:\\s*(?:[-–/,&+]|and|und|et)\\s*${DESIG})*`;
+/** Between the word and its designator: "Platform 6", "Plat.6", "Stop A" (a letter needs a space or dot, so "Baya" stays). */
+const SEP = "(?:\\.\\s*|\\s+|(?=[0-9]))";
+const QUAL = `(?:${PLATFORM_WORDS})${SEP}${DESIG_LIST}`;
+/** Inside brackets longer codes are safe too: "(Stop BW)", "(Platform WD)", "(Stop MS22)", "(Platform 45011680)". */
+const DESIG_PAREN = "(?:[a-z]{1,3}[0-9]{0,3}|[0-9]{1,9}[a-z]{0,2})";
+const PAREN_PLATFORM = new RegExp(`\\s*[(\\[]\\s*(?:${PLATFORM_WORDS})${SEP}${DESIG_PAREN}(?:\\s*(?:[-–/,&+]|and|und|et)\\s*${DESIG_PAREN})*\\s*[)\\]]`, "giu");
+const TRAIL_PLATFORM = new RegExp(`[\\s,;:\\-–]+${QUAL}\\s*$`, "iu");
+const LEAD_PLATFORM = new RegExp(`^${QUAL}\\s*[,:\\-–]\\s*`, "iu");
+
+/**
+ * Strip platform / track / stand / bay qualifiers from a stop name:
+ * "Paddington (Platform 6)" → "Paddington", "Wien Hbf Bahnsteig 3-4" → "Wien Hbf", "Gleis 5, Köln Hbf" → "Köln Hbf".
+ * Names are only changed if something meaningful (≥ 2 characters) remains.
+ */
+export function stripPlatform(name: string): string {
+  let n = name.trim();
+  for (let i = 0; i < 3; i++) {
+    const before = n;
+    for (const re of [PAREN_PLATFORM, TRAIL_PLATFORM, LEAD_PLATFORM]) {
+      const t = n.replace(re, "").trim();
+      if (t.replace(/[^\p{L}\p{N}]/gu, "").length >= 2) n = t;
+    }
+    if (n === before) break;
+  }
+  return n.replace(/\s+/g, " ").replace(/[\s,;:\-–]+$/, "");
+}
+
 /** Heuristic score for choosing a station display name (lower = better). */
 export function nameQuality(name: string, isRail: boolean): number {
   let q = name.length;

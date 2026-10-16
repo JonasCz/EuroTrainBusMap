@@ -26,7 +26,7 @@ for key in $(node -e 'console.log(require(process.argv[1]).files.join("\n"))' "$
 done
 ```
 
-Gives `basemap/{land,borders,lakes,labels}.json`, `geonames/places-europe.tsv.gz`,
+Gives `basemap/{borders,labels}.json`, `basemap/tiles-v2.tar` (land + lakes vector tiles, 31 MB; see the `basemap` skill), `geonames/places-europe.tsv.gz`,
 `rail/rail-graph-v1.bin` (19 MB), `road/road-graph-v1.bin` (53 MB); takes about a minute. Without the
 graphs corridors become unsnapped curves, so do not skip them (see the `refresh-geometry-assets` skill).
 
@@ -211,3 +211,8 @@ data, give the build a new id: rename the directory (e.g. append a letter, `2026
 - Style trick: the complex outline is not a buffered polygon but the hull drawn as `line` (round joins, 24–36 px wide, constant in screen px) + a same-colour `fill`; layer order edge-colour line (2 px wider) → body line → fill hides the inner half of the edge line. Colours interpolate from `land` (opaque) instead of using opacity, so the overlapping layers fade without seams. Hull width in px therefore must exceed the station marker radius (≤ 8 px).
 - Complex sizing findings (full data): 10.9k cities have ≥ 2 stations of station level ≤ 1; requiring rail or ≥ 15 dep/day leaves ~8k; 299 of them span > 8 km (Paris spans 8 km with 20 members -> one giant hull, hence the member cap of 8 and 6 km span; London/Paris/Berlin get clusters instead). Lead-station clustering with 0.9 km missed Waterloo–Charing Cross (930 m), 1.0 km catches it.
 - Screenshot batches: wrap Playwright runs in `nohup ... &` and poll the log; a foreground `timeout 118 node shots.cjs` with 4+ views gets killed half way (each view ~25 s).
+
+## Basemap tiles (phase E)
+
+- The coastline / lakes are vector tiles unpacked by every build to `<out>/basemap-v2/` (not into the build dir, shared by all builds, ~4.9k files) from `work/assets/basemap/tiles-v2.tar`; `Manifest.basemap` points to them. Without the tar the build falls back to the coarse 1:50m GeoJSON. A mapdata-only run (`mapdata.ts`) keeps `manifest.basemap` and the directory untouched.
+- Assemble/deploy copies `work/out/.` so `data/basemap-v2/` is deployed too; total files = builds (~5.4k) + 4.9k tiles. Keep an eye on the 20k limit.

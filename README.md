@@ -36,7 +36,7 @@ Pipeline in short:
    and city-state units absorbed into their city, local names such as "München", "Praha", "İstanbul");
    stops far from any place form synthetic towns (rail/coach only). Bus stops only count in places
    with ≥ 2000 inhabitants.
-4. **Stations** – stops merged by parent station, proximity + name similarity and across feeds.
+4. **Stations** – stops merged by parent station, proximity + name similarity and across feeds. A station's name is the best name among its stops *after* removing platform / track / stand / bay qualifiers in the common European languages (`stripPlatform` in `core/names.ts`: "Paddington (Platform 6)" → "Paddington"); the map label drops the city prefix ("Berlin Hbf" → "Hbf") only while the remainder is distinctive (`shortStationName`: "London Bridge", "Paris Nord", "Leeds Central" keep the city).
 5. **Dedup** – the same train/coach present in several feeds (DE+AT+CH+CZ…) is detected by matching
    (city, time) sequences and kept once, with merged calendars.
 6. **Patterns & trips** – station sequences with offsets, deduplicated; calendars as 60-day bitmasks starting the day before the build (Berlin date), so viewers in earlier timezones stay covered.
@@ -58,7 +58,7 @@ Pipeline in short:
    track/road is stored and drawn once (`NetworkFile.segments`, `Corridor.segs`) with the summed
    traffic of all corridors on it, so an express A–C no longer draws a second line beside A–B–C.
 9. **Output** (`data/<build>/`): `network.json` (packed, ~10.6 MB raw / ~4.5 MB gzip; the full network for tools – the web app uses the map data below),
-   `calendars.json`, `attribution.json`, `basemap/*.json` and `shard/<n>.json` – the per-city
+   `calendars.json`, `attribution.json`, `basemap/{borders,labels}.json` (Natural Earth 1:10m borders) and `shard/<n>.json` – the per-city
    timetables, grouped into ~600 shards of spatially neighbouring cities (`City.shard`).
    `data/manifest.json` points to the current build.
 10. **Map data** (`src/mapdata.ts`, formats in `packages/shared/src/netmap.ts`) – what the web app
@@ -101,8 +101,15 @@ Pipeline in short:
    `manifest.json` points to `core.json` and lists the tiles (`Manifest.mapdata`).
    Rebuild just this stage for an existing build: `node --import tsx packages/etl/src/mapdata.ts <out>/<build>`.
 
+The coastline and lakes are not part of a build: `data/basemap-v2/` (next to `manifest.json`, shared by all
+builds, `Manifest.basemap`) holds OSM land polygons + Natural Earth 10m lakes as gzipped vector tiles z2–z9
+(extent 8192 at z9 ≈ 6 m, overzoomed to z15), ~4.9k files / ~31 MB. Tiles without land are missing (sea) and
+tiles entirely covered by land are missing too but listed in `basemap-v2/index.json`; the web app answers them
+with a synthetic all-land tile (`web/src/map/basemap.ts`). The tiles are built by `refresh-assets` as ONE R2 object
+(`basemap/tiles-v2.tar`) and unpacked by every build (see `.claude/skills/basemap/SKILL.md`).
+
 Typical full build: ~150 feed files, ~36k cities, ~76k stations, ~70k corridors, ~2.1M trips,
-~1.2 GB in ~5400 files (Cloudflare limit: 20k files per deployment); ~16 min on a 4-core runner (plus ~1 min to download assets).
+~1.2 GB in ~10.3k files incl. ~4.9k basemap tiles (Cloudflare limit: 20k files per deployment); ~16 min on a 4-core runner (plus ~1 min to download assets).
 
 ## Running locally
 
@@ -143,7 +150,7 @@ Tests: `pnpm test`, types: `pnpm typecheck`.
     without activity for 60 days.
 - **`.github/workflows/refresh-assets.yml`** (monthly + manual): rebuilds the slow-changing inputs and
   uploads them to the R2 bucket `eurotrainbusmap-assets`: `geonames/places-europe.tsv.gz` (pruned
-  GeoNames, ~2 MB), `basemap/*.json` (Natural Earth), `rail/rail-graph-v1.bin` (rail graph from the
+  GeoNames, ~2 MB), `basemap/{borders,labels}.json` (Natural Earth 1:10m borders, country labels), `basemap/tiles-v2.tar` (land + lake vector tiles from OSM land polygons, ~31 MB, rebuilt with `--only tiles`: ~1 GB download, ~3 min), `rail/rail-graph-v1.bin` (rail graph from the
   Overture rail extract incl. disused/under-construction track at high cost and bridged gaps, ~27 MB),
   `road/road-graph-v1.bin` (motorway…tertiary road graph, 30 m geometry, ~114 MB) and `manifest.json`.
 
@@ -154,10 +161,10 @@ Secrets: `CLOUDFLARE_API_TOKEN` (Workers deploy + R2) and `CLOUDFLARE_ACCOUNT_ID
 Designed to run for free:
 
 - **GitHub Actions** – free for public repositories (weekly ~20–30 min job, monthly asset refresh).
-- **Cloudflare Workers static assets** – requests to static assets are free; ~640 files ≈ 1.1 GB per
+- **Cloudflare Workers static assets** – requests to static assets are free; ~10k files ≈ 1.1 GB per
   build (limits: 25 MiB per file, 20k files per deployment on the free plan).
 - **Cloudflare R2** – ~80 MB stored, a handful of operations per week: well inside the free tier
   (10 GB storage, 1M class A / 10M class B ops per month, no egress fees).
 - **Data sources** – free/open (Transitous mirror, Mobility Database, GeoNames, Natural Earth,
-  Overture/OSM). Transitous is a community service: the pipeline downloads once a week with a
+  Overture/OSM, OSM land polygons). Transitous is a community service: the pipeline downloads once a week with a
   descriptive User-Agent. Licences/attribution are listed in the app ("Data sources").

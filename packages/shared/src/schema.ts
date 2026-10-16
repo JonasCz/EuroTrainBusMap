@@ -8,7 +8,8 @@
  *   data/<build>/network.json     NetworkFile – cities, stations, corridors (loaded on start)
  *   data/<build>/calendars.json   CalendarsFile – shared service-day bitmasks
  *   data/<build>/city/<id>.json   CityFile – timetable data for one city (loaded on click)
- *   data/<build>/basemap/*.json   GeoJSON basemap layers (land, borders, lakes)
+ *   data/<build>/basemap/*.json   GeoJSON basemap layers (borders, country labels)
+ *   data/basemap-v2/              OSM land / lake vector tiles shared by all builds (see BasemapInfo)
  *   data/<build>/attribution.json AttributionFile
  *
  * Conventions:
@@ -57,6 +58,8 @@ export interface Manifest {
    * `<build>/core.json` and the vector tiles listed here instead of network.json.
    */
   mapdata?: { version: number; core: string; tiles: import("./netmap.ts").TileIndex };
+  /** Land / lake vector tiles (shared by all builds); without it the web app falls back to basemap/{land,lakes}.json. */
+  basemap?: BasemapInfo;
 }
 
 export interface City {
@@ -276,4 +279,28 @@ export interface AttributionFile {
 /** Helpers shared by ETL and web. */
 export function hasCat(mask: number, cat: number): boolean {
   return (mask & cat) !== 0;
+}
+
+/**
+ * OSM-derived basemap vector tiles (layers `land`, `lake`), stored next to manifest.json in
+ * `data/<dir>/` (not per build): `<dir>/index.json` (BasemapIndex) and `<dir>/tiles/{z}/{x}/{y}.pbf.gz`.
+ * Tiles that are not listed are sea, or – inside a `land` entry – land (see web/src/map/basemap.ts).
+ */
+export interface BasemapInfo {
+  version: number;
+  dir: string;
+  minzoom: number;
+  maxzoom: number;
+  bounds: [number, number, number, number];
+}
+
+/** `<dir>/index.json`: flat x,y pairs per zoom. */
+export interface BasemapIndex {
+  version: number;
+  minzoom: number;
+  maxzoom: number;
+  /** tiles that have a file */
+  tiles: Record<string, number[]>;
+  /** topmost tiles completely covered by land without lakes (no file; descendants are land too) */
+  land: Record<string, number[]>;
 }

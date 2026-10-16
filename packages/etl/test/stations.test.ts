@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nameSimilarity, normalizeStopName, prettifyName } from "../src/core/names.ts";
+import { nameSimilarity, normalizeStopName, prettifyName, stripPlatform } from "../src/core/names.ts";
 import { cleanStationName, describeStation, mergeStations, walkMinutes, type StopIn } from "../src/core/stations.ts";
 
 describe("name normalization", () => {
@@ -20,6 +20,47 @@ describe("name normalization", () => {
     expect(prettifyName("LONDON KINGS CROSS")).toBe("London Kings Cross");
     expect(cleanStationName("S+U Gesundbrunnen Bhf", "Berlin", true)).toBe("Berlin Gesundbrunnen");
     expect(cleanStationName("Wien Hbf", "Wien", true)).toBe("Wien Hbf");
+  });
+});
+
+describe("platform qualifiers", () => {
+  it("strips them in several languages", () => {
+    const cases: [string, string][] = [
+      ["Paddington (Platform 6)", "Paddington"],
+      ["London Euston (Platform 9)", "London Euston"],
+      ["Farringdon (Platform A)", "Farringdon"],
+      ["London Bridge Platform 4", "London Bridge"],
+      ["Wien Hbf Bahnsteig 3-4", "Wien Hbf"],
+      ["München Hbf Gleis 27", "München Hbf"],
+      ["Köln Hbf, Gleis 5", "Köln Hbf"],
+      ["Gleis 5, Köln Hbf", "Köln Hbf"],
+      ["Paris Gare de Lyon - Voie 2", "Paris Gare de Lyon"],
+      ["Lyon Part-Dieu (Quai A)", "Lyon Part-Dieu"],
+      ["Milano Centrale Binario 12", "Milano Centrale"],
+      ["Praha hl.n. (nástupiště 3)", "Praha hl.n."],
+      ["Warszawa Centralna (Peron 2)", "Warszawa Centralna"],
+      ["Utrecht Centraal (Spoor 5)", "Utrecht Centraal"],
+      ["Victoria Coach Station (Bay 12)", "Victoria Coach Station"],
+      ["Zürich HB (Stand B)", "Zürich HB"],
+      ["Bern Bahnhof Stop A", "Bern Bahnhof"],
+      ["Golders Green Station (Stop GE)", "Golders Green Station"],
+      ["Winson Green Metro (Platform WD)", "Winson Green Metro"],
+      ["Dale House (Stop MS22)", "Dale House"],
+      ["Harewood Arms (Platform 45014866)", "Harewood Arms"],
+      ["Papendrecht, Busstation (Perron D)", "Papendrecht, Busstation"],
+    ];
+    for (const [a, b] of cases) expect(stripPlatform(a)).toBe(b);
+  });
+  it("leaves real names alone", () => {
+    for (const n of ["Costa Baya", "Berliner Tor", "Platform 1", "Gleis 1", "Bayern", "Stand", "Quai d'Orsay", "Brandenburger Tor", "Finchley Road (NW11)", "Bus Stop Road"]) expect(stripPlatform(n)).toBe(n);
+  });
+  it("picks the common platform-free name for a station", () => {
+    const d = describeStation(
+      [1, 2, 3, 4].map((i) => stop(`London Bridge (Platform ${i})`, -0.086, 51.505, { rail: true, weight: 10 })).concat([stop("London Bridge", -0.0861, 51.5051, { rail: true, weight: 1 })]),
+      "London",
+    );
+    expect(d.name).toBe("London Bridge");
+    expect(describeStation([stop("Paddington (Platform 6)", -0.176, 51.516, { rail: true })], "London").name).toBe("Paddington");
   });
 });
 

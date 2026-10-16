@@ -712,5 +712,5 @@ await writeFile(join(OUT, "manifest.json"), JSON.stringify(manifest, null, 2));
 console.log(`fixture: ${cities.length} cities, ${stations.length} stations, ${corridors.length} corridors, ${patterns.length} patterns, ${trips.length} trips, start ${startDate}`);
 
 if (!process.argv.includes("--no-basemap")) {
-  await buildBasemap({ outDir: join(dir, "basemap"), cacheDir: join(HERE, "..", "node_modules", ".cache", "natural-earth") });
+  await buildBasemap({ legacyLayers: true, outDir: join(dir, "basemap"), cacheDir: join(HERE, "..", "node_modules", ".cache", "natural-earth") });
 }

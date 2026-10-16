@@ -6,6 +6,7 @@ import type { Net } from "../data/net.ts";
 import { DEFAULT_FILTERS, sameFilters, type Filters } from "../logic/filters.ts";
 import { focusCityData, highlightData, stationData, type Emphasis } from "./features.ts";
 import { CITY_LAYERS, COMPLEX_LAYERS, FOCUS_LAYERS, STATION_LAYERS, STATION_ZOOM, cityFilter, geojsonSources, networkLayers, type LayerState } from "./layers.ts";
+import { prefetchBasemapIndex, registerBasemapProtocol } from "./basemap.ts";
 import { prefetchGz, registerGzProtocol } from "./protocol.ts";
 import { baseLayers, baseStyle, glyphPrefetchUrls } from "./style.ts";
 import { currentTheme, type Theme } from "./theme.ts";
@@ -67,11 +68,16 @@ export class MapView {
     tiles: TileIndex,
     private cb: MapCallbacks,
     padding: () => Padding,
+    basemap: { root: string; minzoom: number; maxzoom: number; bounds: [number, number, number, number] } | null = null,
   ) {
     this.theme = currentTheme();
     registerGzProtocol(tileSet(tiles));
+    if (basemap) {
+      registerBasemapProtocol();
+      prefetchBasemapIndex(basemap.root);
+    }
     prefetchGz(glyphPrefetchUrls());
-    const style: StyleSpecification = baseStyle(this.theme, (n) => dataUrl(`basemap/${n}.json`));
+    const style: StyleSpecification = baseStyle(this.theme, (n) => dataUrl(`basemap/${n}.json`), basemap);
     style.sources.net = {
       type: "vector",
       tiles: [`etbmgz://${dataUrl("")}${tiles.url}`],

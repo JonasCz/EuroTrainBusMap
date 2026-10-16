@@ -1,12 +1,14 @@
 /**
- * Builds the minimal basemap GeoJSON layers used by the web map from Natural
- * Earth 1:50m data (public domain), clipped to Europe + Turkey.
+ * Builds the small basemap GeoJSON layers used by the web map from Natural
+ * Earth data (public domain), clipped to Europe + Turkey. Land and lakes are NOT
+ * made here any more: they are vector tiles built from OSM land polygons
+ * (packages/etl/src/basemap/tiles.ts). With `legacyLayers` (dev fixtures without tiles)
+ * the old 1:50m land / lakes GeoJSON is written as well.
  *
  * Outputs into <outDir>:
- *   land.json     Polygon/MultiPolygon features (land masses)
- *   borders.json  LineString/MultiLineString features (country borders on land)
- *   lakes.json    Polygon features (large lakes)
- *   labels.json   Point features with country names (optional for the web)
+ *   borders.json  LineString/MultiLineString features (1:10m country borders on land, 4 decimals)
+ *   labels.json   Point features with country names
+ *   land.json, lakes.json   only with `legacyLayers` (1:50m)
  *
  * CLI:   node --experimental-strip-types scripts/basemap.ts <outDir> [--cache <dir>]
  * API:   import { buildBasemap } from "@etbm/web/scripts/basemap.ts"
@@ -39,8 +41,10 @@ export interface BasemapOptions {
   /** Directory to cache downloaded Natural Earth files (default: no cache). */
   cacheDir?: string;
   bbox?: BBox;
-  /** Coordinate precision in decimals (default 3 ≈ 100 m, plenty for 1:50m). */
+  /** Coordinate precision in decimals for the 1:50m layers (default 3 ≈ 100 m). */
   precision?: number;
+  /** Also write 1:50m land.json / lakes.json (fixtures / dev without basemap tiles). */
+  legacyLayers?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -221,17 +225,11 @@ export async function buildBasemap(opts: BasemapOptions): Promise<void> {
   const log = opts.log ?? ((m: string) => console.log(m));
   await mkdir(opts.outDir, { recursive: true });
 
-  const [land, borders, lakes, countries] = await Promise.all([
-    fetchNE("ne_50m_land", opts.cacheDir),
-    fetchNE("ne_50m_admin_0_boundary_lines_land", opts.cacheDir),
-    fetchNE("ne_50m_lakes", opts.cacheDir),
-    fetchNE("ne_50m_admin_0_countries", opts.cacheDir),
-  ]);
+  const [borders, countries] = await Promise.all([fetchNE("ne_10m_admin_0_boundary_lines_land", opts.cacheDir), fetchNE("ne_50m_admin_0_countries", opts.cacheDir)]);
 
   const out: Record<string, FC> = {
-    land: clipPolygons(land, bbox, precision),
-    borders: clipLines(borders, bbox, precision),
-    lakes: clipPolygons(lakes, bbox, precision, (p) => ({ name: p.name ?? null })),
+    // 1:10m borders at ~11 m precision: they stay on the OSM coastline up to z14
+    borders: clipLines(borders, bbox, 4),
     labels: {
       type: "FeatureCollection",
       features: countries.features
@@ -254,6 +252,12 @@ export async function buildBasemap(opts: BasemapOptions): Promise<void> {
         .filter((f): f is Feature => f !== null),
     },
   };
+
+  if (opts.legacyLayers) {
+    const [land, lakes] = await Promise.all([fetchNE("ne_50m_land", opts.cacheDir), fetchNE("ne_50m_lakes", opts.cacheDir)]);
+    out.land = clipPolygons(land, bbox, precision);
+    out.lakes = clipPolygons(lakes, bbox, precision, (p) => ({ name: p.name ?? null }));
+  }
 
   for (const [name, fc] of Object.entries(out)) {
     const json = JSON.stringify(fc);

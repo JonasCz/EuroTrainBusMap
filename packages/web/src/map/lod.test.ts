@@ -42,6 +42,18 @@ describe("lod", () => {
     expect(shortStationName("Berliner Tor", "Berlin")).toBe("Berliner Tor");
     expect(shortStationName("Praha hl.n.", "Praha")).toBe("hl.n.");
   });
+  it("keeps the city when the remainder is a single generic word", () => {
+    expect(shortStationName("London Bridge", "London")).toBe("London Bridge");
+    expect(shortStationName("Paris Nord", "Paris")).toBe("Paris Nord");
+    expect(shortStationName("Leeds Central", "Leeds")).toBe("Leeds Central");
+    expect(shortStationName("Wien Mitte", "Wien")).toBe("Wien Mitte");
+    expect(shortStationName("London Kings Cross", "London")).toBe("Kings Cross");
+    expect(shortStationName("London Victoria", "London")).toBe("Victoria");
+    expect(shortStationName("Milano Centrale", "Milano")).toBe("Milano Centrale");
+    expect(shortStationName("Bergen stasjon", "Bergen")).toBe("Bergen stasjon");
+    expect(shortStationName("Lyon Gare", "Lyon")).toBe("Lyon Gare");
+    expect(shortStationName("Milano Porta Garibaldi", "Milano")).toBe("Porta Garibaldi");
+  });
 });
 
 import { mix } from "./layers.ts";

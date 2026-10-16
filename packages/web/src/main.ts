@@ -1,6 +1,6 @@
 import "./styles.css";
 import { App } from "./app.ts";
-import { dataUrl, loadAttribution, loadDataSet, loadDetail, loadManifest } from "./data/load.ts";
+import { absUrl, dataUrl, loadAttribution, loadDataSet, loadDetail, loadManifest } from "./data/load.ts";
 import { buildNet } from "./data/net.ts";
 import { MapView } from "./map/mapview.ts";
 import { mountAttribution } from "./ui/attribution.ts";
@@ -31,6 +31,7 @@ async function main(): Promise<void> {
       onBackground: () => app?.background(),
     },
     padding,
+    manifest.basemap ? { root: absUrl(`data/${manifest.basemap.dir}/`), minzoom: manifest.basemap.minzoom, maxzoom: manifest.basemap.maxzoom, bounds: manifest.basemap.bounds } : null,
   );
 
   // core.json (cities) downloads while the map fetches basemap, glyphs and tiles; it is parsed

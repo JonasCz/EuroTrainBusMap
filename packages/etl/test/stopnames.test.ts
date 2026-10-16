@@ -43,6 +43,14 @@ describe("stop name mapping", () => {
     expect(r.missing).toHaveLength(1);
     expect(applyStopNames(null, stops, stationOf, stations).merged).toBe(0);
   });
+  it("finds merge targets whose stored name still carries a platform", () => {
+    const st = [{ name: "Rosyth", lon: -3.37, lat: 56.02, city: 0, rail: true }];
+    const sp = [{ key: "a:1", altKey: "~a@0,0", lon: -3.37, lat: 56.02 }];
+    const m: StopNamesFile = { version: 1, entries: { "a:1": { action: "merge", station: "Rosyth (Platform 1)" } } };
+    const stationOf = Int32Array.from([5]);
+    expect(applyStopNames(m, sp, stationOf, st).missing).toEqual([]);
+    expect([...stationOf]).toEqual([0]);
+  });
   it("does not rename rail stations", () => {
     const stationOf = Int32Array.from([0, 2, 1]);
     const r = applyStopNames(mapping, stops, stationOf, stations);

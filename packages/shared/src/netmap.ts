@@ -279,13 +279,48 @@ export function cityMinZoom(props: Record<string, number | string>): number {
   return Math.max(z, props.tz as number);
 }
 
-/** "Berlin Hbf" → "Hbf" inside Berlin (the city name is shown as an area label). */
+/**
+ * One-word remainders that say nothing without the city ("London Bridge" must not become "Bridge",
+ * "Paris Nord" not "Nord"): generic place words, compass points and "central" in common languages.
+ */
+const GENERIC_REMAINDER = new Set(
+  (
+    "bridge road street lane way avenue cross park square place gate green hill junction town city main old new harbour harbor port " +
+    "central centre center centrum centro centrale zentrum centraal mitte north south east west nord sud sued ost est ouest norte sur oeste este " +
+    "nord-est nord-ouest sud-est sud-ouest nordost nordwest sudost sudwest " +
+    "brucke brug pont ponte puente most strasse str rue via ulica ul platz plaza piazza plein " +
+    "airport flughafen aeroport aeropuerto lotnisko terminal station stop halt depot works " +
+    "stasjon jernbanestasjon togstasjon busstasjon stasjonen stationen bahnhof gare stazione estacion estacao dworzec stacja stanice nadrazi stanica " +
+    "banegard jarnvagsstation asema rautatieasema vasutallomas gara"
+  ).split(" "),
+);
+
+const foldWord = (w: string) =>
+  w
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ß/g, "ss")
+    .toLowerCase()
+    .replace(/[.]/g, "");
+
+/**
+ * "Berlin Hbf" → "Hbf" inside Berlin (the city name is shown as an area label), but only while the
+ * remainder is distinctive: a single generic word ("London Bridge", "Paris Nord", "Leeds Central") or a
+ * bare number keeps the full name.
+ */
 export function shortStationName(name: string, city: string): string {
   if (name.length > city.length + 1 && name.startsWith(city) && /[\s,\-–(/]/.test(name[city.length]!)) {
     const rest = name.slice(city.length).replace(/^[\s,\-–/]+/, "");
-    if (rest.length >= 2) return rest;
+    if (rest.length >= 2 && !isGenericRemainder(rest)) return rest;
   }
   return name;
+}
+
+function isGenericRemainder(rest: string): boolean {
+  const words = rest.split(/[\s,\-–/]+/).filter(Boolean);
+  if (words.length === 1) return GENERIC_REMAINDER.has(foldWord(words[0]!)) || /^\d+[a-z]?$/i.test(words[0]!);
+  // two words that are both generic ("Central Station", "North Road")
+  return words.length === 2 && words.every((w) => GENERIC_REMAINDER.has(foldWord(w)));
 }
 
 export function stationProps(c: City, s: Station, rank: number): Record<string, number | string> {
