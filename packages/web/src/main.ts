@@ -33,6 +33,7 @@ async function main(): Promise<void> {
     },
     padding,
     manifest.basemap ? { root: absUrl(`data/${manifest.basemap.dir}/`), minzoom: manifest.basemap.minzoom, maxzoom: manifest.basemap.maxzoom, bounds: manifest.basemap.bounds } : null,
+    manifest.urban ?? null,
   );
 
   // core.json (cities) downloads while the map fetches basemap, glyphs and tiles; it is parsed

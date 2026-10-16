@@ -3,7 +3,7 @@ import { Cat } from "@etbm/shared";
 import { cityTz, slugify, stationName, type Net } from "../data/net.ts";
 import { addDays, dateFromDayNumber, formatDateShort, lastDate } from "../logic/calendar.ts";
 import type { Connection, OnwardStop } from "../logic/connections.ts";
-import { CAT_LABEL, CAT_ORDER, type Filters } from "../logic/filters.ts";
+import { CAT_LABEL, CAT_ORDER, localOn, type Filters } from "../logic/filters.ts";
 import type { Leg, LegInfo } from "../logic/journey.ts";
 import type { Reach } from "../logic/reach.ts";
 import type { Departure } from "../logic/timetable.ts";
@@ -11,6 +11,7 @@ import { fmtDuration, localDate } from "../logic/tz.ts";
 import { h, icon } from "./dom.ts";
 import { shortStationName } from "../map/features.ts";
 import { catDot, routeBadge, timeEl } from "./format.ts";
+import { currentTheme } from "../map/theme.ts";
 
 export type View =
   | { kind: "intro" }
@@ -110,11 +111,33 @@ export class Panel {
         CAT_LABEL[cat]!,
       ),
     );
+    items.push(
+      h(
+        "button",
+        {
+          type: "button",
+          class: "chip chip-local",
+          "data-local": "1",
+          "aria-pressed": "true",
+          title: "Metro, tram and city bus lines, shown when zoomed in",
+          onclick: () => {
+            const f = this.actions.state.filters;
+            this.actions.set({ filters: { ...f, local: !localOn(f) } });
+          },
+        },
+        h("span", { class: "cat-dot local-dot", style: `--c:${currentTheme().urban.metro}`, "aria-hidden": "true" }),
+        "Local transport",
+      ),
+    );
     this.chips.replaceChildren(...items);
   }
 
   setFilters(f: Filters): void {
     for (const b of this.chips.querySelectorAll<HTMLButtonElement>(".chip")) {
+      if (b.dataset.local) {
+        b.setAttribute("aria-pressed", String(localOn(f)));
+        continue;
+      }
       const cat = Number(b.dataset.cat);
       b.setAttribute("aria-pressed", String((f.cats & cat) !== 0));
     }

@@ -244,6 +244,11 @@ h2:focus {
   opacity: 0.35;
   cursor: not-allowed;
 }
+.cat-dot.local-dot {
+  border-radius: 2px;
+  height: 4px;
+  width: 12px;
+}
 .cat-dot {
   display: inline-block;
   width: 10px;
@@ -991,4 +996,64 @@ dialog::backdrop {
 }
 .dest-group .section {
   padding-top: 6px;
+}
+
+/* local transport popup */
+.urb-popup .maplibregl-popup-content {
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 10px 12px 10px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.22);
+  font-size: 12.5px;
+}
+.urb-popup .maplibregl-popup-tip {
+  border-top-color: var(--surface);
+  border-bottom-color: var(--surface);
+}
+.urb-popup .maplibregl-popup-close-button {
+  color: var(--muted);
+  font-size: 16px;
+  padding: 0 6px;
+}
+.urb-title {
+  font-weight: 650;
+  font-size: 13.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 14px;
+}
+.urb-sub {
+  color: var(--muted);
+  margin-top: 2px;
+}
+.urb-note {
+  color: var(--faint);
+  margin-top: 4px;
+  font-size: 11.5px;
+}
+.urb-lines {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  max-width: 230px;
+}
+.urb-line {
+  display: inline-block;
+  min-width: 22px;
+  text-align: center;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--surface-3);
+  font-weight: 650;
+  font-size: 11.5px;
+  color: var(--text);
+}
+.urb-line.big {
+  color: #fff;
+  background: #7b8190;
+  font-size: 12.5px;
+  padding: 2px 8px;
 }

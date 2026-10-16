@@ -3,7 +3,11 @@ import { Cat, type Route } from "@etbm/shared";
 export interface Filters {
   /** Enabled Cat bits. */
   cats: number;
+  /** Local transport layer (metro / tram / city bus) shown; undefined = on. */
+  local?: boolean;
 }
+
+export const localOn = (f: Filters): boolean => f.local !== false;
 
 export const ALL_CATS = Cat.LongDistance | Cat.Regional | Cat.Coach | Cat.Bus;
 export const DEFAULT_FILTERS: Filters = { cats: ALL_CATS };
@@ -36,5 +40,5 @@ export function decodeCats(s: string | null | undefined): number {
 }
 
 export function sameFilters(a: Filters, b: Filters): boolean {
-  return a.cats === b.cats;
+  return a.cats === b.cats && localOn(a) === localOn(b);
 }

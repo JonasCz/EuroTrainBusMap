@@ -18,6 +18,8 @@ export interface Theme {
   link: string;
   accent: string;
   cat: Record<number, string>;
+  /** local transport defaults (a line colour from the feed wins) */
+  urban: { metro: string; tram: string; bus: string; cable: string };
 }
 
 export const LIGHT: Theme = {
@@ -43,6 +45,7 @@ export const LIGHT: Theme = {
     [Cat.Coach]: "#14a065",
     [Cat.Bus]: "#9558d1",
   },
+  urban: { metro: "#c2570c", tram: "#0f8f83", bus: "#7f8794", cable: "#8a5ac8" },
 };
 
 export const DARK: Theme = {
@@ -68,6 +71,7 @@ export const DARK: Theme = {
     [Cat.Coach]: "#34d08a",
     [Cat.Bus]: "#b98bff",
   },
+  urban: { metro: "#f08a3c", tram: "#34c3b4", bus: "#8f99a6", cable: "#b48cf0" },
 };
 
 export function currentTheme(): Theme {

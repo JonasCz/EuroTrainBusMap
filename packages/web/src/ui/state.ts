@@ -24,13 +24,14 @@ export function parseHash(net: Net, hash: string): AppState {
   const station = city !== undefined ? q.get("station") : null;
   const date = q.get("date");
   const f = q.get("modes");
+  const local = q.get("local") !== "0";
   const legs = city !== undefined && dest !== undefined ? decodeLegs(q.get("legs"), city) : [];
   return {
     ...(city !== undefined ? { city } : {}),
     ...(station && /^[a-z0-9-]{1,80}$/.test(station) ? { station } : {}),
     ...(dest !== undefined && dest !== city ? { dest } : {}),
     ...(isValidDate(date) ? { date } : {}),
-    filters: { cats: f === null ? ALL_CATS : decodeCats(f) },
+    filters: { cats: f === null ? ALL_CATS : decodeCats(f), ...(local ? {} : { local: false }) },
     legs,
   };
 }
@@ -43,5 +44,6 @@ export function toHash(net: Net, s: AppState): string {
   if (s.date && s.city !== undefined) q.push(`date=${s.date}`);
   if (s.legs.length && s.dest !== undefined) q.push(`legs=${encodeLegs(s.legs)}`);
   if (s.filters.cats !== ALL_CATS) q.push(`modes=${encodeCats(s.filters.cats) || "none"}`);
+  if (s.filters.local === false) q.push("local=0");
   return q.length ? `#${q.join("&")}` : "";
 }

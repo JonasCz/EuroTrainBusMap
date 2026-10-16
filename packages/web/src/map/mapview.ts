@@ -1,11 +1,14 @@
 import maplibregl, { type GeoJSONSource, type LayerSpecification, type MapGeoJSONFeature, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { TILE_LAYERS, tileSet, type TileIndex } from "@etbm/shared";
+import { TILE_LAYERS, tileSet, type TileIndex, type UrbanInfo } from "@etbm/shared";
 import type * as GeoJSON from "geojson";
 import type { Net } from "../data/net.ts";
-import { DEFAULT_FILTERS, sameFilters, type Filters } from "../logic/filters.ts";
+import { sameFilters, type Filters } from "../logic/filters.ts";
 import { focusCityData, highlightData, stationData, type Emphasis } from "./features.ts";
 import { CITY_AREA_LAYER, CITY_LAYERS, FOCUS_LAYERS, STATION_LAYERS, STATION_ZOOM, cityFilter, geojsonSources, networkLayers, type LayerState } from "./layers.ts";
+import { URBAN_HIT_LAYERS, URBAN_LAYER_IDS, urbanLayers, urbanSources, urbanTileKeys, type UrbanHit } from "./urban.ts";
+import { urbanPopup } from "../ui/urbanpopup.ts";
+import { DEFAULT_FILTERS, localOn } from "../logic/filters.ts";
 import { prefetchBasemapIndex, registerBasemapProtocol } from "./basemap.ts";
 import { prefetchGz, registerGzProtocol } from "./protocol.ts";
 import { baseLayers, baseStyle, glyphPrefetchUrls } from "./style.ts";
@@ -57,6 +60,8 @@ export class MapView {
   private hovered: { source: string; sourceLayer?: string; id: number } | null = null;
   private tooltip: HTMLDivElement;
   private layerIds: string[] = [];
+  private hasUrban = false;
+  private popup: maplibregl.Popup | null = null;
   private resolveNetPaint: () => void = () => undefined;
   /** Resolves once the network tiles have been drawn for the first time. */
   readonly firstNetPaint: Promise<void>;
@@ -72,9 +77,11 @@ export class MapView {
     private cb: MapCallbacks,
     padding: () => Padding,
     basemap: { root: string; minzoom: number; maxzoom: number; bounds: [number, number, number, number] } | null = null,
+    urban: UrbanInfo | null = null,
   ) {
     this.theme = currentTheme();
-    registerGzProtocol(tileSet(tiles));
+    this.hasUrban = !!urban;
+    registerGzProtocol(new Set([...tileSet(tiles), ...(urban ? urbanTileKeys(urban) : [])]));
     if (basemap) {
       registerBasemapProtocol();
       prefetchBasemapIndex(basemap.root);
@@ -89,6 +96,10 @@ export class MapView {
       bounds: [-32, 26, 62, 75],
     };
     Object.assign(style.sources, geojsonSources());
+    if (urban) {
+      Object.assign(style.sources, urbanSources(urban, dataUrl));
+      style.layers.push(...urbanLayers(this.theme, false));
+    }
     const net = networkLayers(this.theme, this.state);
     this.layerIds = net.map((l) => l.id);
     style.layers.push(...net);
@@ -133,9 +144,17 @@ export class MapView {
     this.map.on("sourcedata", onData);
     this.map.on("click", (e) => {
       const hit = this.hitAt(e.point);
+      if (hit) this.closePopup();
       if (hit?.kind === "station") cb.onStation(hit.id, hit.city, hit.name);
       else if (hit) cb.onCity(hit.id);
-      else cb.onBackground();
+      else {
+        const u = this.urbanAt(e.point);
+        if (u) this.showUrban(u, e.lngLat);
+        else {
+          this.closePopup();
+          cb.onBackground();
+        }
+      }
     });
     this.map.on("mousemove", (e) => {
       // touch: a tap emulates a mousemove; ignore the ones that are part of a pan / pinch
@@ -225,8 +244,57 @@ export class MapView {
     return best;
   }
 
+  // ---- local transport ------------------------------------------------------------
+
+  /** Local-transport stop or line under a screen point (stops win over lines; hidden layers are not hit). */
+  urbanAt(p: maplibregl.Point): UrbanHit | null {
+    if (!this.hasUrban || !localOn(this.state.filters)) return null;
+    const layers = URBAN_HIT_LAYERS.filter((l) => this.map.getLayer(l));
+    const r = 8;
+    const feats = this.map.queryRenderedFeatures([[p.x - r, p.y - r], [p.x + r, p.y + r]], { layers });
+    let best: { f: MapGeoJSONFeature; d: number } | null = null;
+    for (const f of feats) {
+      const stop = f.geometry.type === "Point";
+      let d = r * 1.5; // lines: any hit in the box
+      if (stop) {
+        const sp = this.map.project((f.geometry as GeoJSON.Point).coordinates as [number, number]);
+        d = Math.hypot(sp.x - p.x, sp.y - p.y) - 6;
+      }
+      if (!best || d < best.d) best = { f, d };
+    }
+    if (!best) return null;
+    const g = best.f.geometry;
+    const lngLat = g.type === "Point" ? (g.coordinates as [number, number]) : ([this.map.unproject(p).lng, this.map.unproject(p).lat] as [number, number]);
+    return { kind: g.type === "Point" ? "stop" : "line", props: best.f.properties as Record<string, string | number>, lngLat };
+  }
+
+  private showUrban(u: UrbanHit, at: maplibregl.LngLat): void {
+    this.closePopup();
+    this.popup = new maplibregl.Popup({ closeButton: true, closeOnClick: false, maxWidth: "260px", className: "urb-popup", offset: u.kind === "stop" ? 10 : 6 })
+      .setLngLat(u.kind === "stop" ? u.lngLat : at)
+      .setDOMContent(urbanPopup(u))
+      .addTo(this.map);
+    this.popup.on("close", () => (this.popup = null));
+  }
+
+  closePopup(): void {
+    this.popup?.remove();
+    this.popup = null;
+  }
+
   private hover(p: maplibregl.Point): void {
     const f = this.featureAt(p);
+    if (!f) {
+      const u = this.urbanAt(p);
+      if (u) {
+        this.setHover(null);
+        this.map.getCanvas().style.cursor = "pointer";
+        this.tooltip.textContent = u.kind === "stop" ? String(u.props.n ?? "") : `${u.props.n ?? ""}${u.props.a ? ` · ${u.props.a}` : ""}`;
+        this.tooltip.style.transform = `translate(${p.x + 14}px, ${p.y - 10}px)`;
+        this.tooltip.hidden = false;
+        return;
+      }
+    }
     const props = (f?.properties ?? {}) as Record<string, number | string>;
     const isCity = f && !isStation(f) && f.id !== undefined;
     this.setHover(isCity ? { source: f.source, ...(f.sourceLayer ? { sourceLayer: f.sourceLayer } : {}), id: f.id as number } : null);
@@ -257,7 +325,10 @@ export class MapView {
   async setFilters(f: Filters): Promise<void> {
     if (sameFilters(this.state.filters, f)) return;
     await this.ready;
+    const catsChanged = f.cats !== this.state.filters.cats;
     this.state = { ...this.state, filters: f };
+    this.applyUrbanVisibility();
+    if (!catsChanged) return;
     // the set of category layers depends on the filters: rebuild the network layers
     const t0 = performance.now();
     for (const id of this.layerIds) if (this.map.getLayer(id)) this.map.removeLayer(id);
@@ -265,6 +336,13 @@ export class MapView {
     this.layerIds = layers.map((l) => l.id);
     for (const l of layers) this.map.addLayer(l);
     perf("filters: layers rebuilt", t0);
+  }
+
+  private applyUrbanVisibility(): void {
+    if (!this.hasUrban) return;
+    const on = localOn(this.state.filters);
+    for (const id of URBAN_LAYER_IDS) if (this.map.getLayer(id)) this.map.setLayoutProperty(id, "visibility", on ? "visible" : "none");
+    if (!on) this.closePopup();
   }
 
   async setHighlight(h: Highlight): Promise<void> {
@@ -293,7 +371,11 @@ export class MapView {
 
   /** Re-apply paint (and optionally layout) after a theme or dim change. */
   private applyPaint(withBase: boolean, net?: LayerSpecification[]): void {
-    const all: LayerSpecification[] = [...(withBase ? baseLayers(this.theme) : []), ...(net ?? networkLayers(this.theme, this.state))];
+    const all: LayerSpecification[] = [
+      ...(withBase ? baseLayers(this.theme) : []),
+      ...(this.hasUrban ? urbanLayers(this.theme, this.state.dimmed) : []),
+      ...(net ?? networkLayers(this.theme, this.state)),
+    ];
     for (const l of all) {
       if (!this.map.getLayer(l.id)) continue;
       for (const [k, v] of Object.entries((l as { paint?: Record<string, unknown> }).paint ?? {})) this.map.setPaintProperty(l.id, k, v);

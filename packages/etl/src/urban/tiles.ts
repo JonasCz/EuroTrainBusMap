@@ -30,7 +30,8 @@ export function lineFeature(l: DrawnLine): Feature {
 
 export function stationFeature(s: UrbanStation): Feature {
   const lines = s.lines.slice(0, 12);
-  const p: Record<string, string | number> = { n: s.name, m: s.modes, z: Math.round(s.z * 10) / 10, i: Math.round(Math.log2(1 + s.imp) * 4) / 4, k: s.lines.length };
+  const top = s.modes & (1 << UMode.Metro) ? UMode.Metro : s.modes & (1 << UMode.Tram) ? UMode.Tram : s.modes & (1 << UMode.Cable) ? UMode.Cable : UMode.Bus;
+  const p: Record<string, string | number> = { n: s.name, m: s.modes, t: top, z: Math.round(s.z * 10) / 10, i: Math.round(Math.log2(1 + s.imp) * 4) / 4, k: s.lines.length };
   if (lines.length) p.l = lines.join(" ") + (s.lines.length > lines.length ? " …" : "");
   if (s.ix) p.x = 1;
   return { type: "Feature", properties: p, geometry: { type: "Point", coordinates: [Math.round(s.lon * 1e5) / 1e5, Math.round(s.lat * 1e5) / 1e5] } };
