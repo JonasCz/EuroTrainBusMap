@@ -47,7 +47,7 @@ export interface BuildOptions {
 /** Max routed track length relative to the station distance. */
 export const MAX_DETOUR = (gc: number) => 2.2 * gc + 5000;
 const ROAD_BULGE = 0.05;
-const SHAPE_TOL = 25;
+const SHAPE_TOL = 10;
 
 /** Bus stops in small towns can be a few km from the nearest secondary road; the gap becomes a stub. */
 export const ROAD_ROUTER_OPTS = { snapRadius: 5000, snapSlack: 300, minComponent: 20000 };
@@ -188,7 +188,16 @@ function railGeometry(r: GeometryRequest, router: Router | null, cache: Map<stri
     return { id: r.id, coords: finish(attach(r.a, simplify(shapeFallback, SHAPE_TOL), r.b, r.anchored), 1), snapped: true };
   }
   counts.fallback++;
-  return { id: r.id, coords: finish(gentleCurve(r.a, r.b, 0), 0), snapped: false };
+  const [from, to] = curveEnds(r);
+  return { id: r.id, coords: finish(attach(r.a, gentleCurve(from, to, 0), r.b, r.anchored), 0), snapped: false };
+}
+
+/** End points of an unsnapped curve: the stations of the main hop (so it starts where the line really does). */
+function curveEnds(r: GeometryRequest): [LonLat, LonLat] {
+  const h = r.hops[0];
+  if (!h || !r.anchored) return [r.a, r.b];
+  const o = orient(h, r.a, r.b);
+  return [o.from, o.to];
 }
 
 function roadGeometry(r: GeometryRequest, router: Router | null, cache: Map<string, RouteResult | null>, counts: Counts): GeometryResult {
@@ -199,7 +208,7 @@ function roadGeometry(r: GeometryRequest, router: Router | null, cache: Map<stri
     const shape = plausibleShape(h);
     if (shape) {
       counts.roadShape++;
-      return { id: r.id, coords: finish(attach(r.a, simplify(shape, 40), r.b, r.anchored), 2), snapped: true };
+      return { id: r.id, coords: finish(attach(r.a, simplify(shape, SHAPE_TOL), r.b, r.anchored), 2), snapped: true };
     }
   }
   if (router) {
@@ -217,8 +226,9 @@ function roadGeometry(r: GeometryRequest, router: Router | null, cache: Map<stri
   }
   counts.roadFallback++;
   // bulge to the left of west→east, so a↔b and b↔a give the same curve
-  const sign = r.a[0] < r.b[0] || (r.a[0] === r.b[0] && r.a[1] < r.b[1]) ? 1 : -1;
-  return { id: r.id, coords: finish(gentleCurve(r.a, r.b, sign * ROAD_BULGE), 0), snapped: false };
+  const [from, to] = curveEnds(r);
+  const sign = from[0] < to[0] || (from[0] === to[0] && from[1] < to[1]) ? 1 : -1;
+  return { id: r.id, coords: finish(attach(r.a, gentleCurve(from, to, sign * ROAD_BULGE), r.b, r.anchored), 0), snapped: false };
 }
 
 /** Route with a per-run cache keyed by the (~10 m rounded) endpoint pair, in both directions. */
@@ -243,7 +253,10 @@ export function attach(a: LonLat, path: readonly LonLat[], b: LonLat, anchored =
   let P = dedupe(path);
   if (P.length < 2) return [a, b];
   if (anchored) {
-    // city points are stations: trim only a run past the city's station, keep the line's own end station
+    // City points are stations: trim only a run past the city's station and keep the line's own end
+    // station. A line ends where it really ends: it is only joined to the city point by a (short)
+    // straight stub, never by a long one — big cities with several terminals would otherwise be a
+    // starburst of straight lines into one point (the city dot is just a marker).
     P = trimStart(a, P, PASS_M);
     P = trimStart(b, P.slice().reverse(), PASS_M).reverse();
     P = stub(a, P);
@@ -259,10 +272,17 @@ export function attach(a: LonLat, path: readonly LonLat[], b: LonLat, anchored =
 
 /** A line passing within this distance (m) of an anchored city point is cut there. */
 const PASS_M = 300;
+/**
+ * Longest straight stub (m) from a city point to a line's own end station (same rule for every
+ * city). Farther away, the line simply ends at its terminal and the city dot stays a separate marker.
+ */
+export const STUB_MAX_M = 1000;
 
-/** Prefix the path with point a: snapped onto it when close, else a straight stub. */
+/** Prefix the path with point a: snapped onto it when close, else a short straight stub, else nothing. */
 function stub(a: LonLat, P: LonLat[]): LonLat[] {
-  return dist(a, P[0]!) < 40 ? [a, ...P.slice(1)] : [a, ...P];
+  const d = dist(a, P[0]!);
+  if (d < 40) return [a, ...P.slice(1)];
+  return d <= STUB_MAX_M ? [a, ...P] : P;
 }
 
 /**
@@ -358,9 +378,9 @@ function trimStart(a: LonLat, P: LonLat[], maxDist = Infinity): LonLat[] {
 
 /** Smooth + round. style 0 = already smooth curve, 1 = rail (stay on track), 2 = feed shape (road), 3 = road graph. */
 function finish(c: LonLat[], style: 0 | 1 | 2 | 3): [number, number][] {
-  if (style === 1) c = smooth(c, { iterations: 2, maxCut: 200, minTurnDeg: [6, 20] });
-  else if (style === 2) c = smooth(c, { iterations: 2, maxCut: 600, minTurnDeg: 4 });
-  else if (style === 3) c = smooth(c, { iterations: 2, maxCut: 300, minTurnDeg: [6, 20] });
+  if (style === 1) c = smooth(c, { iterations: 2, maxCut: 120, minTurnDeg: [6, 20] });
+  else if (style === 2) c = smooth(c, { iterations: 2, maxCut: 200, minTurnDeg: 4 });
+  else if (style === 3) c = smooth(c, { iterations: 2, maxCut: 120, minTurnDeg: [6, 20] });
   return roundCoords(c);
 }
 

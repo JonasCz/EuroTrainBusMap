@@ -121,8 +121,10 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
   let tileBytes = 0, maxTile = 0;
   for (let z = TILE_MINZOOM; z <= TILE_MAXZOOM; z++) {
     const last = z === TILE_MAXZOOM;
+    // The last level keeps (nearly) all stored detail: 1 unit ≈ 6 m at z9. Lower levels are only
+    // seen at 1-2 zoom levels, where 4 units (z7: ~200 m, z8: ~100 m) is below a pixel.
     const extent = last ? 8192 : 4096;
-    const opts = { maxZoom: z, indexMaxZoom: z, indexMaxPoints: 0, extent, buffer: last ? 512 : 256, tolerance: last ? 6 : 4 };
+    const opts = { maxZoom: z, indexMaxZoom: z, indexMaxPoints: 0, extent, buffer: last ? 512 : 256, tolerance: last ? 1 : 4 };
     const fc = (fs: Feature[]): GeoJSON.FeatureCollection => ({ type: "FeatureCollection", features: fs });
     const layers: Record<string, ReturnType<typeof geojsonvt>> = {
       [TILE_LAYERS.seg]: geojsonvt(fc(mergeLines(segFeatures.filter((x) => last || x.z < z + 1).map((x) => (last ? x.f : forZoom(x.f, z))))), opts),

@@ -182,3 +182,11 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
 - The build holds up to ~6 GB RSS (`--max-old-space-size=8192` is set by the `build-data` script), so do not run other heavy jobs in parallel on a 15 GB machine.
 - `wrangler deploy` prints a proxy warning ("Proxy environment variables detected") - harmless.
 - `wrangler whoami` shows the account e-mail; do not paste it or the token into reports.
+- Helper scripts outside the repo must be `.mts` (top-level await; `.ts` is treated as CJS) and import repo code by absolute path
+  (`/home/user/EuroTrainBusMap/packages/shared/src/index.ts`; `@etbm/shared` does not resolve from the scratchpad). Run them with
+  `cd packages/etl && node --import tsx <script.mts>`.
+- Never `pkill -f <pattern>` where the pattern appears in your own command line (it killed the calling shell); find the pid with `ps aux | grep "[p]attern"`.
+- Tiles now go up to z9 (TILE_MAXZOOM): ~4100 tile files (~20 MB gz), full build ~5400 files / 1.2 GB; Cloudflare allows 20k files, so z10
+  (~+9k files) would still fit but leaves little headroom. A `mapdata`-only run takes ~2 min.
+- A foreground command is moved to the background after 120 s; for long waits use `Monitor` (until-loop) or poll with `timeout 110 bash -c 'until ...'`.
+- Preview symlink `packages/web/public/data` is excluded via `.git/info/exclude`; remove it before deploying.

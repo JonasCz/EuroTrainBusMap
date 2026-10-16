@@ -11,8 +11,8 @@ The bucket is `eurotrainbusmap-assets`:
 
 | key | content | size |
 |---|---|---|
-| `rail/rail-graph-v1.bin` | standard, narrow and unknown gauge rail, 20 m geometry, fragments < 3 km dropped | ~19 MB |
-| `road/road-graph-v1.bin` | motorway, trunk, primary and secondary roads plus their `_link` ramps, 50 m geometry, fragments < 20 km dropped | ~53 MB |
+| `rail/rail-graph-v1.bin` | standard, narrow and unknown gauge rail (disused / abandoned / under-construction kept at ×4 / ×6 / ×3 cost), 20 m geometry, gaps < 300 m bridged, fragments < 3 km dropped | ~27 MB |
+| `road/road-graph-v1.bin` | motorway, trunk, primary, secondary and tertiary roads plus their `_link` ramps, 30 m geometry, fragments < 20 km dropped | ~114 MB (3.5 M nodes, ~530 MB RAM) |
 
 `v1` is `RAIL_FORMAT` in `packages/etl/src/geometry/railbin.ts`. The file format is shared and
 `header.kind` says whether a file is rail or road. If you change the binary layout, bump the
@@ -32,6 +32,7 @@ also runs monthly on the 4th.
   `packages/etl/src/geometry/refresh-rail.ts`, then uploads the results and `manifest.json` (last).
 - The Overture extracts are kept in the Actions cache (`overture-v2-*`). A re-run on the same
   release skips the S3 scan; a new release is detected through the STAC catalog and re-extracted.
+- The Actions cache key is `overture-v3-*`: bump it whenever the extract definition (classes, flags) changes, or an old extract of the same release is reused.
 - Check the log for these lines: `rail: wrote …`, `road: wrote … (NN MB, release …)`, and `pruned … components`.
 
 ## Local build / debugging
@@ -71,3 +72,15 @@ that each coloured line follows the grey network.
 After a data build, look at the log line
 `geometry: … rail N (routed X, …, fallback Y), road M (routed R, shape S, fallback F; T s)`.
 Fallbacks should be a small fraction.
+
+## Gotchas learned
+
+- The road extract with `tertiary` is 1.99 GB / ~30 min (4 classes: 1 GB); `pnpm rail:refresh ../../work --road` then needs ~2 GB RSS
+  for the graph and ~8 min for build + zstd-19. The graph geometry tolerance (`ROAD_SIMPLIFY_TOL`) caps road accuracy: 50 m was too coarse.
+- Rebuilding a graph from a cached parquet takes 1-8 min, so tolerance / bridging / cost experiments are cheap. Run the rail and road
+  extracts in the background with `NODE_USE_ENV_PROXY=1`; two at once work (they share the proxy; ~1 h for both).
+- Why a corridor does not route: snap the stations (`Router.snap`), compare components, route with a huge `maxLen`. Typical causes:
+  OSM tags a piece of an operating line `is_disused` (now kept at a cost), a siding ends 100-200 m short of the main line (bridged),
+  station > 1.5 km from heavy-rail track (tram / light rail, not in the graph).
+- Fast geometry iteration: run the build once with `ETBM_DUMP_GEOM_REQS=work/geom-reqs.json`, then call `buildWithRouter(reqs, rail, log, road)`
+  from a `.mts` script (about 1 min for all 69k corridors).

@@ -16,7 +16,7 @@ import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { EUROPE_BBOX, ensureRailExtract, ensureRoadExtract, loadRailGraph, loadRoadGraph } from './overture.ts';
-import { graphBytes } from './graph.ts';
+import { bridgeGaps, graphBytes } from './graph.ts';
 import { pruneGraph, RAIL_FORMAT, serializeRailGraph, type GraphKind } from './railbin.ts';
 
 export const graphFileName = (kind: GraphKind): string => `${kind}-graph-v${RAIL_FORMAT}.bin`;
@@ -27,9 +27,12 @@ export const RAIL_GRAPH_KEY = `rail/${RAIL_GRAPH_FILE}`;
 export const ROAD_GRAPH_KEY = `road/${ROAD_GRAPH_FILE}`;
 /** Geometry tolerance of stored edges (m) */
 export const RAIL_SIMPLIFY_TOL = 20;
-export const ROAD_SIMPLIFY_TOL = 50;
+export const ROAD_SIMPLIFY_TOL = 30;
 /** Disconnected fragments with less track / road than this are dropped (m) */
 export const RAIL_MIN_COMPONENT = 3000;
+/** Dead ends closer than this (m) to track of another component are joined to it (graph.ts bridgeGaps) */
+export const RAIL_BRIDGE_GAP = 300;
+export const ROAD_BRIDGE_GAP = 0;
 export const ROAD_MIN_COMPONENT = 20000;
 
 /** Default local path of a graph file inside a work dir. */
@@ -53,7 +56,8 @@ export async function buildGraphAsset(
   const g0 = kind === 'rail'
     ? await loadRailGraph(parquet, workDir, log, tol)
     : await loadRoadGraph(parquet, workDir, log, { simplifyTol: tol, classes: opts.roadClasses });
-  const g = pruneGraph(g0, minComponent);
+  const gap = kind === 'rail' ? RAIL_BRIDGE_GAP : ROAD_BRIDGE_GAP;
+  const g = pruneGraph(gap > 0 ? bridgeGaps(g0, { maxGap: gap, log }) : g0, minComponent);
   log(`${kind}: pruned ${g0.nodeCount}→${g.nodeCount} nodes, ${g0.edgeCount}→${g.edgeCount} edges, ${g0.compSize.length}→${g.compSize.length} components (${(graphBytes(g) / 1e6).toFixed(0)} MB in memory, rss ${(process.memoryUsage().rss / 1e6).toFixed(0)} MB)`);
   const buf = serializeRailGraph(g, { kind, release, bbox: EUROPE_BBOX, simplifyTol: tol, minComponent });
   mkdirSync(dirname(outFile), { recursive: true });

@@ -7,7 +7,7 @@
  * junctions and dead ends; each edge carries its (Douglas-Peucker simplified) geometry.
  * Everything lives in typed arrays (coordinates quantised to 1e-6°).
  */
-import { haversine, simplifyIndices } from './geo.ts';
+import { haversine, mPerDeg, simplifyIndices } from './geo.ts';
 
 export const Q = 1e6;
 
@@ -366,4 +366,139 @@ export function graphBytes(g: RailGraph): number {
   for (const v of Object.values(g)) if (ArrayBuffer.isView(v)) b += v.byteLength;
   b += g.index.cellStart.byteLength + g.index.items.byteLength + g.index.cells.size * 40;
   return b;
+}
+
+export interface BridgeOptions {
+  /** Max distance (m) from a dead end to track of another component. */
+  maxGap: number;
+  /** Cost per metre of a bridge relative to its length (>1: used only when nothing else connects). */
+  costFactor?: number;
+  log?: (s: string) => void;
+}
+
+/**
+ * Join graph components that are separated by a small gap. OSM/Overture rail has such holes where
+ * a siding or a yard track ends a few metres short of the main line (no shared vertex), or a
+ * segment is missing. Every dead end gets a short straight edge to the nearest track of a
+ * *different* component within `maxGap`; if that point lies inside an edge, the edge is split
+ * there (cost and length shared by the pieces). Returns `g` itself when there is nothing to bridge.
+ */
+export function bridgeGaps(g: RailGraph, opts: BridgeOptions): RailGraph {
+  const log = opts.log ?? (() => {});
+  const costFactor = opts.costFactor ?? 3;
+  const E = g.edgeCount;
+  const SNAP_M = 15; // a bridge landing this close to a vertex / end uses that point instead of splitting
+  interface Hit { edge: number; gi: number; t: number; d: number; x: number; y: number }
+  interface Split { gi: number; t: number; x: number; y: number; node: number }
+  const bridges: { from: number; hit: Hit }[] = [];
+  const hits = new Set<number>();
+  for (let n = 0; n < g.nodeCount; n++) {
+    if (g.adjStart[n + 1]! - g.adjStart[n]! !== 1) continue;
+    const lon = g.nodeX[n]! / Q, lat = g.nodeY[n]! / Q;
+    hits.clear();
+    querySegments(g, lon, lat, opts.maxGap, hits);
+    const { kx, ky } = mPerDeg(lat);
+    const myComp = g.comp[n]!;
+    let best: Hit | null = null;
+    for (const gi of hits) {
+      const e = g.geoEdge[gi]!;
+      if (g.comp[g.edgeU[e]!] === myComp) continue;
+      const ax = (g.geoX[gi]! / Q - lon) * kx, ay = (g.geoY[gi]! / Q - lat) * ky;
+      const bx = (g.geoX[gi + 1]! / Q - lon) * kx, by = (g.geoY[gi + 1]! / Q - lat) * ky;
+      const dx = bx - ax, dy = by - ay;
+      const l2 = dx * dx + dy * dy;
+      let t = l2 > 0 ? -(ax * dx + ay * dy) / l2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const d = Math.hypot(ax + t * dx, ay + t * dy);
+      if (d <= opts.maxGap && (!best || d < best.d)) {
+        best = { edge: e, gi, t, d, x: g.geoX[gi]! + t * (g.geoX[gi + 1]! - g.geoX[gi]!), y: g.geoY[gi]! + t * (g.geoY[gi + 1]! - g.geoY[gi]!) };
+      }
+    }
+    if (best) bridges.push({ from: n, hit: best });
+  }
+  if (!bridges.length) return g;
+
+  // landing points: an existing node when close to an edge end, else a split of the edge
+  const splits = new Map<number, Split[]>();
+  let nodes = g.nodeCount;
+  const target: number[] = [];
+  const dM = (x0: number, y0: number, x1: number, y1: number) => haversine(x0 / Q, y0 / Q, x1 / Q, y1 / Q);
+  for (const { hit } of bridges) {
+    const e = hit.edge;
+    const u = g.edgeU[e]!, v = g.edgeV[e]!;
+    if (dM(hit.x, hit.y, g.nodeX[u]!, g.nodeY[u]!) <= SNAP_M) { target.push(u); continue; }
+    if (dM(hit.x, hit.y, g.nodeX[v]!, g.nodeY[v]!) <= SNAP_M) { target.push(v); continue; }
+    const list = splits.get(e) ?? splits.set(e, []).get(e)!;
+    // reuse a split point of the same edge that is close by
+    let sp = list.find((s) => dM(s.x, s.y, hit.x, hit.y) <= SNAP_M);
+    if (!sp) {
+      sp = { gi: hit.gi, t: hit.t, x: Math.round(hit.x), y: Math.round(hit.y), node: nodes++ };
+      list.push(sp);
+    }
+    target.push(sp.node);
+  }
+  const nSplit = [...splits.values()].reduce((a, l) => a + l.length, 0);
+  const seen = new Set<number>();
+  const bridgeList: { a: number; b: number }[] = [];
+  bridges.forEach(({ from }, i) => {
+    const b = target[i]!;
+    const key = Math.min(from, b) * 4294967296 + Math.max(from, b);
+    if (from === b || seen.has(key)) return;
+    seen.add(key);
+    bridgeList.push({ a: from, b });
+  });
+
+  // rebuild the edge arrays
+  const edgeU: number[] = [], edgeV: number[] = [], edgeLen: number[] = [], edgeCost: number[] = [];
+  const geoStart: number[] = [], geoX: number[] = [], geoY: number[] = [];
+  const nodeX = new Int32Array(nodes), nodeY = new Int32Array(nodes);
+  nodeX.set(g.nodeX); nodeY.set(g.nodeY);
+  const emit = (u: number, v: number, len: number, cost: number, xs: number[], ys: number[]) => {
+    edgeU.push(u); edgeV.push(v); edgeLen.push(len); edgeCost.push(cost);
+    geoStart.push(geoX.length);
+    for (let i = 0; i < xs.length; i++) { geoX.push(xs[i]!); geoY.push(ys[i]!); }
+  };
+  for (let e = 0; e < E; e++) {
+    const s0 = g.geoStart[e]!, s1 = g.geoStart[e + 1]!;
+    const list = splits.get(e);
+    if (!list) {
+      const xs: number[] = [], ys: number[] = [];
+      for (let i = s0; i < s1; i++) { xs.push(g.geoX[i]!); ys.push(g.geoY[i]!); }
+      emit(g.edgeU[e]!, g.edgeV[e]!, g.edgeLen[e]!, g.edgeCost[e]!, xs, ys);
+      continue;
+    }
+    list.sort((a, b) => a.gi - b.gi || a.t - b.t);
+    const chain: { node: number; at: number; x: number; y: number }[] = [{ node: g.edgeU[e]!, at: s0, x: g.geoX[s0]!, y: g.geoY[s0]! }];
+    for (const sp of list) { nodeX[sp.node] = sp.x; nodeY[sp.node] = sp.y; chain.push({ node: sp.node, at: sp.gi + 1, x: sp.x, y: sp.y }); }
+    chain.push({ node: g.edgeV[e]!, at: s1, x: g.geoX[s1 - 1]!, y: g.geoY[s1 - 1]! });
+    const pieces: { u: number; v: number; xs: number[]; ys: number[]; len: number }[] = [];
+    let total = 0;
+    for (let k = 0; k + 1 < chain.length; k++) {
+      const from = chain[k]!, to = chain[k + 1]!;
+      const xs = [from.x], ys = [from.y];
+      // vertices strictly between the two split points: from.at .. to.at-1 (to.at is the first vertex after `to`)
+      for (let i = k === 0 ? s0 + 1 : from.at; i < (k + 2 === chain.length ? s1 - 1 : to.at); i++) { xs.push(g.geoX[i]!); ys.push(g.geoY[i]!); }
+      xs.push(to.x); ys.push(to.y);
+      let len = 0;
+      for (let i = 1; i < xs.length; i++) len += dM(xs[i - 1]!, ys[i - 1]!, xs[i]!, ys[i]!);
+      pieces.push({ u: from.node, v: to.node, xs, ys, len });
+      total += len;
+    }
+    for (const p of pieces) {
+      const share = total > 0 ? p.len / total : 1 / pieces.length;
+      emit(p.u, p.v, g.edgeLen[e]! * share, g.edgeCost[e]! * share, p.xs, p.ys);
+    }
+  }
+  for (const { a, b } of bridgeList) {
+    const len = dM(nodeX[a]!, nodeY[a]!, nodeX[b]!, nodeY[b]!);
+    emit(a, b, len, len * costFactor, [nodeX[a]!, nodeX[b]!], [nodeY[a]!, nodeY[b]!]);
+  }
+  geoStart.push(geoX.length);
+  log(`  graph: bridged ${bridgeList.length} gaps ≤ ${opts.maxGap} m (${nSplit} edges split)`);
+  return assemble({
+    nodeX, nodeY,
+    edgeU: Int32Array.from(edgeU), edgeV: Int32Array.from(edgeV),
+    edgeLen: Float32Array.from(edgeLen), edgeCost: Float32Array.from(edgeCost),
+    geoStart: Int32Array.from(geoStart), geoX: Int32Array.from(geoX), geoY: Int32Array.from(geoY),
+  }, g.index.cell);
 }

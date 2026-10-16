@@ -20,8 +20,11 @@ import { LEVELS, LONG_HOP_ZOOM, catWidth, cityTierZoom, corridorMinZoom, haversi
 
 export const MAPDATA_VERSION = 2;
 export const CAT_BITS = [Cat.LongDistance, Cat.Regional, Cat.Coach, Cat.Bus] as const;
-/** Vector tiles: zoom range (tileSize 512) and source-layer names. */
-export const TILE_MAXZOOM = 7;
+/**
+ * Vector tiles: zoom range (tileSize 512) and source-layer names. Tiles at the max zoom hold the full
+ * stored geometry (8192 units ≈ 6 m at z9, 50° N); the map overzooms them to its max zoom.
+ */
+export const TILE_MAXZOOM = 9;
 export const TILE_LAYERS = { seg: "seg", term: "term", city: "city", station: "st" } as const;
 
 export type Pos = [number, number];

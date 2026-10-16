@@ -599,8 +599,10 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   // ------------------------------------------------------------------ geometry
   timer.start("geometry");
   const RAIL = Cat.LongDistance | Cat.Regional;
-  // Douglas-Peucker tolerance (m) of road-routed corridors (coach / regional bus)
-  const ROAD_TOL_COACH = 300, ROAD_TOL_BUS = 500;
+  // Douglas-Peucker tolerance (m) of the stored line geometry (per line-graph segment). Routed lines
+  // follow track / road, so they keep the detail of the (already 20-50 m) graph geometry; unsnapped
+  // fallbacks are smooth curves that only need enough points to stay curved.
+  const SNAPPED_TOL_M = 12, CURVE_TOL_M = 60;
   const reqs = corrs.map((c, id) => {
     const A = cities[c.a]!, B = cities[c.b]!;
     const hops = hopLists[id]!.map((h) => {
@@ -615,6 +617,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     });
     return { id, mode: (c.cats & RAIL ? "rail" : "road") as "rail" | "road", hops, a: [A.lon, A.lat] as [number, number], b: [B.lon, B.lat] as [number, number], anchored: true };
   });
+  if (process.env.ETBM_DUMP_GEOM_REQS) await writeFile(process.env.ETBM_DUMP_GEOM_REQS, JSON.stringify(reqs));
   // The database is not needed any more: close it and release big JS structures
   // before geometry (which runs its own DuckDB instance on a large extract).
   await db.run("CHECKPOINT");
@@ -734,8 +737,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const g = geomById.get(id);
     const A = cities[c.a]!, B = cities[c.b]!;
     const raw = g?.coords ?? greatCircle([A.lon, A.lat], [B.lon, B.lat]);
-    // road-routed coach/bus lines follow roads: finer tolerance than for unsnapped curves
-    const tol = c.cats & RAIL ? 150 : g?.snapped ? (c.cats & Cat.Coach ? ROAD_TOL_COACH : ROAD_TOL_BUS) : c.cats & Cat.Coach ? 400 : 800;
+    const tol = g?.snapped ? SNAPPED_TOL_M : CURVE_TOL_M;
     // full-resolution geometry; simplified per line-graph segment below
     const coords = raw.map(([x, y]) => [round5(x), round5(y)] as [number, number]);
     // orient from new a to new b

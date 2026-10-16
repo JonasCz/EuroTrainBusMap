@@ -20,7 +20,7 @@ import {
   type MapNet,
   type NetworkFile,
 } from "@etbm/shared";
-import { mergeLines } from "@etbm/shared";
+import { mergeLines, TILE_MAXZOOM } from "@etbm/shared";
 import { forZoom, tileProps, writeMapData } from "../src/mapdata.ts";
 
 const net: NetworkFile = {
@@ -111,10 +111,10 @@ describe("map data (netmap)", () => {
       const cf = { city: 0, routes: [], patterns: [{ route: 0, stations: [0, 3], arr: [0, 60], dep: [0, 60], corridors: [2], headsign: "x" }], patternTz: [0], trips: [], transfers: [], minTransfer: 3 };
       await writeFile(join(dir, "shard", "0.json"), JSON.stringify({ cities: { 0: cf } }));
       const r = await writeMapData(structuredClone(net), dir, () => undefined);
-      expect(r.mapdata.tiles.maxzoom).toBe(7);
-      const z7 = r.mapdata.tiles.tiles["7"]!;
-      expect(z7.length).toBeGreaterThan(0);
-      const tile = gunzipSync(await readFile(join(dir, "tiles", "7", String(z7[0]), `${z7[1]}.pbf.gz`)));
+      expect(r.mapdata.tiles.maxzoom).toBe(TILE_MAXZOOM);
+      const zm = r.mapdata.tiles.tiles[String(TILE_MAXZOOM)]!;
+      expect(zm.length).toBeGreaterThan(0);
+      const tile = gunzipSync(await readFile(join(dir, "tiles", String(TILE_MAXZOOM), String(zm[0]), `${zm[1]}.pbf.gz`)));
       expect(tile.length).toBeGreaterThan(100);
       const geo = unpackGeo(JSON.parse(await readFile(join(dir, "geo", "0.json"), "utf8")));
       expect(geo.corridors.map((c) => c.id)).toEqual([2]);

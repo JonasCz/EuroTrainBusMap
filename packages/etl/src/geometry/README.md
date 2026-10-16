@@ -110,3 +110,18 @@ stored as `road/route-cache-v1.bin`.
 
 `build.ts` simplifies road-routed corridors to **300 m (coach) / 500 m (bus)**. Unsnapped curves stay at 400 / 800 m.
 `network.json` grows from 8.94 MB to **10.16 MB raw** (4.37 MB gzip).
+
+
+## Update: roads incl. tertiary, rail status flags, bridging, stubs
+
+- Road classes: motorway, trunk, primary, secondary, **tertiary** (+ links). Extract 1.99 GB parquet (~30 min),
+  graph 3.5 M nodes / 5.2 M edges, 30 m geometry, 114 MB file, ~530 MB in memory. Coach/bus fallbacks 1452 → 196
+  (the rest: lakes, islands, ferries).
+- Rail: `is_abandoned` / `is_disused` / `is_under_construction` segments are no longer dropped but cost ×6 / ×4 / ×3
+  (OSM tags e.g. a 3.5 km piece of the operating Madrid–Cáceres line as disused). `bridgeGaps` (graph.ts) joins dead
+  ends within 300 m to track of another component (splitting the edge there, cost ×3 per metre) before pruning.
+  Rail fallbacks 130 → 87 (remaining: stations > 1.5 km from any heavy-rail track in Overture: tram / light rail / metro).
+- `attach`: lines end at their own terminal; a straight stub to the city point only if ≤ `STUB_MAX_M` (1 km).
+  Unsnapped curves start at the main hop's stations instead of the city points.
+- Debug aid: `ETBM_DUMP_GEOM_REQS=<file>` makes build.ts write the geometry requests, so routing can be iterated on
+  with `buildWithRouter` in ~1 min instead of a 10 min `--reuse-db` build.

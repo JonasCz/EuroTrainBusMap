@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { RailGraphBuilder } from './graph.ts';
+import { RailGraphBuilder, bridgeGaps } from './graph.ts';
 import { Router } from './route.ts';
-import { attach, buildGeometries, buildWithRouter, type GeometryRequest } from './index.ts';
+import { attach, buildGeometries, buildWithRouter, STUB_MAX_M, type GeometryRequest } from './index.ts';
 import { deserializeRailGraph, pruneGraph, readRailHeader, serializeRailGraph } from './railbin.ts';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -161,16 +161,53 @@ describe('geo helpers', () => {
     expect(out[0]).toEqual([0, 50.001]);
     expect(out.some((p) => p[0] < -0.01)).toBe(false);
   });
-  it('anchored attach keeps the end station of a line that does not pass the city point', () => {
+  it('anchored attach ends a line at its own terminal when the city point is far away', () => {
     // city point = main station 4 km north-west; the line starts at another station and runs north-east
     const station: LonLat = [0, 50];
     const path: LonLat[] = [station, [0.01, 50.01], [0.03, 50.012], [0.5, 50.1]];
     const out = attach([-0.04, 50.03], path, [0.5, 50.1], true);
-    expect(out[0]).toEqual([-0.04, 50.03]);
-    expect(out[1]).toEqual(station); // straight stub to the station, no shortcut past it
+    expect(out[0]).toEqual(station); // no long straight stub into the city point
+    expect(out.length).toBe(path.length);
+    // a station within STUB_MAX_M of the city point is joined by a straight stub (no shortcut past it)
+    const near = attach([-0.005, 50.004], path, [0.5, 50.1], true);
+    expect(near[0]).toEqual([-0.005, 50.004]);
+    expect(near[1]).toEqual(station);
+    expect(dist([-0.005, 50.004], station)).toBeLessThanOrEqual(STUB_MAX_M);
     // a line passing right by the city point is still cut there
     const by: LonLat[] = [[-0.07, 50], [0, 50.0005], [0.3, 50], [1, 50]];
     expect(attach([0, 50.001], by, [1, 50], true).some((p) => p[0] < -0.01)).toBe(false);
+  });
+});
+
+describe('bridging gaps between components', () => {
+  // main line (0,50)–(0.2,50); a branch to the north ends 170 m short of it (no shared vertex)
+  const gapGraph = () => {
+    const b = new RailGraphBuilder();
+    b.addLine(line([0, 50], [0.2, 50]));
+    b.addLine(line([0.1, 50.0015], [0.1, 50.05]));
+    return b.build({ simplifyTol: 15 });
+  };
+  const from: LonLat = [0.1, 50.05], to: LonLat = [0.2, 50];
+  it('the gap leaves the branch unreachable', () => {
+    expect(new Router(gapGraph(), { minComponent: 100 }).route(from, to, 100000)).toBeNull();
+  });
+  it('joins a dead end to the middle of another component by splitting its edge', () => {
+    const g0 = gapGraph();
+    const g = bridgeGaps(g0, { maxGap: 300 });
+    expect(g.compSize.length).toBe(1);
+    expect(g.edgeCount).toBe(g0.edgeCount + 2); // main edge split in two + the bridge
+    const r = new Router(g, { minComponent: 100 }).route(from, to, 100000)!;
+    expect(r).not.toBeNull();
+    // 5.5 km up the branch + 170 m bridge + 7 km along the main line, no big detour
+    expect(r.length).toBeGreaterThan(12000);
+    expect(r.length).toBeLessThan(13500);
+    // total length is preserved by the split
+    const sum = (x: typeof g0) => Array.from(x.edgeLen).reduce((a, l) => a + l, 0);
+    expect(sum(g) - sum(g0)).toBeLessThan(200);
+  });
+  it('leaves gaps wider than maxGap alone', () => {
+    const g0 = gapGraph();
+    expect(bridgeGaps(g0, { maxGap: 100 })).toBe(g0);
   });
 });
 

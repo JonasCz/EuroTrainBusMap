@@ -17,8 +17,12 @@ export const EUROPE_BBOX = [-25, 34, 45, 72] as const; // xmin ymin xmax ymax
 const STAC = 'https://stac.overturemaps.org/catalog.json';
 /** Overture rail classes kept (tram, subway, light_rail, funicular, monorail are dropped). */
 const KEEP_CLASSES = ['standard_gauge', 'narrow_gauge', 'unknown', 'high_speed'];
-/** Whole-segment rail_flags that drop a segment. */
-const DROP_FLAGS = ['is_abandoned', 'is_disused', 'is_under_construction'];
+/**
+ * Whole-segment rail_flags marking track that is (probably) not in service. OSM often tags the wrong
+ * piece (a 3.5 km "disused" stub between two operating pieces of the Madrid–Cáceres line), so these
+ * segments are not dropped but kept at a high cost: routing only uses them where nothing else connects.
+ */
+const STATUS_FLAGS = { abandoned: 'is_abandoned', disused: 'is_disused', construction: 'is_under_construction' } as const;
 
 type Log = (s: string) => void;
 
@@ -134,11 +138,11 @@ export const RAIL_SPEC: ExtractSpec = {
   kind: 'rail',
   env: 'ETBM_RAIL_PARQUET',
   select: 'id, class, names.primary AS name, rail_flags, geometry',
-  where: `subtype = 'rail' AND class IN (${KEEP_CLASSES.map((k) => `'${k}'`).join(',')}) AND ${flagFilter('rail_flags', DROP_FLAGS)}`,
+  where: `subtype = 'rail' AND class IN (${KEEP_CLASSES.map((k) => `'${k}'`).join(',')})`,
 };
 
 /** Road classes kept for coach/bus routing (their `_link` ramps have the same class, subclass 'link'). */
-export const ROAD_CLASSES = ['motorway', 'trunk', 'primary', 'secondary'];
+export const ROAD_CLASSES = ['motorway', 'trunk', 'primary', 'secondary', 'tertiary'];
 export const ROAD_SPEC: ExtractSpec = {
   kind: 'road',
   env: 'ETBM_ROAD_PARQUET',
@@ -217,7 +221,10 @@ async function extractWith(c: DuckDBConnection, spec: ExtractSpec, dir: string, 
 }
 
 /** Cost multipliers per class / usage (≥ 1; routing prefers plain passenger main lines). */
-export const COST = { unknown: 1.05, narrowGauge: 1.0, freightOnly: 1.4, highSpeed: 0.85, newLine: 0.93 };
+export const COST = { unknown: 1.05, narrowGauge: 1.0, freightOnly: 1.4, highSpeed: 0.85, newLine: 0.93, construction: 3, disused: 4, abandoned: 6 };
+
+/** SQL: whole-segment flag test */
+const hasFlag = (flag: string) => `coalesce(list_bool_or(list_transform(rail_flags, f -> f.between IS NULL AND list_contains(f.values, '${flag}'))), false)`;
 /**
  * Overture has no speed / high-speed tag for rail, but OSM line names often say it. Named
  * segments of high-speed lines get a lower cost so e.g. Eurostar takes LGV Nord rather than the
@@ -240,11 +247,12 @@ export async function loadRailGraph(parquet: string, workDir: string, log: Log, 
             AND list_contains(f.values, 'is_freight') AND NOT list_contains(f.values, 'is_passenger'))), false)
           THEN ${COST.freightOnly} ELSE 1.0 END
       * CASE WHEN regexp_matches(coalesce(name, ''), '${HIGH_SPEED_NAME}', 'i') THEN ${COST.highSpeed}
-             WHEN regexp_matches(coalesce(name, ''), '${NEW_LINE_NAME}', 'i') THEN ${COST.newLine} ELSE 1.0 END AS mult,
+             WHEN regexp_matches(coalesce(name, ''), '${NEW_LINE_NAME}', 'i') THEN ${COST.newLine} ELSE 1.0 END
+      * CASE WHEN ${hasFlag(STATUS_FLAGS.abandoned)} THEN ${COST.abandoned}
+             WHEN ${hasFlag(STATUS_FLAGS.disused)} THEN ${COST.disused}
+             WHEN ${hasFlag(STATUS_FLAGS.construction)} THEN ${COST.construction} ELSE 1.0 END AS mult,
       ST_AsWKB(geometry) AS wkb
-    FROM read_parquet('${parquet}')
-    WHERE NOT coalesce(list_bool_or(list_transform(rail_flags, f -> f.between IS NULL
-          AND list_has_any(f.values, [${DROP_FLAGS.map((k) => `'${k}'`).join(',')}]))), false)`);
+    FROM read_parquet('${parquet}')`);
   let flat = new Float64Array(4096);
   for (;;) {
     const ch = await res.fetchChunk();
@@ -285,7 +293,7 @@ export async function loadRailGraph(parquet: string, workDir: string, log: Log, 
  * Typical coach speeds (km/h) per Overture road class; `_link` ramps (subclass 'link') use
  * ROAD_LINK_SPEED. Edge cost = length × (motorway speed / class speed), so cost ≥ length.
  */
-export const ROAD_SPEED: Record<string, number> = { motorway: 110, trunk: 90, primary: 70, secondary: 60 };
+export const ROAD_SPEED: Record<string, number> = { motorway: 110, trunk: 90, primary: 70, secondary: 60, tertiary: 50 };
 export const ROAD_LINK_SPEED = 50;
 
 /**

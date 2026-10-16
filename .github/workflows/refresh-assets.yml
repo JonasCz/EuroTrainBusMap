@@ -68,15 +68,16 @@ jobs:
           done
 
       # The Overture extracts (rail ~190 MB, major roads ~ROADMB) are cached, so re-runs within the same
-      # Overture release skip the slow S3 scan (a new release is detected and re-extracted).
+      # Overture release skip the slow S3 scan (a new release is detected and re-extracted). Bump the
+      # key prefix when the extract definition changes (v3: rail keeps disused/under-construction
+      # segments, roads include `tertiary`), otherwise a stale extract of the same release is reused.
       - name: Restore Overture extracts
         uses: actions/cache@v4
         with:
           path: work/overture
-          key: overture-v2-${{ github.run_id }}
+          key: overture-v3-${{ github.run_id }}
           restore-keys: |
-            overture-v2-
-            overture-rail-
+            overture-v3-
 
       - name: Build assets
         run: |

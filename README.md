@@ -41,14 +41,17 @@ Pipeline in short:
    (city, time) sequences and kept once, with merged calendars.
 6. **Patterns & trips** – station sequences with offsets, deduplicated; calendars as 60-day bitmasks starting the day before the build (Berlin date), so viewers in earlier timezones stay covered.
 7. **Corridors** – undirected edges between consecutive cities, with trips/day per category and
-   geometry routed on the rail graph (trains) or the major-road graph (coaches/buses; ferries and
-   islands stay curves), simplified to city-level detail. A city's point is its main station
-   (busiest rail station, else busiest stop; `src/core/anchor.ts`), so lines run through stations
-   instead of kinking towards a town centroid; lines from a city's other stations keep their own
-   end station and get a straight lead-in to the main one.
+   geometry routed on the rail graph (trains) or the road graph (motorway…tertiary; coaches/buses;
+   ferries and islands stay curves). Rail graph holes are bridged (disused / under-construction
+   track stays routable at a high cost, dead ends within 300 m of another component are joined).
+   A city's point is its main station (busiest rail station, else busiest stop;
+   `src/core/anchor.ts`) and is only a marker: every line ends at its own terminal station and is
+   joined to the city point by a straight stub only if that is ≤ 1 km (`STUB_MAX_M`), so big
+   multi-station cities (London, Paris, Berlin…) are not a starburst of long straight lines.
 8. **Line graph** (`src/core/segments.ts`) – corridor geometries are conflated onto shared
    reference lines (resampled every 100 m, matched within 80 m with a similar direction, rail with
-   rail, road with road) and cut where the set of corridors using them changes. Each piece of
+   rail, road with road) and cut where the set of corridors using them changes; every segment is
+   simplified with Douglas–Peucker at 12 m (routed) / 60 m (unsnapped curves). Each piece of
    track/road is stored and drawn once (`NetworkFile.segments`, `Corridor.segs`) with the summed
    traffic of all corridors on it, so an express A–C no longer draws a second line beside A–B–C.
 9. **Output** (`data/<build>/`): `network.json` (packed, ~10.6 MB raw / ~4.5 MB gzip; the full network for tools – the web app uses the map data below),
@@ -57,25 +60,26 @@ Pipeline in short:
    `data/manifest.json` points to the current build.
 10. **Map data** (`src/mapdata.ts`, formats in `packages/shared/src/netmap.ts`) – what the web app
    actually loads, so phones never download the whole network:
-   - `core.json` (~0.55 MB gzip): cities only (names, positions, importance, shard) + tile index;
+   - `core.json` (~0.6 MB gzip): cities only (names, positions, importance, shard) + tile index;
      the only data needed to start.
-   - `tiles/{z}/{x}/{y}.pbf.gz` (z2–7, ~400 files, ~9 MB total): gzipped Mapbox vector tiles of the
-     drawn network (layers `seg`, `city`, and at z7 also `term` end pieces and `st` stations),
-     overzoomed beyond z7. Features are filter-independent: per category width/LOD level; the
+   - `tiles/{z}/{x}/{y}.pbf.gz` (z2–9, ~4100 files, ~20 MB gzip total; only tiles that contain data):
+     gzipped Mapbox vector tiles of the drawn network (layers `seg`, `city`, and at z9 also `term` end
+     pieces and `st` stations), overzoomed beyond z9. z9 (extent 8192 ≈ 6 m) holds the stored
+     geometry almost unsimplified, z7/z8 are simplified to ~200 / ~100 m. Features are filter-independent: per category width/LOD level; the
      style packs the visible categories side by side. Low zooms only hold what is shown
      there, with equal neighbouring segments merged. LOD is density-aware
      (`packages/shared/src/density.ts`): where the map around a line is sparse, regional rail,
      coach and bus lines appear up to three LOD levels earlier, in importance order within an ink
      budget per screen cell, and only connected to the visible network. Stored gzipped because static hosts don't
      compress protobuf; the app inflates them (DecompressionStream).
-   - `geo/<shard>.json` (~50 KB gzip on average): for each timetable shard, the corridors its patterns
+   - `geo/<shard>.json` (~80 KB gzip on average): for each timetable shard, the corridors its patterns
      use (with segment geometry, for the selection highlight) and the stations it references
      (names/positions). Loaded together with the shard on a click.
    `manifest.json` points to `core.json` and lists the tiles (`Manifest.mapdata`).
    Rebuild just this stage for an existing build: `node --import tsx packages/etl/src/mapdata.ts <out>/<build>`.
 
 Typical full build: ~150 feed files, ~36k cities, ~76k stations, ~70k corridors, ~2.1M trips,
-~1.2 GB in ~1700 files; ~16 min on a 4-core runner (plus ~1 min to download assets).
+~1.2 GB in ~5400 files (Cloudflare limit: 20k files per deployment); ~16 min on a 4-core runner (plus ~1 min to download assets).
 
 ## Running locally
 
@@ -117,7 +121,8 @@ Tests: `pnpm test`, types: `pnpm typecheck`.
 - **`.github/workflows/refresh-assets.yml`** (monthly + manual): rebuilds the slow-changing inputs and
   uploads them to the R2 bucket `eurotrainbusmap-assets`: `geonames/places-europe.tsv.gz` (pruned
   GeoNames, ~2 MB), `basemap/*.json` (Natural Earth), `rail/rail-graph-v1.bin` (rail graph from the
-  Overture rail extract, ~19 MB), `road/road-graph-v1.bin` (motorway…secondary road graph, ~53 MB) and `manifest.json`.
+  Overture rail extract incl. disused/under-construction track at high cost and bridged gaps, ~27 MB),
+  `road/road-graph-v1.bin` (motorway…tertiary road graph, 30 m geometry, ~114 MB) and `manifest.json`.
 
 Secrets: `CLOUDFLARE_API_TOKEN` (Workers deploy + R2) and `CLOUDFLARE_ACCOUNT_ID`.
 
