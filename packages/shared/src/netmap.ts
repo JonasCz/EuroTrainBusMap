@@ -4,7 +4,8 @@
  *   core.json            CoreFile     – cities (+ timezones, tile index); everything the app needs to start
  *   stations.json        StationsFile – station names/coords/cats (lazy, needed once a city is selected)
  *   tiles/{z}/{x}/{y}.pbf.gz          – gzipped Mapbox vector tiles of the drawn network
- *                                       (layers seg, city; at the max zoom also term, st)
+ *                                       (layers seg, city; at the max zoom also term, st, cx, lk:
+ *                                       station complex outlines and the links inside them)
  *   geo/<shard>.json / geo/c<city>.json GeoFile – corridors (+ segment geometry) referenced by the
  *                                       patterns of one timetable shard, for highlighting a selection
  *
@@ -12,21 +13,22 @@
  * ETL (writer) and the web app (reader) share one definition.
  */
 import { decodePolyline, encodePolyline, packCities, packStations, unpackCities, unpackStations, type PackedNetwork } from "./pack.ts";
-import type { CatBit, City, Corridor, Segment, Station } from "./schema.ts";
+import type { CatBit, City, Corridor, Link, Segment, Station } from "./schema.ts";
+import { cityComplexes, complexGeometry } from "./complex.ts";
 import type * as GeoJSON from "geojson";
 import { Cat } from "./schema.ts";
 import { promoteSparse } from "./density.ts";
 import { lineGroups, smoothLevels } from "./lines.ts";
 import { LEVELS, LONG_HOP_ZOOM, catWidth, cityTierZoom, corridorMinZoom, haversineKm, isLongHop, levelIndex, stationLevel } from "./lod.ts";
 
-export const MAPDATA_VERSION = 3;
+export const MAPDATA_VERSION = 4;
 export const CAT_BITS = [Cat.LongDistance, Cat.Regional, Cat.Coach, Cat.Bus] as const;
 /**
  * Vector tiles: zoom range (tileSize 512) and source-layer names. Tiles at the max zoom hold the full
  * stored geometry (8192 units ≈ 6 m at z9, 50° N); the map overzooms them to its max zoom.
  */
 export const TILE_MAXZOOM = 9;
-export const TILE_LAYERS = { seg: "seg", term: "term", city: "city", station: "st" } as const;
+export const TILE_LAYERS = { seg: "seg", term: "term", city: "city", station: "st", complex: "cx", link: "lk" } as const;
 
 export type Pos = [number, number];
 
@@ -289,6 +291,37 @@ export function shortStationName(name: string, city: string): string {
 export function stationProps(c: City, s: Station, rank: number): Record<string, number | string> {
   const lz = stationLevel(s.cats, rank);
   return { id: s.id, name: shortStationName(s.name, c.name), city: s.city, lz, rail: s.cats & (Cat.LongDistance | Cat.Regional) ? 1 : 0, major: lz === 0 ? 1 : 0, rank: rank + (lz === 0 ? 0 : 100) };
+}
+
+/** Station complex outlines (layer `cx`): city, `zi` = STATION_LEVELS index it is shown from, `lv` 0 = whole city, 1 = cluster of a big city. */
+export function complexFeatures(net: MapNet & { links?: Link[] }): { properties: Record<string, number>; geometry: ReturnType<typeof complexGeometry> }[] {
+  const out: { properties: Record<string, number>; geometry: ReturnType<typeof complexGeometry> }[] = [];
+  const linksOf = new Map<number, Link[]>();
+  for (const l of net.links ?? []) (linksOf.get(l.city) ?? linksOf.set(l.city, []).get(l.city)!).push(l);
+  for (const c of net.cities) {
+    for (const cx of cityComplexes(c, net.stations)) {
+      const pts = cx.members.map((m) => [net.stations[m]!.lon, net.stations[m]!.lat] as Pos);
+      // the outline also covers the track / road of the links inside the complex
+      const set = new Set(cx.members);
+      for (const l of linksOf.get(c.id) ?? []) if (set.has(l.a) && set.has(l.b)) pts.push(...l.coords);
+      const geometry = complexGeometry(pts);
+      if (geometry) out.push({ properties: { city: c.id, zi: cx.zi, lv: cx.level }, geometry });
+    }
+  }
+  return out;
+}
+
+/** Link lines (layer `lk`): dominant category `c`, width unit `w`, `zi` = STATION_LEVELS index of the later of its two stations. */
+export function linkProps(net: MapNet, l: Link, cxZi?: number): Record<string, number> | null {
+  const sa = net.stations[l.a], sb = net.stations[l.b];
+  const city = net.cities[l.city];
+  if (!sa || !sb || !city) return null;
+  const rank = (id: number) => city.stations.indexOf(id);
+  // inside a whole-city complex the links come with the outline; else when both stations are drawn
+  const zi = cxZi ?? Math.max(stationLevel(sa.cats, rank(l.a)), stationLevel(sb.cats, rank(l.b)));
+  const c = CAT_BITS.find((k) => l.cats & k) ?? Cat.Bus;
+  const w = catWidth(c, l.tpd[c] ?? 0, l.snapped);
+  return { city: l.city, c, w: Math.round(w * 2) / 2, zi: Math.min(zi, 1), u: l.snapped ? 0 : 1 };
 }
 
 // ---------------------------------------------------------------- core / stations files

@@ -141,6 +141,25 @@ export interface Segment {
   snapped: boolean;
 }
 
+/**
+ * A connection between two stations of the same city (a pattern's hop inside a city, e.g.
+ * Tipperary – Limerick Junction), drawn at station zoom inside the city's station complex
+ * (see complex.ts). Not a corridor: it never takes part in the city graph, LOD or timetable UI.
+ */
+export interface Link {
+  id: number;
+  city: number;
+  /** station ids, a < b */
+  a: number;
+  b: number;
+  cats: number;
+  /** trips per day (both directions) per category */
+  tpd: Partial<Record<CatBit, number>>;
+  snapped: boolean;
+  /** polyline from station a to station b */
+  coords: [number, number][];
+}
+
 export interface NetworkFile {
   schema: number;
   build: string;
@@ -150,6 +169,8 @@ export interface NetworkFile {
   corridors: Corridor[];
   /** Line-graph segments (see Segment, Corridor.segs); filled by expandNetwork. */
   segments?: Segment[];
+  /** Station-to-station links inside cities (see Link). */
+  links?: Link[];
   /**
    * Optional continuation files (paths relative to the build directory, e.g.
    * "network-1.json"), each a NetworkPart. Used when the network would exceed

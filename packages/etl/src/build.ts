@@ -10,6 +10,9 @@ import {
   type City,
   type CityFile,
   type Corridor,
+  type Link,
+  isLinkCandidate,
+  isMember,
   type Manifest,
   type NetworkFile,
   type Segment,
@@ -542,6 +545,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   }
   const corrIndex = new Map<string, number>();
   const corrs: CorrAcc[] = [];
+  const linkAcc = new Map<string, { a: number; b: number; cats: number; tpd: Record<number, number>; w: number; shapeTrip: number; shapeW: number }>();
   const patternCorr: number[][] = [];
   for (let p = 0; p < patterns.length; p++) {
     const pt = patterns[p]!;
@@ -550,7 +554,20 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const list: number[] = [];
     for (let i = 0; i + 1 < pt.cities.length; i++) {
       const c1 = pt.cities[i]!, c2 = pt.cities[i + 1]!;
-      if (c1 === c2) continue;
+      if (c1 === c2) {
+        // a hop between two stations of one city: not a corridor, but a link inside the city's station complex
+        const s1 = pt.stations[i]!, s2 = pt.stations[i + 1]!;
+        if (s1 === s2 || !w) continue;
+        const [x, y] = s1 < s2 ? [s1, s2] : [s2, s1];
+        const lk = `${x},${y}`;
+        let l = linkAcc.get(lk);
+        if (!l) linkAcc.set(lk, (l = { a: x, b: y, cats: 0, tpd: {}, w: 0, shapeTrip: -1, shapeW: 0 }));
+        l.cats |= route.cat;
+        l.tpd[route.cat] = (l.tpd[route.cat] ?? 0) + w / D;
+        l.w += w;
+        if (pt.shapeTrip >= 0 && w > l.shapeW) [l.shapeTrip, l.shapeW] = [pt.shapeTrip, w];
+        continue;
+      }
       const [a, b] = c1 < c2 ? [c1, c2] : [c2, c1];
       const key = `${a},${b}`;
       let id = corrIndex.get(key);
@@ -579,10 +596,34 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   }
   log(`${corrs.length} corridors`);
 
+  // Links inside cities (station complexes): candidates are hops between two of a city's main
+  // stations (rank < 20 in the city's list by service weight, the most any complex member can have).
+  const cityRank = new Map<number, number>();
+  {
+    const per = new Map<number, number[]>();
+    const seenSt = new Set<number>();
+    for (let p = 0; p < patterns.length; p++) {
+      if (!patternDays[p]) continue;
+      for (const s of patterns[p]!.stations) {
+        if (seenSt.has(s)) continue;
+        seenSt.add(s);
+        const c = stations[s]!.city;
+        (per.get(c) ?? per.set(c, []).get(c)!).push(s);
+      }
+    }
+    for (const list of per.values()) {
+      list.sort((x, y) => stations[y]!.weight - stations[x]!.weight);
+      list.forEach((s, i) => cityRank.set(s, i));
+    }
+  }
+  const linkCands = [...linkAcc.values()].filter((l) => (cityRank.get(l.a) ?? 99) < 20 && (cityRank.get(l.b) ?? 99) < 20 && isLinkCandidate(stations[l.a]!, stations[l.b]!));
+  log(`${linkAcc.size} intra-city hops, ${linkCands.length} link candidates`);
+
   // shapes for representative hops
   const neededShapes = new Map<number, number>(); // shape_key → trip
   const hopLists = corrs.map((c) => [...c.hops.values()].sort((x, y) => y.w - x.w).slice(0, 3));
   for (const hl of hopLists) for (const h of hl) if (h.shapeTrip >= 0) neededShapes.set(tShape[h.shapeTrip]!, h.shapeTrip);
+  for (const l of linkCands) if (l.shapeTrip >= 0) neededShapes.set(tShape[l.shapeTrip]!, l.shapeTrip);
   const shapePts = new Map<number, LonLat[]>();
   if (neededShapes.size) {
     await db.run(`DROP TABLE IF EXISTS needshape`);
@@ -616,6 +657,15 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       return hop;
     });
     return { id, mode: (c.cats & RAIL ? "rail" : "road") as "rail" | "road", hops, a: [A.lon, A.lat] as [number, number], b: [B.lon, B.lat] as [number, number], anchored: true };
+  });
+  const linkBase = reqs.length;
+  linkCands.forEach((l, k) => {
+    const f = stations[l.a]!, t = stations[l.b]!;
+    const hop: { from: [number, number]; to: [number, number]; shape?: [number, number][] } = { from: [f.lon, f.lat], to: [t.lon, t.lat] };
+    const sp = l.shapeTrip >= 0 ? shapePts.get(tShape[l.shapeTrip]!) : undefined;
+    const sl = sp && sliceShape(sp, hop.from, hop.to);
+    if (sl) hop.shape = sl;
+    reqs.push({ id: linkBase + k, mode: (l.cats & RAIL ? "rail" : "road") as "rail" | "road", hops: [hop], a: hop.from, b: hop.to, anchored: true });
   });
   if (process.env.ETBM_DUMP_GEOM_REQS) await writeFile(process.env.ETBM_DUMP_GEOM_REQS, JSON.stringify(reqs));
   // The database is not needed any more: close it and release big JS structures
@@ -760,6 +810,29 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     corrNew[id] = outCorr.length;
     outCorr.push(cor);
   });
+  // links inside cities: both ends must be complex members (shared/complex.ts), geometry as routed above
+  const outLinks: Link[] = [];
+  {
+    const rankOut = new Map<number, number>();
+    for (const c of outCities) c.stations.forEach((s, i) => rankOut.set(s, i));
+    linkCands.forEach((l, k) => {
+      const a = usedStation[l.a]!, b = usedStation[l.b]!;
+      if (a < 0 || b < 0) return;
+      const sa = outStations[a]!, sb = outStations[b]!;
+      if (sa.city !== sb.city || !isMember(sa, rankOut.get(a)!) || !isMember(sb, rankOut.get(b)!)) return;
+      const g = geomById.get(linkBase + k);
+      const raw = g?.coords ?? greatCircle([sa.lon, sa.lat], [sb.lon, sb.lat]);
+      let coords = simplifyLine(raw, g?.snapped ? SNAPPED_TOL_M : CURVE_TOL_M).map(([x, y]) => [round5(x), round5(y)] as [number, number]);
+      const flip = a > b;
+      if (flip) coords = coords.reverse();
+      const tpd: Partial<Record<CatBit, number>> = {};
+      for (const kk of CAT_BITS) if (l.tpd[kk]) tpd[kk] = Math.round(l.tpd[kk]! * 10) / 10;
+      outLinks.push({ id: outLinks.length, city: sa.city, a: flip ? b : a, b: flip ? a : b, cats: l.cats, tpd, snapped: !!g?.snapped, coords });
+    });
+    outLinks.sort((x, y) => x.city - y.city || x.a - y.a || x.b - y.b);
+    outLinks.forEach((l, i) => (l.id = i));
+    log(`${outLinks.length} station links`);
+  }
   // Order corridors by (a, b) so ids are stable-ish and pack well.
   {
     const order = outCorr.map((_, i) => i).sort((x, y) => outCorr[x]!.a - outCorr[y]!.a || outCorr[x]!.b - outCorr[y]!.b);
@@ -819,7 +892,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       if (e !== build && e !== "manifest.json" && /^\d{8}-\d{4}/.test(e)) await rm(join(outRoot, e), { recursive: true, force: true });
     }
 
-  const network: NetworkFile = { schema: SCHEMA_VERSION, build, timezones, cities: outCities, stations: outStations, corridors: outCorr, segments: outSegs };
+  const network: NetworkFile = { schema: SCHEMA_VERSION, build, timezones, cities: outCities, stations: outStations, corridors: outCorr, segments: outSegs, links: outLinks };
   const calendars: CalendarsFile = { startDate: args.startDate, days: D, masks: masks.masks };
 
   // city files
@@ -938,7 +1011,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const attribution = buildAttribution(ctx);
   // The network is written in the compact columnar form (NetworkFile.packed).
   const files: [string, unknown][] = [];
-  const packedNet: NetworkFile = { schema: SCHEMA_VERSION, build, timezones, cities: [], stations: [], corridors: [], packed: packNetwork(network) };
+  const packedNet: NetworkFile = { schema: SCHEMA_VERSION, build, timezones, cities: [], stations: [], corridors: [], packed: packNetwork(network), links: outLinks };
   files.push(["network.json", packedNet]);
   files.push(
     ["calendars.json", calendars],

@@ -22,6 +22,8 @@ import {
   TILE_LAYERS,
   TILE_MAXZOOM,
   buildNetIndex,
+  complexFeatures,
+  linkProps,
   ensureSegments,
   mergeLines,
   cityMinZoom,
@@ -115,6 +117,15 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
       stationFeatures.push({ type: "Feature", id: sid, properties: stationProps(c, s, rank), geometry: { type: "Point", coordinates: [s.lon, s.lat] } });
     });
   }
+  const cxFeatures: Feature[] = complexFeatures({ ...net, links: network.links }).map((x) => ({ type: "Feature", properties: x.properties, geometry: x.geometry as GeoJSON.Geometry }));
+  const linkFeatures: Feature[] = [];
+  const wholeCity = new Map<number, number>();
+  for (const f of cxFeatures) if (f.properties!.lv === 0) wholeCity.set(f.properties!.city as number, f.properties!.zi as number);
+  for (const l of network.links ?? []) {
+    const p = linkProps(net, l, wholeCity.get(l.city));
+    if (p && l.coords.length >= 2) linkFeatures.push({ type: "Feature", properties: p, geometry: { type: "LineString", coordinates: l.coords } });
+  }
+  log(`mapdata: ${cxFeatures.length} station complexes, ${linkFeatures.length} station links`);
   log(`mapdata: ${segFeatures.length} segments, ${termFeatures.length} terminal pieces, ${cityFeatures.length} cities, ${stationFeatures.length} stations`);
 
   // ---- vector tiles (tileSize 512: tile zoom z is shown from map zoom z to z+1, and overzoomed past TILE_MAXZOOM)
@@ -136,6 +147,8 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
     if (last) {
       layers[TILE_LAYERS.term] = geojsonvt(fc(mergeLines(termFeatures)), opts);
       layers[TILE_LAYERS.station] = geojsonvt(fc(stationFeatures), { ...opts, buffer: 64 });
+      layers[TILE_LAYERS.complex] = geojsonvt(fc(cxFeatures), { ...opts, tolerance: 2 });
+      layers[TILE_LAYERS.link] = geojsonvt(fc(mergeLines(linkFeatures)), opts);
     }
     const keys = new Map<string, [number, number]>();
     for (const l of Object.values(layers)) {

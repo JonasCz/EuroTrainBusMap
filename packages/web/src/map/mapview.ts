@@ -5,7 +5,7 @@ import type * as GeoJSON from "geojson";
 import type { Net } from "../data/net.ts";
 import { DEFAULT_FILTERS, sameFilters, type Filters } from "../logic/filters.ts";
 import { focusCityData, highlightData, stationData, type Emphasis } from "./features.ts";
-import { CITY_LAYERS, FOCUS_LAYERS, STATION_LAYERS, STATION_ZOOM, cityFilter, geojsonSources, networkLayers, type LayerState } from "./layers.ts";
+import { CITY_LAYERS, COMPLEX_LAYERS, FOCUS_LAYERS, STATION_LAYERS, STATION_ZOOM, cityFilter, geojsonSources, networkLayers, type LayerState } from "./layers.ts";
 import { prefetchGz, registerGzProtocol } from "./protocol.ts";
 import { baseLayers, baseStyle, glyphPrefetchUrls } from "./style.ts";
 import { currentTheme, type Theme } from "./theme.ts";
@@ -184,7 +184,12 @@ export class MapView {
   /** City under a screen point (with tolerance for touch). */
   cityAt(p: maplibregl.Point): number | null {
     const f = this.featureAt(p);
-    if (!f) return null;
+    if (!f) {
+      // inside a station complex outline: its city
+      const layers = COMPLEX_LAYERS.filter((l) => this.map.getLayer(l));
+      const cx = layers.length ? this.map.queryRenderedFeatures(p, { layers })[0] : undefined;
+      return cx ? (cx.properties as Record<string, number>).city! : null;
+    }
     const props = f.properties as Record<string, number>;
     return isStation(f) ? props.city! : props.id!;
   }

@@ -16,6 +16,9 @@ export interface Theme {
   dimMarker: string;
   dimText: string;
   link: string;
+  /** station complex: tinted area and its outline */
+  cxFill: string;
+  cxLine: string;
   accent: string;
   cat: Record<number, string>;
 }
@@ -36,6 +39,8 @@ export const LIGHT: Theme = {
   dimMarker: "#c9c4bb",
   dimText: "#b2aca2",
   link: "#8d8a84",
+  cxFill: "#e9e4d8",
+  cxLine: "#c8bea8",
   accent: "#26282c",
   cat: {
     [Cat.LongDistance]: "#e23b41",
@@ -61,6 +66,8 @@ export const DARK: Theme = {
   dimMarker: "#3a444e",
   dimText: "#4c5761",
   link: "#7c8791",
+  cxFill: "#26313b",
+  cxLine: "#455564",
   accent: "#f6f7f8",
   cat: {
     [Cat.LongDistance]: "#ff5d62",

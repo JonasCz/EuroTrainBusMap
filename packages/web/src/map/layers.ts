@@ -160,6 +160,14 @@ export function geojsonSources(): Record<string, { type: "geojson"; data: GeoJSO
 }
 
 export const CITY_LAYERS = ["city-c", "city-l"];
+/** Station complex areas: a click inside selects their city. */
+export const COMPLEX_LAYERS = [0, 1].flatMap((i) => [`cx-body-${i}`, `cx-fill-${i}`]);
+
+/** Linear blend of two #rrggbb colours (t = share of b). */
+export function mix(a: string, b: string, t: number): string {
+  const p = (c: string, i: number) => parseInt(c.slice(1 + 2 * i, 3 + 2 * i), 16);
+  return "#" + [0, 1, 2].map((i) => Math.round(p(a, i) * (1 - t) + p(b, i) * t).toString(16).padStart(2, "0")).join("");
+}
 const range = (n: number) => [...Array(n).keys()];
 export const FOCUS_LAYERS = [...range(LEVELS.length).flatMap((i) => [`focus-c-${i}`, `focus-l-${i}`])];
 export const STATION_LAYERS = [...range(STATION_LEVELS.length).flatMap((i) => [`station-c-${i}`, `station-l-${i}`]), "fstation-c", "fstation-l"];
@@ -206,6 +214,22 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
   const wMul = dim ? 0.6 : 1;
   const cats = CAT_BITS.filter((k) => f.cats & k);
   const catFilter = (k: number): unknown[] => ["all", ["has", `w${k}`]];
+
+  // ---- station complexes: tinted outline around the stations of a city that were merged into one
+  // dot. The outline is the stations' hull drawn as a wide round-joined line of constant pixel
+  // width, so it has straight edges and rounded corners at every zoom (a capsule for two
+  // stations). Colours fade from the land colour, so overlapping parts never show seams.
+  const cxW = (extra: number): Expr => E(["interpolate", ["linear"], ["zoom"], STATION_ZOOM - 0.5, 24 + extra, 13, 30 + extra, 15, 36 + extra]);
+  const cxColor = (z0: number, to: string): Expr => E(["interpolate", ["linear"], ["zoom"], z0, t.land, z0 + FADE_ZOOM, dim ? mix(t.land, to, 0.45) : to]);
+  for (let i = STATION_LEVELS.length - 1; i >= 0; i--) {
+    if (i > 1) continue;
+    // the outline starts fading in half a zoom level before its stations, around the still visible city dot
+    const z0 = STATION_LEVELS[i]! - 0.5;
+    const src = { source: "net", "source-layer": TILE_LAYERS.complex, minzoom: z0, filter: ["==", ["get", "zi"], i] as unknown as FilterSpecification };
+    layers.push({ id: `cx-edge-${i}`, type: "line", ...src, layout: lineLayout, paint: { "line-color": cxColor(z0, t.cxLine), "line-width": cxW(2.4) } });
+    layers.push({ id: `cx-body-${i}`, type: "line", ...src, layout: lineLayout, paint: { "line-color": cxColor(z0, t.cxFill), "line-width": cxW(0) } });
+    layers.push({ id: `cx-fill-${i}`, type: "fill", ...src, filter: ["all", ["==", ["get", "zi"], i], ["==", ["geometry-type"], "Polygon"]] as unknown as FilterSpecification, paint: { "fill-color": cxColor(z0, t.cxFill), "fill-antialias": false } });
+  }
 
   // ---- base network
   // seg (city-level geometry, below STATION_ZOOM); at station zoom lead-in pieces ("term") are
@@ -269,6 +293,16 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
         },
       });
     }
+  }
+
+  // ---- links between the stations of a complex (intra-city hops of trains / buses)
+  const linkCatColor: Expr = E(["match", ["get", "c"], Cat.LongDistance, t.cat[Cat.LongDistance], Cat.Regional, t.cat[Cat.Regional], Cat.Coach, t.cat[Cat.Coach], Cat.Bus, t.cat[Cat.Bus], "#888"]);
+  const linkW = (cas: number): Expr => E(["interpolate", ["linear"], ["zoom"], STATION_ZOOM, ["max", 1.6 + cas, ["+", cas, ["*", factorAt(STATION_ZOOM, ZF) * wMul, ["get", "w"]]]], 15, ["max", 2 + cas, ["+", cas, ["*", factorAt(15, ZF) * wMul, ["get", "w"]]]]]);
+  for (const i of [1, 0]) {
+    const z0 = STATION_LEVELS[i]!;
+    const src = { source: "net", "source-layer": TILE_LAYERS.link, minzoom: z0, filter: ["==", ["get", "zi"], i] as unknown as FilterSpecification };
+    layers.push({ id: `lk-cas-${i}`, type: "line", ...src, layout: lineLayout, paint: { "line-color": t.land, "line-width": linkW(1.6), "line-opacity": rampFrom(z0, dim ? 0.6 : 1) } });
+    layers.push({ id: `lk-${i}`, type: "line", ...src, layout: lineLayout, paint: { "line-color": dim ? t.dimLine : linkCatColor, "line-width": linkW(0), "line-opacity": rampFrom(z0, 1) } });
   }
 
   // ---- highlighted corridors (selection), always above the dimmed network

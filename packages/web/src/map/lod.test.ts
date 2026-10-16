@@ -43,3 +43,12 @@ describe("lod", () => {
     expect(shortStationName("Praha hl.n.", "Praha")).toBe("hl.n.");
   });
 });
+
+import { mix } from "./layers.ts";
+describe("mix", () => {
+  it("blends colours linearly", () => {
+    expect(mix("#000000", "#ffffff", 0.5)).toBe("#808080");
+    expect(mix("#f7f5f0", "#e9e4d8", 0)).toBe("#f7f5f0");
+    expect(mix("#f7f5f0", "#e9e4d8", 1)).toBe("#e9e4d8");
+  });
+});

@@ -48,6 +48,9 @@ Pipeline in short:
    `src/core/anchor.ts`) and is only a marker: every line ends at its own terminal station and is
    joined to the city point by a straight stub only if that is ≤ 1 km (`STUB_MAX_M`), so big
    multi-station cities (London, Paris, Berlin…) are not a starburst of long straight lines.
+   Hops between two stations *of the same city* (Tipperary – Limerick Junction) are not corridors:
+   they become **links** (`NetworkFile.links`, routed like corridors, kept only between two
+   *complex members*, see below) that are drawn at station zoom only.
 8. **Line graph** (`src/core/segments.ts`) – corridor geometries are conflated onto shared
    reference lines (resampled every 100 m, matched within 80 m with a similar direction, rail with
    rail, road with road) and cut where the set of corridors using them changes; every segment is
@@ -64,7 +67,7 @@ Pipeline in short:
      the only data needed to start.
    - `tiles/{z}/{x}/{y}.pbf.gz` (z2–9, ~4200 files, ~25 MB gzip total; only tiles that contain data):
      gzipped Mapbox vector tiles of the drawn network (layers `seg`, `city`, and at z9 also `term` end
-     pieces and `st` stations), overzoomed beyond z9. z9 (extent 8192 ≈ 6 m) holds the stored
+     pieces, `st` stations, `cx` complex outlines and `lk` station links), overzoomed beyond z9. z9 (extent 8192 ≈ 6 m) holds the stored
      geometry almost unsimplified, z7/z8 are simplified to ~200 / ~100 m. Features are filter-independent: per category width/LOD level; the
      style packs the visible categories side by side. Low zooms only hold what is shown
      there, with equal neighbouring segments merged. Lines are revealed as a whole: per category,
@@ -82,6 +85,16 @@ Pipeline in short:
      markers/labels and stations fade the same way (style `line-opacity` / `circle-opacity`
      interpolated over zoom with per-feature stops). Stored gzipped because static hosts don't
      compress protobuf; the app inflates them (DecompressionStream).
+   - **Station complexes** (`packages/shared/src/complex.ts`; z9 tile layers `cx` and `lk`): when a city
+     breaks out into its stations (`STATION_ZOOM` 10.5), the stations that were merged into the city dot get
+     a soft tinted outline and the trains/buses between them are drawn as thin links. Members are a city's
+     major stations (station level ≤ 1) with rail service or ≥ 15 departures/day. A city whose ≤ 8 members lie
+     within 6 km is one complex (outline from the zoom of its second station); a bigger city (London, Paris,
+     Berlin…) is instead split into small clusters (members within 1 km of a cluster's lead station, clusters of ≥ 2
+     only, from z11.5), so the outline never becomes a blob. The outline is the convex hull of the member stations
+     and of the link geometry, stored as polygon / line in the `cx` layer and drawn by the style as a wide
+     round-joined line of constant pixel width plus a polygon fill (straight edges, rounded corners at every zoom;
+     colours fade in from the land colour, so no seams). A click inside it selects the city. ~7.4k complexes, ~13k links.
    - `geo/<shard>.json` (~80 KB gzip on average): for each timetable shard, the corridors its patterns
      use (with segment geometry, for the selection highlight) and the stations it references
      (names/positions). Loaded together with the shard on a click.
