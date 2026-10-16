@@ -33,6 +33,10 @@ describe("reach", () => {
     expect(r.dests.has(3)).toBe(false); // Delta is upstream only
     expect([...r.corridors.keys()].sort()).toEqual([10, 11, 13, 9]); // 9 = Alpha Hbf → Alpha Süd inside the city; never-running coach (14) excluded
   });
+  it("ignores zero-minute hops from feeds without real times when a real time exists", () => {
+    const flat: CityFile = { ...alpha, patterns: [...alpha.patterns, { route: 0, stations: [0, 2], arr: [0, 0], dep: [0, 0], corridors: [15], headsign: "Beta" }], patternTz: [...alpha.patternTz, 0], trips: [...alpha.trips, [5, 600, 0, "99"]] };
+    expect(computeReach(flat, ctx, all).dests.get(1)!.minutes).toBe(110);
+  });
   it("respects filters", () => {
     const r = computeReach(alpha, ctx, { cats: Cat.Regional });
     expect([...r.dests.keys()]).toEqual([4]);

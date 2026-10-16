@@ -32,25 +32,44 @@ Pipeline in short:
    heavy rail (long distance, regional/suburban), coaches and *intercity* buses (≥ 15 km span,
    urban modes/operators dropped). Rail is classified LongDistance/Regional from extended route types,
    train category tokens and operators; the night-train flag is set.
-3. **Cities** – every stop is assigned to a GeoNames place (population-scaled radius, city districts
-   and city-state units absorbed into their city, local names such as "München", "Praha", "İstanbul");
-   stops far from any place form synthetic towns (rail/coach only). Bus stops only count in places
-   with ≥ 2000 inhabitants.
-4. **Stations** – stops merged by parent station, proximity + name similarity and across feeds. A station's name is the best name among its stops *after* removing platform / track / stand / bay qualifiers in the common European languages (`stripPlatform` in `core/names.ts`: "Paddington (Platform 6)" → "Paddington"); the map label drops the city prefix ("Berlin Hbf" → "Hbf") only while the remainder is distinctive (`shortStationName`: "London Bridge", "Paris Nord", "Leeds Central" keep the city).
+3. **Stations** (`core/stations.ts`) – stops are merged into stations first, purely spatially, from several weak
+   signals, none trusted alone: the feed's `parent_station` (explicit but rarely maintained), *near* (≤ 60 m always;
+   ≤ 150 m when a rail stop is involved, shrinking to 100 / 70 m where many differently named stops lie around, so
+   cities are not chained into blobs; two bus stops with different names are two places and only merge at the same
+   spot), *name* (same normalised name within 250 m, 400 m around rail stops; a lone town name inside a longer one is
+   only weak evidence), *terminal* (a bus / coach terminal – "ZOB", "gare routière", "Coach Station", "autobusni
+   kolodvor", "Autogara", "Otogar"… – within 450 m of a rail stop with a compatible name) and *isolated* (≤ 300 m and
+   no other differently named stop within 400 m: a small town's station and its bus stop). Strong signals are applied
+   first; a merged cluster may not exceed 250 m (near) / 450 m (name, terminal, isolated) between centroids. The reviewed
+   `data/stop-names.json` merges are applied afterwards (a target is found by the name of the station or of any of
+   its stops). A station's name is the best name among its stops *after* `sanitizeName` (raw ids such as
+   `# f3583`, `"ROMA | "` prefixes, HTML entities) and after removing platform / track / stand / bay qualifiers in the common
+   European languages (`stripPlatform` in `core/names.ts`: "Paddington (Platform 6)" → "Paddington"); the map label
+   drops the city prefix ("Berlin Hbf" → "Hbf") only while the remainder is distinctive (`shortStationName`: "London
+   Bridge", "Paris Nord", "Leeds Central" keep the city).
+4. **Cities** (`core/cities.ts`) – the selection unit, grouping stations: every *station* is assigned to a GeoNames place
+   (population-scaled radius; city districts and, for big cities, places of their administrative unit within ~1.8
+   radii / 30 km absorbed; local names such as "München", "Praha", "İstanbul"). Rail and coach stations must also be
+   within the place's *core* (45 % of the radius for a village, growing to the whole radius from 200 000 inhabitants,
+   so Paris and London group all their stations) or carry the place's name ("Aix-en-Provence TGV" at 8 km). A
+   village beside a town therefore keeps its own station: it becomes a synthetic town named after the station
+   (Anchamps ≠ Revin, Limerick Junction ≠ Tipperary). Bus-only stops keep the plain catchment rule (nearest place, 5 km
+   fallback; one carrying exactly the name of a rail / coach station within 1 km joins that station's place) and only count in places
+   with ≥ 2000 inhabitants. Synthetic towns with a generic name (≥ 4 of them: "Road End", "Hotel", "Mairie") get the nearest place
+   added ("Road End (Strathy)"). Cities never influence the drawing.
 5. **Dedup** – the same train/coach present in several feeds (DE+AT+CH+CZ…) is detected by matching
    (city, time) sequences and kept once, with merged calendars.
 6. **Patterns & trips** – station sequences with offsets, deduplicated; calendars as 60-day bitmasks starting the day before the build (Berlin date), so viewers in earlier timezones stay covered.
-7. **Corridors** – undirected edges between consecutive cities, with trips/day per category and
-   geometry routed on the rail graph (trains) or the road graph (motorway…tertiary; coaches/buses;
-   ferries and islands stay curves). Rail graph holes are bridged (disused / under-construction
-   track stays routable at a high cost, dead ends within 300 m of another component are joined).
-   A city's point is its main station (busiest rail station, else busiest stop;
-   `src/core/anchor.ts`) and is only a marker: every line ends at its own terminal station and is
-   joined to the city point by a straight stub only if that is ≤ 1 km (`STUB_MAX_M`), so big
-   multi-station cities (London, Paris, Berlin…) are not a starburst of long straight lines.
-   Hops between two stations *of the same city* (Tipperary – Limerick Junction) are not corridors:
-   they become **links** (`NetworkFile.links`, routed like corridors, kept only between two
-   *complex members*, see below) that are drawn at station zoom only.
+7. **Corridors** – the drawn network connects *stations*: a corridor is an undirected edge between two stations
+   that are consecutive stops of a trip, between cities as well as inside one (Tipperary – Limerick Junction,
+   Paddington – Ealing Broadway), so lines are continuous at every zoom. Trips/day per category; geometry routed on the
+   rail graph (trains), else – rail replacement buses, tram-trains, stops far from any track – on the road graph, or
+   (coaches/buses) on the road graph; ferries, islands and anything not routable become *approximate alignments*
+   (`Corridor.snapped` = false), drawn thin and dashed, never as solid straight lines. Rail graph holes are bridged
+   (disused / under-construction track stays routable at a high cost, dead ends within 300 m of another component are
+   joined). A line ends exactly at its two stations (a straight stub joins a station to its snapped track point
+   if that is ≤ 1 km, `STUB_MAX_M`); a city's point is its main station (busiest rail station, else busiest stop;
+   `src/core/anchor.ts`) and is only the marker of the city dot / label.
 8. **Line graph** (`src/core/segments.ts`) – corridor geometries are conflated onto shared
    reference lines (resampled every 100 m, matched within 80 m with a similar direction, rail with
    rail, road with road) and cut where the set of corridors using them changes; every segment is
@@ -63,15 +82,15 @@ Pipeline in short:
    `data/manifest.json` points to the current build.
 10. **Map data** (`src/mapdata.ts`, formats in `packages/shared/src/netmap.ts`) – what the web app
    actually loads, so phones never download the whole network:
-   - `core.json` (~0.6 MB gzip): cities only (names, positions, importance, shard) + tile index;
+   - `core.json` (~0.7 MB gzip): cities only (names, positions, importance, shard) + tile index;
      the only data needed to start.
-   - `tiles/{z}/{x}/{y}.pbf.gz` (z2–9, ~4200 files, ~25 MB gzip total; only tiles that contain data):
-     gzipped Mapbox vector tiles of the drawn network (layers `seg`, `city`, and at z9 also `term` end
-     pieces, `st` stations, `cx` complex outlines and `lk` station links), overzoomed beyond z9. z9 (extent 8192 ≈ 6 m) holds the stored
+   - `tiles/{z}/{x}/{y}.pbf.gz` (z2–9, ~4100 files, ~26 MB gzip total; only tiles that contain data):
+     gzipped Mapbox vector tiles of the drawn network (layers `seg`, `city`, and at z9 also `st` stations),
+     overzoomed beyond z9. z9 (extent 8192 ≈ 6 m) holds the stored
      geometry almost unsimplified, z7/z8 are simplified to ~200 / ~100 m. Features are filter-independent: per category width/LOD level; the
      style packs the visible categories side by side. Low zooms only hold what is shown
      there, with equal neighbouring segments merged. Lines are revealed as a whole: per category,
-     corridors (hops between consecutive cities) that meet in a city where exactly two of them
+     corridors (hops between consecutive stations) that meet in a station where exactly two of them
      meet form a chain (`packages/shared/src/lines.ts`, ends at junctions), and a chain gets the
      earliest LOD level of its hops – a route no longer shows up piece by piece because its
      patterns skip different stops. LOD is density-aware
@@ -85,16 +104,13 @@ Pipeline in short:
      markers/labels and stations fade the same way (style `line-opacity` / `circle-opacity`
      interpolated over zoom with per-feature stops). Stored gzipped because static hosts don't
      compress protobuf; the app inflates them (DecompressionStream).
-   - **Station complexes** (`packages/shared/src/complex.ts`; z9 tile layers `cx` and `lk`): when a city
-     breaks out into its stations (`STATION_ZOOM` 10.5), the stations that were merged into the city dot get
-     a soft tinted outline and the trains/buses between them are drawn as thin links. Members are a city's
-     major stations (station level ≤ 1) with rail service or ≥ 15 departures/day. A city whose ≤ 8 members lie
-     within 6 km is one complex (outline from the zoom of its second station); a bigger city (London, Paris,
-     Berlin…) is instead split into small clusters (members within 1 km of a cluster's lead station, clusters of ≥ 2
-     only, from z11.5), so the outline never becomes a blob. The outline is the convex hull of the member stations
-     and of the link geometry, stored as polygon / line in the `cx` layer and drawn by the style as a wide
-     round-joined line of constant pixel width plus a polygon fill (straight edges, rounded corners at every zoom;
-     colours fade in from the land colour, so no seams). A click inside it selects the city. ~7.4k complexes, ~13k links.
+   - **Cities and stations in the UI**: zoomed out a click selects the *city* (reach = the union over all its stations);
+     from `STATION_ZOOM` (10.5) the dots and labels of stations are clickable and select that *one station* (reach and
+     timetables only use trips boarding there; URL `#from=paris&station=gare-de-lyon`, the slug of the station's short
+     name; the panel lists the city's stations as buttons and "All of Paris" returns to the city). Nothing marks a
+     city's member stations permanently: only while a city (or one of its stations) is selected, a soft ring is
+     drawn around each of its stations (`member-ring-*`, stronger for the chosen one). Timetable rows always show the
+     station each departure leaves from / arrives at.
    - `geo/<shard>.json` (~80 KB gzip on average): for each timetable shard, the corridors its patterns
      use (with segment geometry, for the selection highlight) and the stations it references
      (names/positions). Loaded together with the shard on a click.
@@ -108,8 +124,9 @@ tiles entirely covered by land are missing too but listed in `basemap-v2/index.j
 with a synthetic all-land tile (`web/src/map/basemap.ts`). The tiles are built by `refresh-assets` as ONE R2 object
 (`basemap/tiles-v2.tar`) and unpacked by every build (see `.claude/skills/basemap/SKILL.md`).
 
-Typical full build: ~150 feed files, ~36k cities, ~76k stations, ~70k corridors, ~2.1M trips,
-~1.2 GB in ~10.3k files incl. ~4.9k basemap tiles (Cloudflare limit: 20k files per deployment); ~16 min on a 4-core runner (plus ~1 min to download assets).
+Typical full build: ~150 feed files, ~920k stops → ~73k stations (served) in ~41k cities, ~125k corridors on ~176k line-graph segments, ~2.1M trips,
+~1.4 GB in ~10.4k files incl. ~4.9k basemap tiles (Cloudflare limit: 20k files per deployment); ~12 min on a 4-core machine with a warm DuckDB
+(`--reuse-db`; ~16 min on a runner incl. loading, plus ~1 min to download assets).
 
 ## Running locally
 

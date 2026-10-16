@@ -149,14 +149,14 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
   gives stations, corridors (with segment ids, cats, tpd, snapped) and segment polylines for the shard
   (`City.shard` says which); `shard/<n>.json` has the timetable patterns.
 - `tiles/{z}/{x}/{y}.pbf.gz` are gzipped MVTs: gunzip + `@mapbox/vector-tile` (in `node_modules/.pnpm`); layer `seg`
-  properties `l{k}` (LOD level index into LEVELS), `w{k}` (width), `u` (unsnapped), `hop`, `term`.
+  properties `l{k}` (LOD level index into LEVELS), `w{k}` (width), `u` (1 = approximate alignment, drawn dashed), `hop`.
 - Test routing on the prebuilt graphs: `deserializeRailGraph(readFileSync(".../rail-graph-v1.bin"))` + `new Router(graph, opts)`
   from `packages/etl/src/geometry/` (do not import `geometry/index.ts` from a script: ERR_REQUIRE_ASYNC_MODULE; copy `MAX_DETOUR`).
 - The deployed site's `/data/<build>/...` files (core, geo, shard, tiles) are public, handy to look at the live build without building.
 
 ## Status of checks (last run)
 
-`pnpm typecheck` passes (shared, etl, web); `pnpm test` passes (etl 88 tests, web 39 tests, ~10 s each). `wrangler whoami` works with the env token;
+`pnpm typecheck` passes (shared, etl, web); `pnpm test` passes (etl 124 tests, web 49 tests, ~10 s each). `wrangler whoami` works with the env token;
 `wrangler deploy --dry-run` succeeded on the assembled `dist/site` (1781 files). Expected harmless build warnings: a few feeds with
 "no trips within the horizon" (it-regional-bus lombardia/liguria, es-feve, navarra bus, ba-zfbih), stop-names "not found within 1500 m",
 "Berlin is missing station Berlin Ostbahnhof".
@@ -203,14 +203,43 @@ data, give the build a new id: rename the directory (e.g. append a letter, `2026
 `20261015-1624c`) and update `"build"` in both `work/out/manifest.json` and `<build>/core.json`
 (the web app builds URLs as `data/${manifest.build}/…`). A full ETL run gets a fresh id by itself.
 
-## Station complexes (phase D) – findings
+## Stations, cities and corridors (phase F) – findings
 
-- Intra-city hops (consecutive stops of a pattern in the same city) were dropped by `if (c1 === c2) continue` in the corridor loop. They are now collected as links (`linkAcc`), prefiltered to the city's 20 busiest stations and 150 m – 30 km, routed together with the corridors (extra `GeometryRequest`s with ids from `linkBase`; ~30k extra requests cost only ~15 s), and filtered again at output with `isMember` (shared/complex.ts). They live in `NetworkFile.links` (plain JSON next to `packed`), never in `corridors`/segments, so the UI, LOD/density and timetable code are untouched.
-- Full ETL with `--reuse-db`: 10.6 min wall clock (patterns 92 s, geometry 91 s, segments ~150 s, mapdata ~100 s). It writes a fresh build id by itself (`20261015-1755`).
-- Mapdata-only reruns into an existing dir: `mapdata.ts` only updates `manifest.json` when `network.json`'s own `"build"` equals the manifest's. After renaming a build dir for a new id also patch `"build"` in `network.json` (single line: `sed -i '1s/"build":"[^"]*"/"build":"NEW"/'`), else the next rerun silently leaves `manifest.mapdata` stale. A helper that does mapdata + rename + patch of manifest/core/network is easy to script (`20261015-1755` → `...b` → `...c`).
-- Style trick: the complex outline is not a buffered polygon but the hull drawn as `line` (round joins, 24–36 px wide, constant in screen px) + a same-colour `fill`; layer order edge-colour line (2 px wider) → body line → fill hides the inner half of the edge line. Colours interpolate from `land` (opaque) instead of using opacity, so the overlapping layers fade without seams. Hull width in px therefore must exceed the station marker radius (≤ 8 px).
-- Complex sizing findings (full data): 10.9k cities have ≥ 2 stations of station level ≤ 1; requiring rail or ≥ 15 dep/day leaves ~8k; 299 of them span > 8 km (Paris spans 8 km with 20 members -> one giant hull, hence the member cap of 8 and 6 km span; London/Paris/Berlin get clusters instead). Lead-station clustering with 0.9 km missed Waterloo–Charing Cross (930 m), 1.0 km catches it.
-- Screenshot batches: wrap Playwright runs in `nohup ... &` and poll the log; a foreground `timeout 118 node shots.cjs` with 4+ views gets killed half way (each view ~25 s).
+- **Order**: stops → stations (`mergeStations`, purely spatial, no city needed) → city of every *station* (`assignStations`) →
+  reviewed stop names → patterns → corridors keyed by *station pair*. Intra-city hops are ordinary corridors; there are no links,
+  complexes or end pieces ("term") any more, and `Corridor.a/b` are station ids (schema 3, mapdata 5).
+- **Fast iteration on merging / membership** (no 10 min build): dump the used stops once (`SELECT … FROM stops JOIN stop_times …` as in
+  `build.ts`, ~230 MB JSON for 920k stops), then run `mergeStations` + `describeStation` + `assignStations` on it from a `.mts` script
+  (15 s + 6 s; node `--max-old-space-size=8192`, import repo code by absolute path, run from `packages/etl`). Print the stations
+  near the trouble spot (Revin/Anchamps, Limerick Junction, Luxembourg) and a random sample of multi-stop stations
+  (`distinct names ≥ 3`) to see over-merging. Over-merging showed up as: UK/Scandinavian bus stops chained along a street (fixed:
+  bus stops with *different* names only merge at the same spot, ≤ 60 m), single-town-name vs "Town, Street" names counting as the
+  same name (fixed: weak evidence), and a rail stop attracting every bus stop of a town centre (cluster span caps 250/400 m).
+  Stats on the full data: 920 860 stops → 474 k stations (old per-city merge: 525 k); merges by signal parent 129 k, near 280 k, name 11 k,
+  terminal 113, isolated 27 k.
+- **Why "isolated" is lazy**: whether a pair is alone depends on what the stronger signals merged first (a ZOB already merged
+  into the rail station is not "another stop"), so the isolated pairs are evaluated last, against the current clusters.
+- **GeoNames asset**: `cities1000` has no hamlets (Anchamps, Laifour are missing), so villages become *synthetic towns* named after
+  their station (`townFromStopName`) when a rail / coach station is beyond a place's core and does not carry its name. The 5 km
+  "nearest place" fallback now only applies to bus-only stops.
+- **Luxembourg straight lines** were not geometry bugs: they were the old *end pieces* (`term` layer, `terminalGeometry`) joining a
+  corridor's most-used station (`sa` / `sb`) to the cut segment, a stop 4–5 km from the track of the shared segment. Corridors now end
+  at their own stations, so the pieces are gone. Rail hops the rail graph cannot route are tried on the road graph (rail replacement
+  buses, tram-trains), and only then become approximate alignments (`snapped` false), drawn dashed (style layers `net-u-<cat>`);
+  the full build routes 49 369 / 49 654 rail corridors on track, 160 on roads, 1 approximate.
+- **Style gotcha**: MapLibre `interpolate` stops must ascend strictly; a layer with a bad expression is *silently not added*
+  when `validateStyle: false`, and the page then dies in `_updatePlacement` with "Cannot read properties of undefined (reading
+  'type')" (the style order lists a layer that does not exist). Find it by adding the layers one by one to a map with validation on
+  (`map.on("error")`) in a Playwright `evaluate`. Also: editing `packages/shared` while a Playwright run is going hot-reloads the
+  page and kills the run – never edit during screenshots.
+- **Reviewing the result**: `core/stations.ts` + `core/cities.ts` have unit tests for every signal; the data-level checks that found real
+  problems were: synthetic towns named "Road End" / "Hotel" (stop names that are not places; fixed by adding the nearest place),
+  names with `# f2688` (a guard regex missing `\b`, found with a grep over the output stations), bus stops of an out-of-town station
+  in the neighbouring town (`adoptStationNames`), and "from 0 min" destinations (a feed pattern with identical stop times).
+  Never `git stash` while vite / Playwright run: the page reloads half-way and the shot script dies.
+- Full ETL with `--reuse-db`, output into `work/out-new` (so the old build stays viewable), ~14 min: stations 48 s, cities 17 s, patterns
+  93 s, geometry 150 s, segments ~6 min (125 k corridors instead of 69 k), mapdata ~3 min. Swap with `rm -rf work/out && mv work/out-new work/out`
+  (`basemap-v2` is unpacked into the out dir by every build, so it comes along).
 
 ## Basemap tiles (phase E)
 

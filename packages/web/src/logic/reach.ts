@@ -51,7 +51,8 @@ export function computeReach(cf: CityFile, ctx: NetCtx, f: Filters, originStatio
         const d = dests.get(sb.city);
         if (!d) dests.set(sb.city, { city: sb.city, minutes: min, cats: route.cat });
         else {
-          d.minutes = Math.min(d.minutes, min);
+          // a pattern with identical stop times (a feed without real times) gives 0 minutes: any real time beats it
+          if (min > 0 && (d.minutes <= 0 || min < d.minutes)) d.minutes = min;
           d.cats |= route.cat;
         }
         // every hop from the boarding stop to the first stop in the destination city

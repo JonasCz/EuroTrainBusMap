@@ -23,7 +23,7 @@ then not merged with the station they belong to. The fix is a cached, reviewed m
 ```
 
 - **Keys.** The primary key is `<feed key>:<stop_id>`. A fallback key, `~<normalised name>@<x>,<y>`, places the stop on a ~50 m grid. Use the primary key unless the feed's stop ids are unstable (they change between releases). The candidate export prints both.
-- **merge.** The stop joins the station whose name equals `station` (after normalising case, accents and punctuation) and that lies within 1.5 km of `near`, or of the stop if `near` is missing. If no such station exists, the ETL logs `stop-names: … not found` and changes nothing. It never fails.
+- **merge.** The stop joins the station whose name equals `station` (after normalising case, accents and punctuation) – or that contains a stop of that name – and that lies within 1.5 km of `near`, or of the stop if `near` is missing. If no such station exists, the ETL logs `stop-names: … not found` and changes nothing. It never fails. Stations are first merged by distance, name and terminal words (see "Stations" in the README), so many coach stops are already in their rail station when the mapping is applied; the log counts only the stops it actually moved.
 - **rename.** Sets the display name of the stop's station. Stations with rail stops keep their rail name.
 - **keep.** The stop has been reviewed and needs no change. Keys not in the file are left alone.
 
@@ -76,6 +76,7 @@ You decide, for each coach or bus stop, whether it is the same place as an exist
 
 ## Notes
 
+- Raw ids and prefixes some feeds leave in names ("ROMA | Anagnina (Metro A) # f3583") are removed by `sanitizeName` (`core/names.ts`) before names are compared or shown, so write targets and renames without them ("Roma Anagnina (Metro A)"); old entries that still carry them keep working.
 - The mapping is applied deterministically and cheaply on every build. Unknown keys mean no change, so new stops simply wait for the next review.
 - Unit tests: `packages/etl/test/stopnames.test.ts`.
 - Candidate selection lives in `packages/etl/src/stopnames-io.ts`. If too many or too few lines come out, adjust the feed pattern (`INTL_COACH_FEED`), `FOREIGN_NAME_RE` or `STATIONISH_RE`.
