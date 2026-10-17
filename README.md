@@ -51,7 +51,9 @@ Pipeline in short:
    Bridge", "Paris Nord", "Leeds Central" keep the city).
 4. **Cities** (`core/cities.ts`) – the selection unit, grouping stations: every *station* is assigned to a GeoNames place
    (population-scaled radius; city districts and, for big cities, places of their administrative unit within ~1.8
-   radii / 30 km absorbed; local names such as "München", "Praha", "İstanbul"). Rail and coach stations must also be
+   radii / 30 km absorbed; local names such as "München", "Praha", "İstanbul"; an *agglomeration* – a big plain PPL known only
+   by its region, such as "Marne La Vallée" – absorbs nothing and only gets the stations named after it and their forecourt
+   within 600 m, so it does not swallow Champigny, Chelles or Bondy). Rail and coach stations must also be
    within the place's *core* (45 % of the radius for a village, growing to the whole radius from 200 000 inhabitants,
    so Paris and London group all their stations) or carry the place's name ("Aix-en-Provence TGV" at 8 km). A
    village beside a town therefore keeps its own station: it becomes a synthetic town named after the station
@@ -116,7 +118,9 @@ Pipeline in short:
      station each departure leaves from / arrives at.
    - `geo/<shard>.json` (~80 KB gzip on average): for each timetable shard, the corridors its patterns
      use (with segment geometry, for the selection highlight) and the stations it references
-     (names/positions). Loaded together with the shard on a click.
+     (names/positions). Loaded together with the shard on a click. Highlighted lines are sized by the
+     selection's own trips/day (the selected city's / pair's patterns, a journey leg = 1), not by the line's
+     total traffic, and a pair is drawn from the first stop of each trip in the origin city.
    `manifest.json` points to `core.json` and lists the tiles (`Manifest.mapdata`).
    Rebuild just this stage for an existing build: `node --import tsx packages/etl/src/mapdata.ts <out>/<build>`.
 
