@@ -20,6 +20,12 @@ export const GAP = 0.3;
 
 const round2 = (x: number) => Math.round(x * 100) / 100;
 
+/**
+ * Narrowest highlighted line (width units). The selection's own traffic is often a few trips a day
+ * (a pair, a journey leg), which the base scale would draw hairline-thin; selected lines stay bold.
+ */
+export const HL_MIN_W = 2.2;
+
 /** Offsets (centre of each line) for a bundle of widths. */
 export function pack(widths: number[]): { offsets: number[]; total: number } {
   const total = widths.reduce((s, w) => s + w, 0) + GAP * Math.max(0, widths.length - 1);
@@ -69,7 +75,7 @@ export function highlightData(geo: GeoStore, hl: Map<number, number>, traffic?: 
     const tpd = segTpd.get(sid)!;
     const present = CAT_BITS.filter((k) => cats & k);
     // quantised widths / sort keys so neighbouring segments merge into long lines
-    const widths = present.map((k) => Math.round(Math.max(1.6, catWidth(k, tpd[k] ?? 0, s.snapped)) * 4) / 4);
+    const widths = present.map((k) => Math.round(Math.max(HL_MIN_W, catWidth(k, tpd[k] ?? 0, s.snapped)) * 4) / 4);
     const p = pack(widths);
     present.forEach((k, i) =>
       lines.push({ type: "Feature", properties: { cat: k, w: widths[i]!, o: p.offsets[i], hop: 0, k: Math.round(Math.log2(1 + (tpd[k] ?? 0)) * 2) }, geometry: { type: "LineString", coordinates: s.coords } }),
