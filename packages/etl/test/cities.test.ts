@@ -25,6 +25,43 @@ const city = (lon: number, lat: number, name = "", strict = false) => {
   return i >= 0 ? places[i]!.name : null;
 };
 
+describe("satellites", () => {
+  it("an agglomeration known only by its region absorbs nothing (Marne-la-Vallée ≠ Champigny, Chelles)", () => {
+    const idf: Place[] = [
+      P(1, "Paris", 48.85341, 2.3488, 2138551, "PPLC", ["11", "75", "751", "75056"], "FR"),
+      P(2, "Marne La Vallée", 48.83584, 2.64241, 318325, "PPL", ["11", "", "", ""], "FR"),
+      P(3, "Champigny-sur-Marne", 48.81642, 2.49366, 76726, "PPL", ["11", "94", "942", "94017"], "FR"),
+      P(4, "Chelles", 48.88109, 2.59295, 46947, "PPL", ["11", "77", "775", "77108"], "FR"),
+      P(5, "Bondy", 48.9018, 2.48931, 48268, "PPL", ["11", "93", "931", "93010"], "FR"),
+    ];
+    idf.push(P(6, "Chessy", 48.88333, 2.76667, 2582, "PPL", ["11", "77", "775", "77111"], "FR"));
+    resolveSatellites(idf);
+    expect(idf.map((p) => p.parent)).toEqual([-1, -1, -1, -1, -1, -1]);
+    const at = (lon: number, lat: number, name: string, strict = true) => {
+      const i = assignStations(idf, [{ lon, lat, names: [foldKey(name)], strict }])[0]!;
+      return i >= 0 ? idf[i]!.name : null;
+    };
+    expect(at(2.4993, 48.8099, "Champigny")).toBe("Champigny-sur-Marne"); // RER A / coach stop, 11 km from the agglomeration's point
+    expect(at(2.5853, 48.8775, "Chelles - Gournay")).toBe("Chelles");
+    // the TGV station at the far end of the new town, 10.8 km away, carries its name
+    expect(at(2.7826, 48.8701, "Marne-la-Vallée Chessy")).toBe("Marne La Vallée");
+    // … and so does the coach station 470 m away (alone it belongs to Chessy)
+    expect(at(2.7832, 48.8659, "Chessy South Bus Station", false)).toBe("Chessy");
+    const both = assignStations(idf, [
+      { lon: 2.7826, lat: 48.8701, names: [foldKey("Marne-la-Vallée Chessy")], strict: true },
+      { lon: 2.7832, lat: 48.8659, names: [foldKey("Chessy South Bus Station")], strict: true },
+    ]);
+    expect([...both].map((i) => idf[i]!.name)).toEqual(["Marne La Vallée", "Marne La Vallée"]);
+    // a capital known only by its region still groups its unit (Prague: region 52 = the city)
+    const cz: Place[] = [
+      P(1, "Prague", 50.08804, 14.42076, 1165581, "PPLC", ["52", "", "", ""], "CZ"),
+      P(2, "Černý Most", 50.1069, 14.5745, 22000, "PPLX", ["52", "", "", ""], "CZ"),
+    ];
+    resolveSatellites(cz);
+    expect(cz[1]!.parent).toBe(0);
+  });
+});
+
 describe("city assignment", () => {
   it("radius grows with population", () => {
     expect(placeRadius(1000)).toBe(1500);

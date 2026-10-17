@@ -33,6 +33,15 @@ function deepest(p: Place): number {
   return -1;
 }
 
+/**
+ * A big plain populated place (PPL, no seat of administration) known only by its region (admin1): an
+ * agglomeration or "new town" spread over many communes (Marne-la-Vallée), not a town with a centre. It
+ * absorbs no places, and its point says little about where it is: stations named after it belong to it.
+ */
+export function isAgglomeration(p: Place): boolean {
+  return p.fcode === "PPL" && p.population >= 300_000 && deepest(p) === 0;
+}
+
 function sameUnit(parent: Place, child: Place, level: number): boolean {
   if (parent.country !== child.country) return false;
   for (let i = 0; i <= level; i++) if (parent.admin[i] !== child.admin[i]) return false;
@@ -56,6 +65,12 @@ export function resolveSatellites(places: Place[], overrides: Record<string, num
     if (c.fcode === "PPLX") continue;
     const lvl = deepest(c);
     if (lvl < 0) continue;
+    // A plain populated place (PPL, not a seat of administration) known only by its region (admin1) is an
+    // agglomeration or "new town" (Marne-la-Vallée: 318 000 inhabitants, admin "11" = all of Île-de-France),
+    // not an administrative unit of its own: its "unit" is the whole region, so it would swallow every
+    // smaller suburb around (Champigny, Chelles, Bondy). Such places do not absorb other places.
+    // Stations named after it still join it (see assignStations).
+    if (isAgglomeration(c) && !overrides[`${c.country}:${c.name}`]) continue;
     const big = c.population >= 300_000 && /^PPL(C|A|A2|A3|A4)?$/.test(c.fcode);
     const ov = overrides[`${c.country}:${c.name}`];
     // Absorbing a place only groups its stations under the big city for selection ("where can I go from
@@ -136,6 +151,7 @@ export function assignStations(places: Place[], stations: StationPoint[], fallba
     return k;
   };
   const out = new Int32Array(stations.length).fill(-1);
+  const aggloNamed: number[] = []; // stations that joined an agglomeration by its name
   for (let s = 0; s < stations.length; s++) {
     const st = stations[s]!;
     let best = -1, bestScore = Infinity, nearest = -1, nearestD = Infinity;
@@ -150,6 +166,12 @@ export function assignStations(places: Place[], stations: StationPoint[], fallba
       }
       const section = p.fcode === "PPLX";
       const reach = r;
+      // a station named after an agglomeration ("Marne-la-Vallée Chessy") belongs to it, wherever in it
+      if (st.names.length && isAgglomeration(p) && d <= 2 * r && keysOf(j).some((k) => st.names.some((n) => n.startsWith(k)))) {
+        if (bestScore > 0) aggloNamed.push(s);
+        [best, bestScore] = [target, 0];
+        continue;
+      }
       if (!st.strict) {
         if (d <= reach && d / r < bestScore) [best, bestScore] = [target, d / r];
         continue;
@@ -163,8 +185,17 @@ export function assignStations(places: Place[], stations: StationPoint[], fallba
     if (best >= 0) out[s] = best;
     else if (!st.strict && nearest >= 0 && nearestD <= fallbackM) out[s] = nearest;
   }
+  // the bus / coach station on the forecourt of such a station ("Chessy South Bus Station" by
+  // "Marne-la-Vallée Chessy") belongs to the agglomeration too
+  if (aggloNamed.length) {
+    const sidx = new GridIndex(stations.map((x) => x.lon), stations.map((x) => x.lat), 0.02);
+    for (const a of aggloNamed) for (const s of sidx.within(stations[a]!.lon, stations[a]!.lat, AGGLO_FORECOURT_M)) out[s] = out[a]!;
+  }
   return out;
 }
+
+/** How far (m) from a station named after an agglomeration other stations follow it into the agglomeration. */
+export const AGGLO_FORECOURT_M = 600;
 
 export interface NamedStation extends StopPoint {
   /** normalizeStopName of the station's name */
