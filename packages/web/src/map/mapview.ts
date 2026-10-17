@@ -36,6 +36,8 @@ export interface Highlight {
   emphasis: Emphasis;
   /** corridor id → Cat bits to highlight */
   corridors: Map<number, number>;
+  /** corridor id → Cat bit → trips/day of the selected services (line widths); default: the corridors' total traffic */
+  traffic?: Map<number, Partial<Record<number, number>>>;
 }
 
 const EUROPE: [[number, number], [number, number]] = [
@@ -351,7 +353,7 @@ export class MapView {
     if (!net) return;
     const t0 = performance.now();
     const em = h.emphasis;
-    const d = highlightData(net.geo, h.corridors);
+    const d = highlightData(net.geo, h.corridors, h.traffic);
     this.setData("hl-casing", d.casing);
     this.setData("hl", d.lines);
     this.setData("focus", focusCityData(net.cities, em));

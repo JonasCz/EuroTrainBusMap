@@ -3,7 +3,7 @@
  * calendar horizon, respecting filters.
  */
 import type { CityFile } from "@etbm/shared";
-import { prepare, stopAt, type NetCtx } from "./context.ts";
+import { addTraffic, patternTpd, prepare, stopAt, trafficCats, type CorridorTraffic, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
 
 export interface ReachDest {
@@ -19,6 +19,8 @@ export interface Reach {
   dests: Map<number, ReachDest>;
   /** corridor id → Cat bits used on it */
   corridors: Map<number, number>;
+  /** corridor id → Cat bit → trips/day of the reach's own services on it (selection line widths) */
+  traffic: CorridorTraffic;
 }
 
 /**
@@ -28,13 +30,14 @@ export interface Reach {
 export function computeReach(cf: CityFile, ctx: NetCtx, f: Filters, originStation?: number): Reach {
   const prep = prepare(cf, ctx);
   const dests = new Map<number, ReachDest>();
-  const corridors = new Map<number, number>();
+  const traffic: CorridorTraffic = new Map();
   cf.patterns.forEach((p, pi) => {
     const route = cf.routes[p.route];
     if (!route || !routeAllowed(route, f)) return;
     const runs = prep.tripsByPattern[pi]!.some((ti) => ctx.cal.anyDay[cf.trips[ti]![2]]);
     if (!runs) return;
     const segs = prep.segments[pi]!;
+    const used = new Set<number>(); // corridors of this pattern used by its trips from the city (counted once)
     segs.forEach((sa, si) => {
       if (sa.city !== cf.city || si === segs.length - 1) return;
       // boarding stop: the station chosen, else any stop of the city's run (corridors from its first stop on; the fastest time from its last)
@@ -58,10 +61,11 @@ export function computeReach(cf: CityFile, ctx: NetCtx, f: Filters, originStatio
         // every hop from the boarding stop to the first stop in the destination city
         for (let k = first; k < sb.first; k++) {
           const c = p.corridors[k];
-          if (c !== undefined && c >= 0) corridors.set(c, (corridors.get(c) ?? 0) | route.cat);
+          if (c !== undefined && c >= 0) used.add(c);
         }
       }
     });
+    if (used.size) addTraffic(traffic, used, route.cat, patternTpd(cf, ctx, pi));
   });
-  return { origin: cf.city, dests, corridors };
+  return { origin: cf.city, dests, corridors: trafficCats(traffic), traffic };
 }

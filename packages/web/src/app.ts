@@ -7,7 +7,8 @@ import { connections, type Connection, type OnwardStop } from "./logic/connectio
 import { sameFilters, type Filters } from "./logic/filters.ts";
 import { resolveLeg, type Leg, type LegInfo } from "./logic/journey.ts";
 import { computeReach } from "./logic/reach.ts";
-import { nextServiceDates, pairCandidates, pairCorridors, timetable, type Departure } from "./logic/timetable.ts";
+import { addTraffic, trafficCats, type CorridorTraffic } from "./logic/context.ts";
+import { nextServiceDates, pairCandidates, pairTraffic, timetable, type Departure } from "./logic/timetable.ts";
 import { localDate } from "./logic/tz.ts";
 import { STATION_ZOOM } from "./map/lod.ts";
 import type { MapView, Highlight } from "./map/mapview.ts";
@@ -157,7 +158,7 @@ export class App {
       this.panel.show({ kind: "reach", city: origin, ...(originStation !== undefined ? { station: originStation } : {}), reach });
       await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
       if (stale()) return;
-      await this.map.setHighlight({ emphasis: { focus, active: true, origin, ...(originStation !== undefined ? { originStation } : {}) }, corridors: reach.corridors });
+      await this.map.setHighlight({ emphasis: { focus, active: true, origin, ...(originStation !== undefined ? { originStation } : {}) }, corridors: reach.corridors, traffic: reach.traffic });
       // frame the origin and its most important destinations (not every bus stop)
       const top = [...reach.dests.keys()].sort((a, b) => net.cities[b]!.importance - net.cities[a]!.importance).slice(0, 25);
       // a station picked at station zoom keeps the view (the panel lists its destinations); a city fits its destinations
@@ -172,11 +173,13 @@ export class App {
     // ---- pair timetable
     if (!s.legs.length) {
       const deps = timetable(cf, net.ctx, s.filters, dest, date, pairCandidates(cf, net.ctx, s.filters, dest, originStation));
-      const corridors = pairCorridors(cf, net.ctx, s.filters, dest, originStation);
+      const traffic = pairTraffic(cf, net.ctx, s.filters, dest, originStation);
+      const corridors = trafficCats(traffic);
       const next = deps.length ? [] : nextServiceDates(cf, net.ctx, s.filters, dest, date, 5, originStation);
       await this.map.setHighlight({
         emphasis: { focus: this.withCorridorEnds(new Set([origin, dest]), corridors), active: true, origin, dest, ...(originStation !== undefined ? { originStation } : {}) },
         corridors,
+        traffic,
       });
       const fromName = originStation !== undefined ? stationName(net, originStation) : originName;
       document.title = `${fromName} → ${net.cities[dest]!.name} – EuroTrainBusMap`;
@@ -232,14 +235,16 @@ export class App {
       if (!stale()) this.panel.show({ kind: "error", message: `Could not load ${net.cities[last.to]!.name}. ${(e as Error).message}` });
       return;
     }
-    const corridors = new Map<number, number>();
+    // every leg is one trip: one trip/day of width on its corridors
+    const traffic: CorridorTraffic = new Map();
     const focus = new Set<number>([origin]);
     for (const i of infos) {
-      i.corridors.forEach((c) => corridors.set(c, (corridors.get(c) ?? 0) | i.route.cat));
+      addTraffic(traffic, i.corridors, i.route.cat, 1);
       focus.add(i.to);
     }
+    const corridors = trafficCats(traffic);
     for (const c of conns) for (const st of c.stops) focus.add(st.city);
-    await this.map.setHighlight({ emphasis: { focus: this.withCorridorEnds(focus, corridors), active: true, origin, dest: last.to }, corridors });
+    await this.map.setHighlight({ emphasis: { focus: this.withCorridorEnds(focus, corridors), active: true, origin, dest: last.to }, corridors, traffic });
     document.title = `Connections from ${net.cities[last.to]!.name} – EuroTrainBusMap`;
     this.panel.show({ kind: "connections", legs: infos, conns, windowMin: CONNECTION_WINDOW_MIN });
     this.frame(

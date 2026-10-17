@@ -4,7 +4,7 @@
 import type { CityFile, Route } from "@etbm/shared";
 import { addDays, dayNumber, inHorizon, lastDate, runsOnDate } from "./calendar.ts";
 import { ServiceDays, mergeRows, serviceKey } from "./merge.ts";
-import { bestStop, prepare, stopAt, type NetCtx } from "./context.ts";
+import { addTraffic, bestStop, patternTpd, prepare, stopAt, trafficCats, type CorridorTraffic, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
 import { localDate, serviceTimeToUtc } from "./tz.ts";
 
@@ -88,16 +88,20 @@ export function pairCandidates(cf: CityFile, ctx: NetCtx, f: Filters, dest: numb
   return out;
 }
 
-/** corridor id → Cat bits of services running between the pair (any day). */
-export function pairCorridors(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, originStation?: number): Map<number, number> {
-  const s = new Map<number, number>();
+/** corridor id → Cat bit → trips/day of the services running between the pair (any day in the horizon). */
+export function pairTraffic(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, originStation?: number): CorridorTraffic {
+  const t: CorridorTraffic = new Map();
   const prep = prepare(cf, ctx);
   for (const c of pairCandidates(cf, ctx, f, dest, originStation)) {
     if (!prep.tripsByPattern[c.pattern]!.some((ti) => ctx.cal.anyDay[cf.trips[ti]![2]])) continue;
-    const cat = cf.routes[cf.patterns[c.pattern]!.route]!.cat;
-    c.corridors.forEach((x) => x >= 0 && s.set(x, (s.get(x) ?? 0) | cat));
+    addTraffic(t, c.corridors, cf.routes[cf.patterns[c.pattern]!.route]!.cat, patternTpd(cf, ctx, c.pattern));
   }
-  return s;
+  return t;
+}
+
+/** corridor id → Cat bits of services running between the pair (any day). */
+export function pairCorridors(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, originStation?: number): Map<number, number> {
+  return trafficCats(pairTraffic(cf, ctx, f, dest, originStation));
 }
 
 /** Departures from cf.city to dest whose departure falls on `date` (origin-local). */

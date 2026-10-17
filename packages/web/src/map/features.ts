@@ -33,11 +33,13 @@ export function pack(widths: number[]): { offsets: number[]; total: number } {
 }
 
 /**
- * Highlighted corridors (selection), drawn on their segments with the traffic of the highlighted
- * corridors only. Corridors join stations, so there are no end pieces to add; approximate
+ * Highlighted corridors (selection), drawn on their segments. Widths come from `traffic`, the trips/day
+ * of the selected services on each corridor (a selected city's own trips, not everything on the line), so
+ * a through route keeps one width as long as the number of selected trips stays the same; without it the
+ * corridors' total traffic is used. Corridors join stations, so there are no end pieces to add; approximate
  * alignments (not on any track or road) are drawn dashed.
  */
-export function highlightData(geo: GeoStore, hl: Map<number, number>): { lines: FC; casing: FC } {
+export function highlightData(geo: GeoStore, hl: Map<number, number>, traffic?: Map<number, Partial<Record<number, number>>>): { lines: FC; casing: FC } {
   const lines: Feature[] = [];
   const casing: Feature[] = [];
   const segCats = new Map<number, number>();
@@ -45,6 +47,7 @@ export function highlightData(geo: GeoStore, hl: Map<number, number>): { lines: 
   for (const [cid, cats] of hl) {
     const c = geo.corridors.get(cid);
     if (!c?.segs?.length || !cats) continue;
+    const tpd = traffic ? (traffic.get(cid) ?? {}) : c.tpd;
     const seen = new Set<number>();
     for (const code of c.segs) {
       const s = segId(code);
@@ -52,7 +55,7 @@ export function highlightData(geo: GeoStore, hl: Map<number, number>): { lines: 
       seen.add(s);
       segCats.set(s, (segCats.get(s) ?? 0) | cats);
       const t = segTpd.get(s) ?? {};
-      for (const k of CAT_BITS) if (cats & k && c.tpd[k]) t[k] = (t[k] ?? 0) + c.tpd[k]!;
+      for (const k of CAT_BITS) if (cats & k && tpd[k]) t[k] = (t[k] ?? 0) + tpd[k]!;
       segTpd.set(s, t);
     }
   }

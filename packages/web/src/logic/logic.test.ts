@@ -37,6 +37,15 @@ describe("reach", () => {
     const flat: CityFile = { ...alpha, patterns: [...alpha.patterns, { route: 0, stations: [0, 2], arr: [0, 0], dep: [0, 0], corridors: [15], headsign: "Beta" }], patternTz: [...alpha.patternTz, 0], trips: [...alpha.trips, [5, 600, 0, "99"]] };
     expect(computeReach(flat, ctx, all).dests.get(1)!.minutes).toBe(110);
   });
+  it("counts the city's own trips per day on each corridor", () => {
+    const r = computeReach(alpha, ctx, all);
+    // corridor 10 (Alpha Süd → Beta): ICE daily + Fri/Sun (8 of 28 days), coach on 3 of 28 days
+    expect(r.traffic.get(10)![Cat.LongDistance]).toBeCloseTo(1 + 8 / 28);
+    expect(r.traffic.get(10)![Cat.Coach]).toBeCloseTo(3 / 28);
+    // corridor 13 (Alpha Hbf → Eps): RE p1 daily + p3 twice daily (one RE pattern each)
+    expect(r.traffic.get(13)![Cat.Regional]).toBeCloseTo(3);
+    expect(r.traffic.has(12)).toBe(false); // Delta → Alpha is upstream
+  });
   it("respects filters", () => {
     const r = computeReach(alpha, ctx, { cats: Cat.Regional });
     expect([...r.dests.keys()]).toEqual([4]);

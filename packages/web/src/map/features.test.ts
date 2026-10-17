@@ -34,6 +34,16 @@ describe("selection highlight", () => {
     expect((hl.lines.features[0]!.properties as { hop: number }).hop).toBe(1);
     expect(hl.casing.features).toHaveLength(0);
   });
+  it("sizes lines by the selected services' traffic, not the corridors' total", () => {
+    // A–B has 40 regional trips/day in total, B–C 30; the selection uses 3 trips/day on both
+    const traffic = new Map([[0, { [Cat.Regional]: 3 }], [1, { [Cat.Regional]: 3 }]]);
+    const hl = highlightData(geo, new Map([[0, Cat.Regional], [1, Cat.Regional]]), traffic);
+    expect(hl.lines.features).toHaveLength(1); // one width end to end: merged into one line
+    const total = highlightData(geo, new Map([[0, Cat.Regional], [1, Cat.Regional]]));
+    expect(total.lines.features).toHaveLength(2); // 40 vs 30 trips/day: two widths
+    const w = (f: { properties: unknown }) => (f.properties as { w: number }).w;
+    expect(w(hl.lines.features[0]!)).toBeLessThan(Math.min(...total.lines.features.map(w)));
+  });
   it("packs bundles symmetrically", () => {
     const p = pack([2, 2]);
     expect(p.offsets[0]).toBe(-p.offsets[1]!);

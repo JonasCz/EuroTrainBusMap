@@ -76,6 +76,25 @@ export function runsOnDay(cal: CalIndex, calendar: number, dayIdx: number): bool
   return ((m[dayIdx >> 3] ?? 0) & (1 << (dayIdx & 7))) !== 0;
 }
 
+const dayCounts = new WeakMap<CalIndex, Int32Array>();
+
+/** Number of horizon days a calendar runs on (cached per CalIndex). */
+export function serviceDayCount(cal: CalIndex, calendar: number): number {
+  let counts = dayCounts.get(cal);
+  if (!counts) {
+    counts = new Int32Array(cal.masks.length).fill(-1);
+    dayCounts.set(cal, counts);
+  }
+  let n = counts[calendar];
+  if (n === undefined) return 0;
+  if (n < 0) {
+    n = 0;
+    for (let i = 0; i < cal.days; i++) if (runsOnDay(cal, calendar, i)) n++;
+    counts[calendar] = n;
+  }
+  return n;
+}
+
 export function runsOnDate(cal: CalIndex, calendar: number, date: string): boolean {
   return runsOnDay(cal, calendar, dayNumber(date) - cal.start);
 }

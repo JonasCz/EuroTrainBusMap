@@ -1,5 +1,5 @@
 import type { CityFile, NetworkFile, Pattern } from "@etbm/shared";
-import type { CalIndex } from "./calendar.ts";
+import { serviceDayCount, type CalIndex } from "./calendar.ts";
 
 /** Network-wide lookups needed by the pure timetable logic. */
 export interface NetCtx {
@@ -76,6 +76,41 @@ export function prepare(cf: CityFile, ctx: NetCtx): PreparedCity {
   };
   cache.set(cf, p);
   return p;
+}
+
+/**
+ * Trips per day of a pattern over the calendar horizon (all its trips' service days / horizon days),
+ * the same measure as the ETL's corridor `tpd`, but for this one pattern.
+ */
+export function patternTpd(cf: CityFile, ctx: NetCtx, pattern: number): number {
+  const prep = prepare(cf, ctx);
+  let days = 0;
+  for (const ti of prep.tripsByPattern[pattern] ?? []) days += serviceDayCount(ctx.cal, cf.trips[ti]![2]);
+  return ctx.cal.days > 0 ? days / ctx.cal.days : 0;
+}
+
+/** corridor id → Cat bit → trips per day of the selected services on it. */
+export type CorridorTraffic = Map<number, Partial<Record<number, number>>>;
+
+/** Add `tpd` trips/day of category `cat` to every corridor in `corridors` (each once; −1 = no corridor). */
+export function addTraffic(t: CorridorTraffic, corridors: Iterable<number>, cat: number, tpd: number): void {
+  for (const c of new Set(corridors)) {
+    if (c < 0) continue;
+    const r = t.get(c) ?? {};
+    r[cat] = (r[cat] ?? 0) + tpd;
+    t.set(c, r);
+  }
+}
+
+/** corridor id → union of the Cat bits on it. */
+export function trafficCats(t: CorridorTraffic): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const [c, r] of t) {
+    let cats = 0;
+    for (const k of Object.keys(r)) cats |= +k;
+    out.set(c, cats);
+  }
+  return out;
 }
 
 /** Index of the stop of pattern `p` at `station` inside a city segment, or −1. */
