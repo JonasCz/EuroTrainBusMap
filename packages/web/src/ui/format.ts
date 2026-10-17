@@ -3,6 +3,8 @@ import { cityTz, stationName, type Net } from "../data/net.ts";
 import { dayShift, fmtTime, tzAbbr } from "../logic/tz.ts";
 import { currentTheme } from "../map/theme.ts";
 import { h } from "./dom.ts";
+import { modeIcon } from "./icons.ts";
+import { CAT_LABEL } from "../logic/filters.ts";
 
 /** Time at a station, in that station's city tz; marks day shifts and foreign zones. */
 export function timeEl(net: Net, utc: number, station: number, opts: { refDate?: string; refTz?: string; strong?: boolean } = {}): HTMLElement {
@@ -44,8 +46,9 @@ export function routeBadge(r: Route, number?: string): HTMLElement {
   return h("span", { class: "badge", style: `--badge-bg:${bg};--badge-fg:${fg}`, title: r.agency }, name);
 }
 
-export function catDot(cat: number, label?: string): HTMLElement {
-  return h("span", { class: "cat-dot", style: `--c:${currentTheme().cat[cat] ?? "#888"}`, title: label ?? null, "aria-hidden": label ? null : "true" });
+/** Mode pictogram + coloured pill: "[train] ICE 597" (the pill keeps the operator's colour). */
+export function routeTag(r: Route, number?: string): HTMLElement {
+  return h("span", { class: "route-tag" }, modeIcon(r.cat, 16, CAT_LABEL[r.cat]), routeBadge(r, number));
 }
 
 export function station(net: Net, id: number): string {

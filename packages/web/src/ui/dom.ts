@@ -38,6 +38,8 @@ const ICONS: Record<string, string> = {
   info: "M12 8h.01M11 12h1v5h1M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z",
   seat: "M5 4v7a3 3 0 0 0 3 3h11M15 10l4 4-4 4",
   arrow: "M5 12h14M13 6l6 6-6 6",
+  check: "M5 12.5l4.5 4.5L19 7.5",
+  calendar: "M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM4 10h16M8.5 3v4M15.5 3v4",
 };
 
 export function icon(name: keyof typeof ICONS | string, size = 18): SVGSVGElement {

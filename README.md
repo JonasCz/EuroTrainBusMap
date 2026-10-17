@@ -128,6 +128,9 @@ Pipeline in short:
      city's member stations permanently: only while a city (or one of its stations) is selected, a soft ring is
      drawn around each of its stations (`member-ring-*`, stronger for the chosen one). Timetable rows always show the
      station each departure leaves from / arrives at.
+     In the panel's station list, stations without departures under the mode filter are greyed out (tooltip: which modes
+     serve them; `logic/stations.ts`), long lists get a search field, and the timetable's date opens a month calendar with a
+     dot on every day the pair's service runs (`serviceDates`). Modes are drawn with one pictogram each (`ui/icons.ts`).
    - `geo/<shard>.json` (~80 KB gzip on average): for each timetable shard, the corridors its patterns
      use (with segment geometry, for the selection highlight) and the stations it references
      (names/positions). Loaded together with the shard on a click. Highlighted lines are sized by the

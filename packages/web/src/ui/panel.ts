@@ -1,23 +1,33 @@
 /** Side panel (desktop) / bottom sheet (mobile): search, mode chips and content views. */
 import { Cat } from "@etbm/shared";
 import { cityTz, slugify, stationName, type Net } from "../data/net.ts";
-import { addDays, dateFromDayNumber, formatDateShort, lastDate } from "../logic/calendar.ts";
+import { addDays, formatDateShort, lastDate } from "../logic/calendar.ts";
 import type { Connection, OnwardStop } from "../logic/connections.ts";
-import { CAT_LABEL, CAT_ORDER, localOn, type Filters } from "../logic/filters.ts";
+import { ALL_CATS, CAT_LABEL, CAT_ORDER, localOn, type Filters } from "../logic/filters.ts";
 import type { Leg, LegInfo } from "../logic/journey.ts";
 import type { Reach } from "../logic/reach.ts";
 import type { Departure } from "../logic/timetable.ts";
 import { fmtDuration, localDate } from "../logic/tz.ts";
 import { h, icon } from "./dom.ts";
 import { shortStationName } from "../map/features.ts";
-import { catDot, routeBadge, timeEl } from "./format.ts";
-import { currentTheme } from "../map/theme.ts";
+import { routeTag, timeEl } from "./format.ts";
+import { localIcon, modeIcon } from "./icons.ts";
+import { datePicker, focusPicker } from "./datepicker.ts";
+import { depCats, depsWith, type StationDeps } from "../logic/stations.ts";
 
 export type View =
   | { kind: "intro" }
   | { kind: "loading"; title: string }
   | { kind: "error"; message: string }
-  | { kind: "reach"; city: number; /** the origin narrowed to this station of the city */ station?: number; reach: Reach }
+  | {
+      kind: "reach";
+      city: number;
+      /** the origin narrowed to this station of the city */
+      station?: number;
+      reach: Reach;
+      /** departures/day by mode per station of the city (unfiltered; greys out stations without departures) */
+      stationDeps: Map<number, StationDeps>;
+    }
   | {
       kind: "timetable";
       city: number;
@@ -29,6 +39,8 @@ export type View =
       next: string[];
       inHorizon: boolean;
       hasService: boolean;
+      /** origin-local dates with departures (date picker dots); computed on first use */
+      serviceDays: () => ReadonlySet<string>;
     }
   | { kind: "connections"; legs: LegInfo[]; conns: Connection[]; windowMin: number };
 
@@ -93,42 +105,29 @@ export class Panel {
 
   // ---- chips ------------------------------------------------------------------
 
+  /** A mode toggle: a check box, the mode's pictogram and its name. */
+  private chip(attrs: Record<string, string>, pictogram: SVGSVGElement, label: string, onclick: () => void): HTMLElement {
+    return h(
+      "button",
+      { type: "button", class: "chip", "aria-pressed": "true", ...attrs, onclick },
+      h("span", { class: "chip-check", "aria-hidden": "true" }, icon("check", 12)),
+      pictogram,
+      label,
+    );
+  }
+
   private buildChips(): void {
     const items: HTMLElement[] = CAT_ORDER.map((cat) =>
-      h(
-        "button",
-        {
-          type: "button",
-          class: "chip",
-          "data-cat": cat,
-          "aria-pressed": "true",
-          onclick: () => {
-            const f = this.actions.state.filters;
-            this.actions.set({ filters: { ...f, cats: f.cats ^ cat } });
-          },
-        },
-        catDot(cat),
-        CAT_LABEL[cat]!,
-      ),
+      this.chip({ "data-cat": String(cat), style: `--c:var(--cat-${cat})`, title: `Show or hide ${CAT_LABEL[cat]!.toLowerCase()}` }, modeIcon(cat, 16), CAT_LABEL[cat]!, () => {
+        const f = this.actions.state.filters;
+        this.actions.set({ filters: { ...f, cats: f.cats ^ cat } });
+      }),
     );
-    items.push(
-      h(
-        "button",
-        {
-          type: "button",
-          class: "chip chip-local",
-          "data-local": "1",
-          "aria-pressed": "true",
-          title: "Metro, tram and city bus lines, shown when zoomed in",
-          onclick: () => {
-            const f = this.actions.state.filters;
-            this.actions.set({ filters: { ...f, local: !localOn(f) } });
-          },
-        },
-        h("span", { class: "cat-dot local-dot", style: `--c:${currentTheme().urban.metro}`, "aria-hidden": "true" }),
-        "Local transport",
-      ),
-    );
+    const local = this.chip({ class: "chip chip-local", "data-local": "1", style: "--c:var(--urban)", title: "Metro, tram and city bus lines, shown when zoomed in" }, localIcon(16), "Local transport", () => {
+      const f = this.actions.state.filters;
+      this.actions.set({ filters: { ...f, local: !localOn(f) } });
+    });
+    items.push(local);
     this.chips.replaceChildren(...items);
   }
 
@@ -270,7 +269,7 @@ export class Panel {
       case "error":
         return [this.header("Something went wrong", null), h("p", { class: "pad error" }, v.message)];
       case "reach":
-        return this.reach(v.city, v.reach, v.station);
+        return this.reach(v.city, v.reach, v.station, v.stationDeps);
       case "timetable":
         return this.timetable(v);
       case "connections":
@@ -298,21 +297,33 @@ export class Panel {
   private intro(): Node[] {
     const n = this.net;
     const end = lastDate(n.cal);
+    const f = this.actions?.state.filters;
+    // modes switched off at the top are greyed out here too
+    const item = (on: boolean, pictogram: SVGSVGElement, line: HTMLElement, label: string, wide = false) =>
+      h(
+        "li",
+        { class: `${wide ? "legend-wide" : ""}${on ? "" : " is-off"}`.trim() || undefined, title: on ? null : `${label}: hidden – switch it on above` },
+        pictogram,
+        line,
+        label,
+      );
     return [
       h(
         "div",
         { class: "intro" },
-        h("h2", { tabindex: "-1" }, "Where can you go without changing?"),
+        h("h2", { tabindex: "-1" }, "Where can you go by train and bus?"),
         h(
           "p",
           null,
-          "Tap a city to see every place you can reach on a single train or bus. Pick a second city for its timetable, then follow connections onward.",
+          "Direct trains and buses, and connections with changes: tap a city to see every place you can reach without changing, pick a second city for its timetable, then select a departure to see onward connections.",
         ),
         h(
           "ul",
-          { class: "legend" },
-          CAT_ORDER.map((cat) => h("li", null, h("span", { class: "legend-line", style: `--c:var(--cat-${cat})` }), CAT_LABEL[cat]!)),
-          this.localAvailable ? h("li", { class: "legend-wide" }, h("span", { class: "legend-line thin", style: "--c:var(--urban)" }), "Metro, tram, city bus – zoom in") : null,
+          { class: "legend", "aria-label": "Transport modes on the map" },
+          CAT_ORDER.map((cat) => item(!f || (f.cats & cat) !== 0, modeIcon(cat, 16), h("span", { class: "legend-line", style: `--c:var(--cat-${cat})` }), CAT_LABEL[cat]!)),
+          this.localAvailable
+            ? item(!f || localOn(f), localIcon(16), h("span", { class: "legend-line thin", style: "--c:var(--urban)" }), "Metro, tram, city bus – zoom in", true)
+            : null,
         ),
         h(
           "p",
@@ -323,7 +334,7 @@ export class Panel {
     ];
   }
 
-  private reach(city: number, r: Reach, station?: number): Node[] {
+  private reach(city: number, r: Reach, station: number | undefined, stationDeps: Map<number, StationDeps>): Node[] {
     const n = this.net;
     const c = n.cities[city]!;
     const dests = [...r.dests.values()].sort((a, b) => n.cities[b.city]!.importance - n.cities[a.city]!.importance || a.minutes - b.minutes);
@@ -332,7 +343,7 @@ export class Panel {
       station !== undefined
         ? [this.header(stationName(n, station), `${count} from this station · ${c.name}, ${countryName(c.country)}`)]
         : [this.header(c.name, `${count} · ${countryName(c.country)}`)];
-    if (c.stations.length > 1) out.push(this.stationsLine(city, station));
+    if (c.stations.length > 1) out.push(this.stationsLine(city, station, stationDeps));
     if (!dests.length) {
       out.push(h("p", { class: "pad muted" }, "No direct services from here with the selected modes."));
       return out;
@@ -345,7 +356,7 @@ export class Panel {
         h(
           "button",
           { type: "button", class: "dest", onclick: () => this.actions.set({ dest: d.city, legs: [] }) },
-          h("span", { class: "dest-cats" }, CAT_ORDER.filter((k) => d.cats & k).map((k) => catDot(k, CAT_LABEL[k]))),
+          h("span", { class: "dest-cats" }, CAT_ORDER.filter((k) => d.cats & k).map((k) => modeIcon(k, 14, CAT_LABEL[k]))),
           h("span", { class: "dest-name" }, dc.name, dc.country !== c.country ? h("span", { class: "cc" }, dc.country) : null),
           // a trip whose feed has no real times between two cities gives 0 minutes: show no duration rather than "0 min"
           h("span", { class: "dest-time" }, d.minutes >= 1 ? [h("span", { class: "muted small" }, "from "), fmtDuration(d.minutes)] : null),
@@ -356,10 +367,12 @@ export class Panel {
     const major = dests.filter((d) => n.cities[d.city]!.importance >= 0.6);
     const minor = dests.filter((d) => n.cities[d.city]!.importance < 0.6);
     const groups: [string, typeof dests][] = major.length && minor.length && dests.length > 20 ? [["Major destinations", major], [`Other places (${minor.length})`, minor]] : [["", dests]];
+    // the mode icon column is as wide as the most modes any destination has
+    const ncats = Math.max(1, ...dests.map((d) => CAT_ORDER.filter((k) => d.cats & k).length));
     const lists = groups.map(([title, items]) =>
       h(
         "section",
-        { class: "dest-group" },
+        { class: "dest-group", style: `--ncats:${ncats}` },
         title ? h("h3", { class: "section" }, title) : null,
         this.lazyList(h("ul", { class: "dest-list", "aria-label": title || `Direct destinations from ${c.name}` }), items, row),
       ),
@@ -410,51 +423,95 @@ export class Panel {
 
   /**
    * The stations of a city (rail first, by service), each a button that narrows the origin to that station;
-   * with a station chosen, "all stations" goes back to the whole city. "+N more" expands the list.
+   * with a station chosen, "all stations" goes back to the whole city. Stations without departures under the
+   * mode filter are listed last and disabled (the tooltip says which modes serve them). "+N more" expands the
+   * list; long lists get a search field to find a station by name.
    */
-  private stationsLine(city: number, current?: number): HTMLElement {
+  private stationsLine(city: number, current: number | undefined, deps: Map<number, StationDeps>): HTMLElement {
     const n = this.net;
     const c = n.cities[city]!;
+    const f = this.actions.state.filters;
     const rail = (s: number) => ((n.file.stations[s]!.cats & (Cat.LongDistance | Cat.Regional)) !== 0 ? 0 : 1);
-    const order = [...c.stations].sort((a, b) => rail(a) - rail(b) || n.ctx.stationRank[a]! - n.ctx.stationRank[b]!);
+    const usable = (s: number) => depsWith(deps.get(s), f) > 0;
+    const off = (s: number) => (usable(s) ? 0 : 1);
+    const order = [...c.stations].sort((a, b) => off(a) - off(b) || rail(a) - rail(b) || n.ctx.stationRank[a]! - n.ctx.stationRank[b]!);
+    const nUsable = order.filter(usable).length;
     const TOP = 8;
+    const SEARCH_FROM = 16; // lists at least this long get a search field
     const btn = (s: number) => {
-      const label = shortStationName(stationName(n, s), c.name);
+      const full = stationName(n, s);
+      const label = shortStationName(full, c.name);
+      const disabled = s !== current && !usable(s);
       return h(
         "button",
         {
           type: "button",
-          class: `station-pick${s === current ? " is-current" : ""}`,
+          class: `station-pick${s === current ? " is-current" : ""}${disabled ? " is-off" : ""}`,
           "aria-pressed": String(s === current),
-          title: s === current ? "Show all stations of the city" : `Departures from ${stationName(n, s)} only`,
-          onclick: () => this.actions.clickStation(s, city, label),
+          "aria-disabled": disabled ? "true" : null,
+          "data-q": slugify(full),
+          title: s === current ? "Show all stations of the city" : disabled ? noDepartures(full, deps.get(s)) : `Departures from ${full} only`,
+          onclick: disabled ? null : () => this.actions.clickStation(s, city, label),
         },
         label,
       );
     };
-    const p = h("p", { class: "stations-line" });
-    p.append(
-      h("span", { class: "muted" }, current !== undefined ? `${order.length} stations in ${c.name}: ` : `${order.length} stations (tap one to see only its departures): `),
-      ...order.slice(0, TOP).flatMap((s, i) => [i ? " " : "", btn(s)]),
-    );
+    const line = h("div", { class: "stations-line" });
+    const count =
+      nUsable < order.length
+        ? `${order.length} stations, ${nUsable} with departures${f.cats === ALL_CATS ? "" : " by the selected modes"}`
+        : `${order.length} stations`;
+    line.append(h("span", { class: "muted stations-count" }, current !== undefined ? `${count} in ${c.name}: ` : `${count} (tap one to see only its departures): `), ...order.slice(0, TOP).map(btn));
+    const tail: HTMLElement[] = [];
     if (order.length > TOP) {
-      const more = h(
-        "button",
-        {
-          type: "button",
-          class: "link small",
-          "aria-expanded": "false",
-          onclick: () => {
-            more.remove();
-            p.append(...order.slice(TOP).flatMap((s) => [" ", btn(s)]));
-          },
+      const rest = order.slice(TOP);
+      const empty = h("span", { class: "muted stations-empty", hidden: true }, "No station matches.");
+      const input = h("input", {
+        type: "search",
+        class: "dest-filter station-filter",
+        placeholder: `Find a station in ${c.name}…`,
+        "aria-label": `Find a station in ${c.name}`,
+        oninput: () => {
+          const q = slugify(input.value);
+          let shown = 0;
+          for (const b of line.querySelectorAll<HTMLButtonElement>(".station-pick")) {
+            b.hidden = !!q && !b.dataset.q!.includes(q);
+            if (!b.hidden) shown++;
+          }
+          empty.hidden = shown > 0;
         },
-        `+${order.length - TOP} more`,
-      );
-      p.append(" ", more);
+        onkeydown: (e: Event) => {
+          const k = (e as KeyboardEvent).key;
+          if (k === "Enter") {
+            const hits = [...line.querySelectorAll<HTMLButtonElement>(".station-pick:not([hidden]):not([aria-disabled])")];
+            if (hits.length === 1) hits[0]!.click();
+          } else if (k === "Escape" && input.value) {
+            e.preventDefault(); // clear the field, do not leave the city
+            input.value = "";
+            input.dispatchEvent(new Event("input"));
+          }
+        },
+      });
+      const search = h("div", { class: "stations-search", hidden: true }, input);
+      const expand = (focus: boolean) => {
+        more.parentElement!.remove();
+        line.insertBefore(h("span", { class: "stations-rest" }, rest.map(btn), empty), line.querySelector(".stations-all"));
+        if (order.length >= SEARCH_FROM) {
+          search.hidden = false;
+          if (focus) input.focus();
+        }
+      };
+      const more = h("button", { type: "button", class: "link small", "aria-expanded": "false", onclick: () => expand(false) }, `+${rest.length} more`);
+      const find =
+        order.length >= SEARCH_FROM
+          ? h("button", { type: "button", class: "icon-btn station-find", "aria-label": `Search the ${order.length} stations of ${c.name}`, title: "Find a station by name", onclick: () => expand(true) }, icon("search", 15))
+          : null;
+      line.insertBefore(search, line.children[1] ?? null);
+      tail.push(h("span", { class: "stations-more" }, more, find));
     }
-    if (current !== undefined) p.append(" ", h("button", { type: "button", class: "link small", onclick: () => this.actions.set({ station: undefined, legs: [] }) }, `All of ${c.name}`));
-    return p;
+    if (current !== undefined) tail.push(h("button", { type: "button", class: "link small stations-all", onclick: () => this.actions.set({ station: undefined, legs: [] }) }, `All of ${c.name}`));
+    line.append(...tail);
+    return line;
   }
 
   private timetable(v: Extract<View, { kind: "timetable" }>): Node[] {
@@ -470,7 +527,7 @@ export class Panel {
       icon("swap"),
     );
     const out: Node[] = [this.header(title, v.deps.length ? `${v.deps.length} direct departure${v.deps.length === 1 ? "" : "s"}` : "Direct trips", { back: true, extra: swap })];
-    out.push(this.dateBar(v.date, v.today));
+    out.push(this.dateBar(v.date, v.today, v.serviceDays));
     if (!v.hasService) {
       out.push(h("p", { class: "pad muted" }, `No direct service between ${a.name} and ${b.name} with the selected modes.`));
       return out;
@@ -526,7 +583,7 @@ export class Panel {
               h(
                 "span",
                 { class: "tt-main" },
-                h("span", { class: "tt-line" }, routeBadge(d.route, d.number), h("span", { class: "headsign" }, d.headsign)),
+                h("span", { class: "tt-line" }, routeTag(d.route, d.number), h("span", { class: "headsign" }, d.headsign)),
                 h("span", { class: "tt-stations" }, stationName(n, d.depStation), h("span", { class: "arr" }, " → "), stationName(n, d.arrStation)),
                 meta.length ? h("span", { class: "tt-meta" }, meta.map((m, i) => [i ? h("span", { class: "sep" }, "·") : null, m])) : null,
               ),
@@ -541,27 +598,62 @@ export class Panel {
     return out;
   }
 
-  private dateBar(date: string, today: string): HTMLElement {
+  /**
+   * Previous / next day around the date; the date opens a month calendar with a dot under each day the
+   * pair's service runs (days outside the timetable period disabled).
+   */
+  private dateBar(date: string, today: string, serviceDays: () => ReadonlySet<string>): HTMLElement {
     const n = this.net;
-    const input = h("input", {
-      type: "date",
-      value: date,
-      min: n.cal.startDate,
-      max: dateFromDayNumber(n.cal.start + n.cal.days - 1),
-      "aria-label": "Travel date",
-      onchange: (e: Event) => {
-        const v = (e.target as HTMLInputElement).value;
-        if (v) this.actions.set({ date: v }, { replace: true });
+    const label = date === today ? `Today, ${formatDateShort(date)}` : date === addDays(today, 1) ? `Tomorrow, ${formatDateShort(date)}` : formatDateShort(date);
+    const wrap = h("div", { class: "datebar-wrap" });
+    let picker: HTMLElement | null = null;
+    const close = (refocus: boolean) => {
+      picker?.remove();
+      picker = null;
+      toggle.setAttribute("aria-expanded", "false");
+      if (refocus) toggle.focus();
+    };
+    const toggle = h(
+      "button",
+      {
+        type: "button",
+        class: "date-label",
+        "aria-haspopup": "dialog",
+        "aria-expanded": "false",
+        "aria-label": `Travel date: ${label}. Choose a date`,
+        onclick: () => {
+          if (picker) return close(false);
+          picker = datePicker({
+            date,
+            today,
+            min: n.cal.startDate,
+            max: lastDate(n.cal),
+            serviceDays: serviceDays(),
+            onPick: (d) => {
+              close(false);
+              this.actions.set({ date: d }, { replace: true });
+            },
+            onClose: () => close(true),
+          });
+          wrap.append(picker);
+          toggle.setAttribute("aria-expanded", "true");
+          focusPicker(picker);
+        },
       },
-    });
-    return h(
-      "div",
-      { class: "datebar" },
-      h("button", { type: "button", class: "icon-btn", "aria-label": "Previous day", onclick: () => this.actions.shiftDate(-1) }, icon("prev")),
-      h("label", { class: "date-label" }, h("span", { class: "date-text" }, date === today ? `Today, ${formatDateShort(date)}` : date === addDays(today, 1) ? `Tomorrow, ${formatDateShort(date)}` : formatDateShort(date)), input),
-      h("button", { type: "button", class: "icon-btn", "aria-label": "Next day", onclick: () => this.actions.shiftDate(1) }, icon("next")),
-      date !== today ? h("button", { type: "button", class: "link small", onclick: () => this.actions.set({ date: undefined }, { replace: true }) }, "Today") : null,
+      icon("calendar", 16),
+      h("span", { class: "date-text" }, label),
     );
+    wrap.append(
+      h(
+        "div",
+        { class: "datebar" },
+        h("button", { type: "button", class: "icon-btn", "aria-label": "Previous day", onclick: () => this.actions.shiftDate(-1) }, icon("prev")),
+        toggle,
+        h("button", { type: "button", class: "icon-btn", "aria-label": "Next day", onclick: () => this.actions.shiftDate(1) }, icon("next")),
+        date !== today ? h("button", { type: "button", class: "link small", onclick: () => this.actions.set({ date: undefined }, { replace: true }) }, "Today") : null,
+      ),
+    );
+    return wrap;
   }
 
   private connections(v: Extract<View, { kind: "connections" }>): Node[] {
@@ -617,7 +709,7 @@ export class Panel {
           h(
             "div",
             { class: "leg" },
-            routeBadge(l.route, l.number),
+            routeTag(l.route, l.number),
             h(
               "span",
               { class: "leg-times" },
@@ -667,7 +759,7 @@ export class Panel {
               h(
                 "span",
                 { class: "conn-main" },
-                h("span", { class: "tt-line" }, routeBadge(c.route, c.number), h("span", { class: "headsign" }, c.headsign)),
+                h("span", { class: "tt-line" }, routeTag(c.route, c.number), h("span", { class: "headsign" }, c.headsign)),
                 h("span", { class: "tt-meta" }, transferNote, c.note ? [h("span", { class: "sep" }, "·"), h("span", { class: "note" }, c.note)] : null),
               ),
             ),
@@ -695,6 +787,14 @@ export class Panel {
     return out;
   }
 
+}
+
+/** Tooltip of a station without departures under the mode filter. */
+function noDepartures(name: string, d: StationDeps | undefined): string {
+  const cats = depCats(d).map((k) => CAT_LABEL[k]!);
+  if (!cats.length) return `No departures to other cities from ${name}`;
+  const list = cats.length === 1 ? cats[0]! : `${cats.slice(0, -1).join(", ")} and ${cats[cats.length - 1]}`;
+  return `No departures with the selected modes – ${name} is only served by ${list}`;
 }
 
 const regionNames = typeof Intl.DisplayNames === "function" ? new Intl.DisplayNames(["en"], { type: "region" }) : null;

@@ -8,7 +8,8 @@ import { sameFilters, type Filters } from "./logic/filters.ts";
 import { resolveLeg, type Leg, type LegInfo } from "./logic/journey.ts";
 import { computeReach } from "./logic/reach.ts";
 import { addTraffic, trafficCats, type CorridorTraffic } from "./logic/context.ts";
-import { nextServiceDates, pairCandidates, pairTraffic, timetable, type Departure } from "./logic/timetable.ts";
+import { nextServiceDates, pairCandidates, pairTraffic, serviceDates, timetable, type Departure } from "./logic/timetable.ts";
+import { stationDepartures } from "./logic/stations.ts";
 import { localDate } from "./logic/tz.ts";
 import { STATION_ZOOM } from "./map/lod.ts";
 import type { MapView, Highlight } from "./map/mapview.ts";
@@ -16,6 +17,19 @@ import { Panel, type View } from "./ui/panel.ts";
 import { parseHash, toHash, type AppState } from "./ui/state.ts";
 
 export const CONNECTION_WINDOW_MIN = 180;
+
+/** A value computed on first use (e.g. the date picker's service days, only needed when it opens). */
+function lazy<T>(f: () => T): () => T {
+  let done = false;
+  let v: T;
+  return () => {
+    if (!done) {
+      v = f();
+      done = true;
+    }
+    return v;
+  };
+}
 
 export class App {
   state: AppState;
@@ -155,7 +169,7 @@ export class App {
       // panel first (the list is what the user waits for), then the map highlight
       const label = originStation !== undefined ? `${stationName(net, originStation)}` : originName;
       document.title = `${label} – EuroTrainBusMap`;
-      this.panel.show({ kind: "reach", city: origin, ...(originStation !== undefined ? { station: originStation } : {}), reach });
+      this.panel.show({ kind: "reach", city: origin, ...(originStation !== undefined ? { station: originStation } : {}), reach, stationDeps: stationDepartures(cf, net.ctx) });
       await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
       if (stale()) return;
       await this.map.setHighlight({ emphasis: { focus, active: true, origin, ...(originStation !== undefined ? { originStation } : {}) }, corridors: reach.corridors, traffic: reach.traffic });
@@ -172,7 +186,8 @@ export class App {
 
     // ---- pair timetable
     if (!s.legs.length) {
-      const deps = timetable(cf, net.ctx, s.filters, dest, date, pairCandidates(cf, net.ctx, s.filters, dest, originStation));
+      const cands = pairCandidates(cf, net.ctx, s.filters, dest, originStation);
+      const deps = timetable(cf, net.ctx, s.filters, dest, date, cands);
       const traffic = pairTraffic(cf, net.ctx, s.filters, dest, originStation);
       const corridors = trafficCats(traffic);
       const next = deps.length ? [] : nextServiceDates(cf, net.ctx, s.filters, dest, date, 5, originStation);
@@ -194,6 +209,7 @@ export class App {
         next,
         inHorizon: inHorizon(net.cal, date),
         hasService: corridors.size > 0,
+        serviceDays: lazy(() => serviceDates(cf, net.ctx, s.filters, dest, originStation, cands)),
       });
       this.frame([origin, dest], `p${origin}-${dest}`);
       return;

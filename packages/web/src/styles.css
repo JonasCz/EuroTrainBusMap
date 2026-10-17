@@ -230,17 +230,18 @@ h2:focus {
     border-color 0.15s;
 }
 .chip[aria-pressed="false"] {
-  color: var(--faint);
+  color: var(--muted);
   background: transparent;
 }
-.chip[aria-pressed="false"] .cat-dot {
-  background: transparent;
-  box-shadow: inset 0 0 0 2px var(--c);
-  opacity: 0.6;
+.chip[aria-pressed="false"] .mode-icon {
+  color: var(--faint);
 }
 .chip[aria-pressed="true"] {
-  background: var(--surface-2);
-  border-color: transparent;
+  background: color-mix(in srgb, var(--c) 11%, var(--surface));
+  border-color: color-mix(in srgb, var(--c) 45%, transparent);
+}
+.chip:hover {
+  border-color: color-mix(in srgb, var(--c) 70%, transparent);
 }
 .chip[hidden] {
   display: none;
@@ -249,20 +250,34 @@ h2:focus {
   opacity: 0.35;
   cursor: not-allowed;
 }
-.cat-dot.local-dot {
-  border-radius: 2px;
-  height: 4px;
-  width: 12px;
-}
-.cat-dot {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--c);
+/* the check box of a mode toggle: filled with the mode colour and ticked when on, an empty box when off */
+.chip-check {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  border: 1.5px solid var(--faint);
+  color: transparent;
   flex: none;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
 }
-
+.chip-check .icon {
+  stroke-width: 3;
+}
+.chip[aria-pressed="true"] .chip-check {
+  background: var(--c);
+  border-color: var(--c);
+  color: var(--surface);
+}
+.mode-icon {
+  color: var(--c);
+  flex: none;
+  display: inline-block;
+  vertical-align: middle;
+}
 /* sheet */
 .sheet {
   display: flex;
@@ -372,11 +387,21 @@ h2:focus {
 .legend-wide {
   grid-column: 1 / -1;
 }
+.legend li {
+  gap: 6px;
+  transition: opacity 0.15s;
+}
+/* a mode switched off at the top */
+.legend li.is-off {
+  opacity: 0.45;
+  color: var(--muted);
+  filter: grayscale(1);
+}
 .legend-line.thin {
   height: 3px;
 }
 .legend-line {
-  width: 22px;
+  width: 16px;
   height: 5px;
   border-radius: 3px;
   background: var(--c);
@@ -392,7 +417,7 @@ h2:focus {
 /* a station of the selected city: tap to see only its departures */
 .station-pick {
   display: inline-block;
-  margin: 0 2px 0 0;
+  margin: 0 4px 0 0;
   padding: 0 7px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -403,6 +428,9 @@ h2:focus {
   line-height: 1.6;
   cursor: pointer;
 }
+.station-pick[hidden] {
+  display: none;
+}
 .station-pick:hover {
   background: rgba(127, 127, 127, 0.14);
 }
@@ -411,6 +439,35 @@ h2:focus {
   border-color: var(--accent);
   color: var(--surface);
   font-weight: 600;
+}
+/* no departures with the selected modes: greyed out, not clickable (the tooltip says why) */
+.station-pick.is-off {
+  color: var(--faint);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+.station-pick.is-off:hover {
+  background: none;
+}
+.station-find {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  vertical-align: middle;
+  margin-left: 2px;
+  border-radius: 8px;
+}
+.stations-search {
+  margin: 4px 0 6px;
+}
+.stations-search[hidden] {
+  display: none;
+}
+.stations-more {
+  white-space: nowrap;
+}
+.stations-empty {
+  margin-right: 6px;
 }
 
 /* destination list */
@@ -422,7 +479,7 @@ h2:focus {
 .dest {
   width: 100%;
   display: grid;
-  grid-template-columns: 38px 1fr auto;
+  grid-template-columns: calc(var(--ncats, 4) * 16px) 1fr auto;
   align-items: center;
   gap: 8px;
   padding: 9px 10px;
@@ -437,11 +494,7 @@ h2:focus {
 }
 .dest-cats {
   display: flex;
-  gap: 3px;
-}
-.dest-cats .cat-dot {
-  width: 8px;
-  height: 8px;
+  gap: 2px;
 }
 .dest-name {
   font-weight: 560;
@@ -467,31 +520,128 @@ h2:focus {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 12px 8px;
-  position: sticky;
-  top: 0;
+  padding: 2px 12px 8px;
 }
 .date-label {
-  position: relative;
   flex: 1;
+  min-width: 0;
   height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
+  border: 0;
   border-radius: 10px;
   background: var(--surface-2);
   font-weight: 600;
   cursor: pointer;
 }
-.date-label input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  width: 100%;
-  cursor: pointer;
+.date-label .icon {
+  color: var(--muted);
 }
-.date-label:focus-within {
+.date-label:hover,
+.date-label[aria-expanded="true"] {
+  background: var(--surface-3);
+}
+/* drawn inside the button: the sticky header above would clip an outer ring */
+.date-label:focus-visible {
   outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* date picker (opens below the date bar) */
+.datepicker {
+  margin: 0 12px 10px;
+  padding: 6px 8px 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.08);
+}
+.dp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.dp-head .icon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+  background: none;
+}
+.dp-title {
+  font-weight: 650;
+}
+.dp-grid {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  text-align: center;
+}
+.dp-grid th {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--faint);
+  padding: 4px 0 2px;
+}
+.dp-grid td {
+  padding: 1px;
+}
+.dp-day {
+  position: relative;
+  width: 100%;
+  max-width: 40px;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  font-variant-numeric: tabular-nums;
+  font-weight: 560;
+  cursor: pointer;
+  padding: 0 0 6px;
+}
+.dp-day:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.dp-day:disabled {
+  color: var(--faint);
+  opacity: 0.45;
+  cursor: default;
+}
+.dp-day:not(.has-service):not(:disabled) {
+  color: var(--muted);
+}
+.dp-day.is-today {
+  box-shadow: inset 0 0 0 1.5px var(--line);
+}
+.dp-day.is-selected {
+  background: var(--accent);
+  color: var(--surface);
+}
+.dp-day:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.dp-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--focus);
+  vertical-align: middle;
+}
+.dp-day .dp-dot {
+  position: absolute;
+  left: 50%;
+  bottom: 5px;
+  margin-left: -2.5px;
+}
+.dp-day.is-selected .dp-dot {
+  background: var(--surface);
+}
+.dp-legend {
+  margin: 6px 4px 0;
+  font-size: 11.5px;
+  color: var(--muted);
 }
 
 /* timetable */
@@ -509,7 +659,7 @@ h2:focus {
 .tt-row {
   width: 100%;
   display: grid;
-  grid-template-columns: 54px 1fr auto;
+  grid-template-columns: 58px 1fr auto;
   gap: 10px;
   padding: 10px 10px;
   border: 0;
@@ -568,6 +718,25 @@ h2:focus {
   font-size: 10px;
   color: var(--faint);
   font-weight: 500;
+}
+/* the narrow time column: a foreign time zone goes on its own line under the time */
+.tt-times .time {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 1px;
+}
+.tt-times .tzabbr {
+  flex-basis: 100%;
+  margin: -2px 0 0;
+  line-height: 1.2;
+}
+.route-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  max-width: 100%;
 }
 .tt-main,
 .conn-main {
