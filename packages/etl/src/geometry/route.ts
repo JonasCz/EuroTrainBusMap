@@ -24,6 +24,19 @@ export interface RouteResult {
   /** snap distances (m) */
   snapA: number;
   snapB: number;
+  /** graph edges of the path in order (incl. the partly used edges at both ends) */
+  edges: number[];
+}
+
+/** Per-query routing options. */
+export interface RouteOptions {
+  /**
+   * Cost multiplier of edge e (≥ 1, so the A* heuristic stays admissible): steers a query onto
+   * some track (a feed shape's, lines that trains use) without changing the graph.
+   */
+  edgeMult?: (e: number) => number;
+  /** largest value edgeMult can return (bounds the search; default 1 without edgeMult, else 4) */
+  maxMult?: number;
 }
 
 export interface RouterOptions {
@@ -158,8 +171,10 @@ export class Router {
    * Shortest path between two points. `maxLen` bounds the track length (search is pruned
    * beyond it). Returns null when nothing is found within the bound.
    */
-  route(a: LonLat, b: LonLat, maxLen: number): RouteResult | null {
+  route(a: LonLat, b: LonLat, maxLen: number, ropts: RouteOptions = {}): RouteResult | null {
     const g = this.g;
+    const M = ropts.edgeMult;
+    const cost = M ? (e: number) => g.edgeCost[e]! * M(e) : (e: number) => g.edgeCost[e]!;
     this.stats.queries++;
     let sa = this.snap(a), sb = this.snap(b);
     if (!sa.length || !sb.length) return null;
@@ -184,7 +199,7 @@ export class Router {
       const dx = (g.nodeX[n]! / Q - tx) * kxs, dy = (g.nodeY[n]! / Q - ty) * kys;
       return Math.max(0, Math.sqrt(dx * dx + dy * dy) - maxSnapB * hs);
     };
-    const maxCost = maxLen * 1.6 + 2000;
+    const maxCost = (maxLen * 1.6 + 2000) * (M ? ropts.maxMult ?? 4 : 1);
 
     let bestCost = Infinity;
     let bestEnd = -1; // node
@@ -193,7 +208,7 @@ export class Router {
 
     // same-edge solutions
     for (const s of sa) for (const t of sb) if (s.edge === t.edge) {
-      const c = Math.abs(s.f - t.f) * g.edgeCost[s.edge]! + pen * (s.d + t.d);
+      const c = Math.abs(s.f - t.f) * cost(s.edge) + pen * (s.d + t.d);
       if (c < bestCost) { bestCost = c; direct = { s, t }; }
     }
     const relax = (n: number, c: number, pe: number) => {
@@ -204,14 +219,14 @@ export class Router {
       }
     };
     sa.forEach((s, i) => {
-      const e = s.edge, c = g.edgeCost[e]!, base = pen * s.d;
+      const e = s.edge, c = cost(e), base = pen * s.d;
       relax(g.edgeU[e]!, base + s.f * c, -(2 * i + 1) - 1); // encode: source snap i via U
       relax(g.edgeV[e]!, base + (1 - s.f) * c, -(2 * i + 2) - 1);
     });
     // target entry costs
     const tEntry = new Map<number, { c: number; s: Snap }>();
     for (const t of sb) {
-      const e = t.edge, c = g.edgeCost[e]!, base = pen * t.d;
+      const e = t.edge, c = cost(e), base = pen * t.d;
       for (const [n, cc] of [[g.edgeU[e]!, base + t.f * c], [g.edgeV[e]!, base + (1 - t.f) * c]] as const) {
         const cur = tEntry.get(n);
         if (!cur || cc < cur.c) tEntry.set(n, { c: cc, s: t });
@@ -231,7 +246,7 @@ export class Router {
         const e = g.adjEdge[k]!;
         const m = g.edgeU[e] === n ? g.edgeV[e]! : g.edgeU[e]!;
         if (CL[m] === gen) continue;
-        relax(m, gn + g.edgeCost[e]!, e);
+        relax(m, gn + cost(e), e);
       }
     }
     this.stats.settled += settled;
@@ -239,8 +254,10 @@ export class Router {
 
     let coords: LonLat[];
     let s: Snap, t: Snap;
+    let pathEdges: number[];
     if (direct) {
       s = direct.s; t = direct.t;
+      pathEdges = [s.edge];
       coords = this.partial(s, t.g + t.t > s.g + s.t ? 'V' : 'U', t);
     } else {
       t = bestTarget!;
@@ -259,6 +276,7 @@ export class Router {
       edges.reverse(); nodes.reverse();
       const si = (srcCode - 1) >> 1;
       s = sa[si]!;
+      pathEdges = [s.edge, ...edges, t.edge];
       const viaU = srcCode % 2 === 1;
       coords = this.partial(s, viaU ? 'U' : 'V');
       let at = nodes[0]!;
@@ -277,7 +295,7 @@ export class Router {
     let length = 0;
     for (let i = 1; i < coords.length; i++) length += haversine(coords[i - 1]![0], coords[i - 1]![1], coords[i]![0], coords[i]![1]);
     if (length > maxLen) return null;
-    return { coords, length, snapA: s.d, snapB: t.d };
+    return { coords, length, snapA: s.d, snapB: t.d, edges: pathEdges };
   }
 
   /** Coordinates from snap point s along its edge to end 'U' or 'V' (or to snap point `to` on the same edge). */

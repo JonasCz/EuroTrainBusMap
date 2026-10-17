@@ -2,10 +2,22 @@
 
 Corridor geometries for the map: `buildGeometries(reqs, { workDir, log })` (see `index.ts`).
 
-- **rail**: shortest path on a rail graph built from Overture Maps rail segments, between the
-  stations of the corridor's representative hop (first hop that routes; up to 3 tried). A feed
-  `shape` is used instead when the routed path is >1.3× longer than a plausible shape, or when
-  routing fails. Otherwise a straight great-circle line (`snapped: false`).
+- **rail**: route on a rail graph built from Overture Maps rail segments, between the stations
+  of the corridor's representative hop (first hop that routes; up to 3 tried), in two passes
+  (`guide.ts`):
+  1. A plausible feed `shape` that lies on the track (≥ 90 % within 150 m, `onTrack`) *guides*
+     the route: edges away from it cost up to ×4 (`shapeEdgeMult`), so the line follows the real
+     path but keeps the graph's track geometry (if the guided route does not cover the shape, the
+     shape itself is drawn). Without such a shape: shortest path, as before (a crude shape is still used when the routed path is
+     >1.3× longer than the shape, or when routing fails).
+  2. **Track usage**: the trains per day of every hop routed in pass 1 are summed per graph edge
+     (long-distance and regional separately, copied onto parallel track of double-track lines
+     mapped as two ways). Hops of ≥ 25 km without a guiding shape are routed again with lightly
+     used track up to ×2 more expensive (`usageMult`: log scale, 1 at 1000 trains/day; a
+     long-distance hop counts regional trains at 25 %; its own pass-1 trains count by its
+     confidence, 1 up to 60 km then 60 km / length). Non-stop trains then stay on the main line
+     the stopping trains mark instead of the shortest branch line.
+  Otherwise a straight great-circle line (`snapped: false`).
 - **road**: plausible feed shape, else a gentle curve bulging 5 % to the left of west→east
   (`snapped: false`).
 - Lines are attached to the city points (trimmed to the closest approach; Bézier lead-in when
@@ -17,7 +29,8 @@ Corridor geometries for the map: `buildGeometries(reqs, { workDir, log })` (see 
 |---|---|
 | `overture.ts` | resolves the latest Overture release (STAC), extracts Europe rail to `<workDir>/overture/rail-europe-<release>.parquet` (cached; ~13 min, ~220 MB), loads it into a graph |
 | `graph.ts` | typed-array graph: vertices shared between segments = junctions, degree-2 chains contracted, edge geometry Douglas-Peucker simplified (20 m), grid index over edge sub-segments |
-| `route.ts` | multi-candidate station snapping (≤1.5 km) + A* with detour bound |
+| `route.ts` | multi-candidate station snapping (≤1.5 km) + A* with detour bound; optional per-query edge cost multipliers (`RouteOptions.edgeMult`), returns the path's edges |
+| `guide.ts` | steering rail routes: feed shapes on the track (`onTrack`, `shapeEdgeMult`, `coverage`) and track usage (`TrackUsage`, `usageMult`) |
 | `geo.ts` | haversine, simplify, smoothing, curves |
 | `demo.ts` | routes 10 well-known pairs, writes GeoJSON + PNG preview |
 
@@ -125,3 +138,28 @@ stored as `road/route-cache-v1.bin`.
   Unsnapped curves start at the main hop's stations instead of the city points.
 - Debug aid: `ETBM_DUMP_GEOM_REQS=<file>` makes build.ts write the geometry requests, so routing can be iterated on
   with `buildWithRouter` in ~1 min instead of a 10 min `--reuse-db` build.
+
+## Update: routes follow the track trains use (shape guidance + track usage)
+
+Problem: a hop without intermediate stops was drawn on the shortest track, often a slow branch line. Example: an
+ÖBB NJ 457 variant (2 days, diversion) listed only Berlin Südkreuz → Brno; the shortest path ran Praha – Čerčany –
+Sázava branch – Světlá – Havlíčkův Brod – Brno (515 km), while all other Berlin – Budapest trains ran via Kolín –
+Pardubice – Česká Třebová. Overture has no usage / service / speed / electrification / track-count tags for rail
+(the segment schema has `speed_limits` and `routes`, see the skill), so the data comes from the timetables:
+
+- **Feed shapes guide the route** instead of only replacing it when routing detours >1.3×: 14.8 k of 49.8 k rail
+  corridors are now routed along their shape (CZ, IT, PL, NL, DK, HR, RO, ES Cercanías … have shapes on the track;
+  DE, AT, CH, FR, GB, BE, SE, NO, HU have none). On 1603 shaped hops ≥ 25 km the plain shortest path disagreed with the
+  shape on 107 (< 80 % within 300 m); the guided route on 3.
+- **Kept duplicates adopt shapes**: when cross-feed dedup keeps a trip without a shape (e.g. the ÖBB copy of a
+  Railjet) it takes the shape of a dropped copy (the SŽ one), so its Czech hops follow the SŽ path (1866 trips in the
+  full build).
+- **Track usage** (pass 2) for the rest: measured on the shaped hops as ground truth (shape not used), usage-weighted
+  routing reduced disagreement from 107 to 61 (54 fixed, 8 made worse — mostly diversion trips with < 0.5 trains/day
+  whose shape is used anyway). ~150 long hops move, e.g. Lyon – Clermont-Ferrand via Roanne (not the closed Thiers line), Berlin Südkreuz – Brno via Kolín – Pardubice – Česká Třebová,
+  Hamburg – København via Jutland (not over the Fehmarnbelt tunnel under construction), Madrid – Alicante on the HSL.
+  Tuning (eval on the dumped requests, `ETBM_DUMP_GEOM_REQS`): ×3 max or a 200 trains/day full-usage point were worse;
+  fully excluding a hop's own trains made single-corridor lines (Parma – Reggio Emilia) look unused; weighting regional
+  trains 100 % for long-distance hops pulled Frecce off the Torino – Milano HSL onto the busier classic line.
+- Cost: full-build geometry stage 165 s (was 110–130 s); usage incl. parallel-track spreading 15–25 s, pass 2 ≈ 9 s.
+- No graph change was needed: `rail-graph-v1.bin` is unchanged (no new asset in R2).

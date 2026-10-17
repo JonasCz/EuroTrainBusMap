@@ -106,6 +106,19 @@ describe("cross-feed dedup", () => {
     ]);
     expect(resolveDuplicates([{ a: 1, b: 2, shared: 3 }, { a: 3, b: 4, shared: 3 }], trips).dropped.size).toBe(0);
   });
+  it("maps every dropped trip to the trip that represents it, through chains", () => {
+    const trips = new Map([
+      [1, mk(1, 6, [0])],
+      [2, mk(2, 4, [0])],
+      [3, mk(3, 3, [0])],
+    ]);
+    // 2 absorbs 3 first (more shared cities), then 1 absorbs 2
+    const { dropped, keptFor } = resolveDuplicates([{ a: 1, b: 2, shared: 2 }, { a: 2, b: 3, shared: 3 }], trips);
+    expect([...dropped].sort()).toEqual([2, 3]);
+    expect(keptFor.get(2)).toBe(1);
+    expect(keptFor.get(3)).toBe(1);
+    expect(keptFor.has(1)).toBe(false);
+  });
 });
 
 describe("sliceShape", () => {

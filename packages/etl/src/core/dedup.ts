@@ -34,12 +34,13 @@ function digits(s: string | null | undefined): string | null {
 /**
  * Decide which trips to drop. Pairs must share ≥ 2 cities at matching times,
  * overlap in service days and (when both carry one) have the same train number.
- * The kept trip absorbs the dropped trip's service days.
+ * The kept trip absorbs the dropped trip's service days. `keptFor` maps every dropped trip to the
+ * trip that represents it.
  */
 export function resolveDuplicates(
   pairs: DupPair[],
   trips: Map<number, DupTrip>,
-): { dropped: Set<number>; extraMask: Map<number, Uint8Array> } {
+): { dropped: Set<number>; extraMask: Map<number, Uint8Array>; keptFor: Map<number, number> } {
   const dropped = new Set<number>();
   const redirect = new Map<number, number>();
   const extraMask = new Map<number, Uint8Array>();
@@ -67,5 +68,7 @@ export function resolveDuplicates(
     keep.mask = m;
   }
   for (const k of dropped) extraMask.delete(k);
-  return { dropped, extraMask };
+  const keptFor = new Map<number, number>();
+  for (const k of dropped) keptFor.set(k, root(k));
+  return { dropped, extraMask, keptFor };
 }

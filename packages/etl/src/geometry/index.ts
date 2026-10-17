@@ -15,6 +15,7 @@ import { RAIL_SIMPLIFY_TOL, ROAD_MIN_COMPONENT, ROAD_SIMPLIFY_TOL, graphFileName
 import { graphBytes, type RailGraph } from './graph.ts';
 import { Router, type RouteResult } from './route.ts';
 import { dedupe, dist, gentleCurve, mPerDeg, polylineLength, roundCoords, simplify, smooth, type LonLat } from './geo.ts';
+import { OFF_SHAPE_MULT, TrackUsage, USAGE_MAX_MULT, USAGE_MIN_HOP, coverage, onTrack, shapeEdgeMult } from './guide.ts';
 
 export interface GeometryRequest {
   id: number;
@@ -30,6 +31,10 @@ export interface GeometryRequest {
    * plain stub otherwise (no Bézier shortcut past the station).
    */
   anchored?: boolean;
+  /** rail trains per day on the corridor (weights its track usage, see guide.ts) */
+  tpd?: number;
+  /** of which long-distance trains */
+  tpdLong?: number;
 }
 export interface GeometryResult { id: number; coords: [number, number][]; snapped: boolean }
 
@@ -50,6 +55,10 @@ const ROAD_BULGE = 0.05;
 /** Corridors shorter than this (m) are drawn as a straight line without routing. */
 const TRIVIAL_M = 60;
 const SHAPE_TOL = 10;
+/** A feed shape with at least this share of its length on track (≤ 150 m) guides the rail route. */
+const SHAPE_ON_TRACK = 0.9;
+/** The shape-guided route is kept when it covers this share of the shape (≤ 300 m), else the shape is drawn. */
+const SHAPE_COVERED = 0.9;
 
 /** Bus stops in small towns can be a few km from the nearest secondary road; the gap becomes a stub. */
 export const ROAD_ROUTER_OPTS = { snapRadius: 5000, snapSlack: 300, minComponent: 20000 };
@@ -105,7 +114,8 @@ export function buildWithRouter(
   const t0 = Date.now();
   const cache = new Map<string, RouteResult | null>();
   const roadCache = new Map<string, RouteResult | null>();
-  const counts: Counts = { rail: 0, routed: 0, shape: 0, railRoad: 0, fallback: 0, road: 0, roadShape: 0, roadRouted: 0, roadFallback: 0 };
+  const counts: Counts = { rail: 0, routed: 0, guided: 0, shape: 0, usage: 0, railRoad: 0, fallback: 0, road: 0, roadShape: 0, roadRouted: 0, roadFallback: 0 };
+  const routedRail: RoutedRail[] = [];
   const out: GeometryResult[] = [];
   let lastLog = Date.now();
   let tRoad = 0;
@@ -118,7 +128,7 @@ export function buildWithRouter(
       continue;
     }
     try {
-      if (r.mode === 'rail') res = railGeometry(r, router, cache, counts, roadRouter, roadCache);
+      if (r.mode === 'rail') res = railGeometry(r, router, cache, counts, roadRouter, roadCache, (x, route) => routedRail.push({ ...x, i: out.length, edges: Int32Array.from(route.edges), coords: x.guided || x.gc < USAGE_MIN_HOP ? undefined : route.coords }));
       else {
         const t = performance.now();
         res = roadGeometry(r, roadRouter, roadCache, counts);
@@ -134,12 +144,48 @@ export function buildWithRouter(
       log(`geometry: ${i + 1}/${reqs.length} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
     }
   }
+  if (router) rerouteByUsage(router, routedRail, out, counts, log);
   const s = (Date.now() - t0) / 1000;
-  log(`geometry: ${reqs.length} corridors in ${s.toFixed(1)} s — rail ${counts.rail} (routed ${counts.routed}, shape ${counts.shape}, on roads ${counts.railRoad}, approximate ${counts.fallback}), road ${counts.road} (routed ${counts.roadRouted}, shape ${counts.roadShape}, fallback ${counts.roadFallback}; ${(tRoad / 1000).toFixed(1)} s)`);
+  log(`geometry: ${reqs.length} corridors in ${s.toFixed(1)} s — rail ${counts.rail} (routed ${counts.routed}, along feed shape ${counts.guided}, shape ${counts.shape}, moved to busier track ${counts.usage}, on roads ${counts.railRoad}, approximate ${counts.fallback}), road ${counts.road} (routed ${counts.roadRouted}, shape ${counts.roadShape}, fallback ${counts.roadFallback}; ${(tRoad / 1000).toFixed(1)} s)`);
   return out;
 }
 
-type Counts = { rail: number; routed: number; shape: number; railRoad: number; fallback: number; road: number; roadShape: number; roadRouted: number; roadFallback: number };
+type Counts = { rail: number; routed: number; guided: number; shape: number; usage: number; railRoad: number; fallback: number; road: number; roadShape: number; roadRouted: number; roadFallback: number };
+
+/** A rail corridor drawn from a graph route in pass one (re-routed by track usage in pass two). */
+interface RoutedRail {
+  i: number; r: GeometryRequest; from: LonLat; to: LonLat; gc: number; guided: boolean;
+  edges: Int32Array;
+  /** pass-one path, kept only for hops that pass two may re-route */
+  coords?: LonLat[];
+}
+
+/**
+ * Pass two: re-route long rail hops without a guiding shape with lightly used track made more
+ * expensive (guide.ts), so non-stop trains stay on the main lines that the stopping trains of
+ * pass one mark (Berlin → Brno via Pardubice, Hamburg → København via Jutland).
+ */
+function rerouteByUsage(router: Router, routed: RoutedRail[], out: GeometryResult[], counts: Counts, log: (s: string) => void): void {
+  if (!routed.some((x) => (x.r.tpd ?? 0) > 0)) return;
+  const t0 = Date.now();
+  const usage = new TrackUsage(router.g);
+  const share = (x: RoutedRail) => {
+    const long = x.r.tpdLong ?? 0;
+    return [long, Math.max(0, (x.r.tpd ?? 0) - long)] as const;
+  };
+  for (const x of routed) usage.add(x.edges, ...share(x));
+  usage.spread();
+  const t1 = Date.now();
+  for (const x of routed) {
+    if (!x.coords) continue;
+    const [long, reg] = share(x);
+    const re = router.route(x.from, x.to, MAX_DETOUR(x.gc), { edgeMult: usage.multFor(x.edges, long, reg, x.gc), maxMult: USAGE_MAX_MULT });
+    if (!re || coverage(re.coords, x.coords) >= 0.95) continue;
+    counts.usage++;
+    out[x.i] = { id: x.r.id, coords: finish(attach(x.r.a, re.coords, x.r.b, x.r.anchored), 1), snapped: true };
+  }
+  log(`geometry: track usage of ${routed.length} routed rail hops (${((t1 - t0) / 1000).toFixed(1)} s), ${counts.usage} long hops moved to busier track (${((Date.now() - t1) / 1000).toFixed(1)} s)`);
+}
 
 function orient(h: GeometryRequest['hops'][number], a: LonLat, b: LonLat) {
   if (dist(h.from, a) + dist(h.to, b) <= dist(h.from, b) + dist(h.to, a)) return h;
@@ -161,20 +207,36 @@ function plausibleShape(h: { from: LonLat; to: LonLat; shape?: LonLat[] }): LonL
 
 const key = (p: LonLat, q: LonLat) => `${p[0].toFixed(4)},${p[1].toFixed(4)};${q[0].toFixed(4)},${q[1].toFixed(4)}`;
 
-function railGeometry(r: GeometryRequest, router: Router | null, cache: Map<string, RouteResult | null>, counts: Counts, roadRouter: Router | null = null, roadCache: Map<string, RouteResult | null> = new Map()): GeometryResult {
+function railGeometry(
+  r: GeometryRequest, router: Router | null, cache: Map<string, RouteResult | null>, counts: Counts,
+  roadRouter: Router | null = null, roadCache: Map<string, RouteResult | null> = new Map(),
+  onRouted: (x: Omit<RoutedRail, 'i' | 'edges' | 'coords'>, route: RouteResult) => void = () => {},
+): GeometryResult {
   counts.rail++;
   let shapeFallback: LonLat[] | null = null;
   for (const raw of r.hops.slice(0, 3)) {
     const h = orient(raw, r.a, r.b);
     const shape = plausibleShape(h);
     const gc = dist(h.from, h.to);
+    // A feed shape drawn on the track is the real path (Praha → Brno via Pardubice, not across a
+    // shorter branch line): route along it, so the line keeps the graph's exact track geometry.
+    if (router && shape && gc > 30 && onTrack(router.g, shape) >= SHAPE_ON_TRACK) {
+      const guided = router.route(h.from, h.to, MAX_DETOUR(gc), { edgeMult: shapeEdgeMult(router.g, shape), maxMult: OFF_SHAPE_MULT });
+      if (guided && coverage(shape, guided.coords) >= SHAPE_COVERED) {
+        counts.guided++;
+        onRouted({ r, from: h.from, to: h.to, gc, guided: true }, guided);
+        return { id: r.id, coords: finish(attach(r.a, guided.coords, r.b, r.anchored), 1), snapped: true };
+      }
+      counts.shape++;
+      return { id: r.id, coords: finish(attach(r.a, simplify(shape, SHAPE_TOL), r.b, r.anchored), 1), snapped: true };
+    }
     let routed: RouteResult | null = null;
     if (router && gc > 30) {
       const k = key(h.from, h.to), kr = key(h.to, h.from);
       if (cache.has(k)) routed = cache.get(k)!;
       else if (cache.has(kr)) {
         const c = cache.get(kr)!;
-        routed = c && { ...c, coords: c.coords.slice().reverse(), snapA: c.snapB, snapB: c.snapA };
+        routed = c && { ...c, coords: c.coords.slice().reverse(), snapA: c.snapB, snapB: c.snapA, edges: c.edges.slice().reverse() };
       } else {
         routed = router.route(h.from, h.to, MAX_DETOUR(gc));
         cache.set(k, routed);
@@ -186,6 +248,7 @@ function railGeometry(r: GeometryRequest, router: Router | null, cache: Map<stri
         return { id: r.id, coords: finish(attach(r.a, simplify(shape, SHAPE_TOL), r.b, r.anchored), 1), snapped: true };
       }
       counts.routed++;
+      onRouted({ r, from: h.from, to: h.to, gc, guided: false }, routed);
       return { id: r.id, coords: finish(attach(r.a, routed.coords, r.b, r.anchored), 1), snapped: true };
     }
     if (shape && !shapeFallback) shapeFallback = shape;

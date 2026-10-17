@@ -68,7 +68,10 @@ Pipeline in short:
 7. **Corridors** – the drawn network connects *stations*: a corridor is an undirected edge between two stations
    that are consecutive stops of a trip, between cities as well as inside one (Tipperary – Limerick Junction,
    Paddington – Ealing Broadway), so lines are continuous at every zoom. Trips/day per category; geometry routed on the
-   rail graph (trains), else – rail replacement buses, tram-trains, stops far from any track – on the road graph, or
+   rail graph (trains: along the feed's shape where it lies on the track – a deduplicated trip takes a dropped copy's
+   shape – else the shortest path, and hops of ≥ 25 km are then routed again with lightly used track made up to ×2 more
+   expensive, using the trains/day of all other routed hops per piece of track, so non-stop trains stay on the main
+   line instead of a shorter branch; `src/geometry/guide.ts`), else – rail replacement buses, tram-trains, stops far from any track – on the road graph, or
    (coaches/buses) on the road graph; ferries, islands and anything not routable become *approximate alignments*
    (`Corridor.snapped` = false), drawn thin and dashed, never as solid straight lines. Rail graph holes are bridged
    (disused / under-construction track stays routable at a high cost, dead ends within 300 m of another component are

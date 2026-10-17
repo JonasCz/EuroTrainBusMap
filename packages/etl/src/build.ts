@@ -411,8 +411,19 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     }
   }
   const pairs: DupPair[] = pairRows.map((p) => ({ a: p.ta, b: p.tb, shared: p.n }));
-  const { dropped, extraMask } = resolveDuplicates(pairs, dupInfo);
-  log(`dedup: ${pairRows.length} candidate pairs, ${dropped.size} trips dropped as cross-feed duplicates`);
+  const { dropped, extraMask, keptFor } = resolveDuplicates(pairs, dupInfo);
+  // A kept trip without a feed shape takes the shape of a dropped copy (an ÖBB Railjet listing only
+  // Praha and Brno in Czechia gets the SŽ shape via Pardubice), so its hops follow the real track.
+  let shapesAdopted = 0;
+  for (const p of [...pairs].sort((x, y) => y.shared - x.shared))
+    for (const d of [p.a, p.b]) {
+      const k = keptFor.get(d);
+      if (k !== undefined && tShape[k]! < 0 && tShape[d]! >= 0) {
+        tShape[k] = tShape[d]!;
+        shapesAdopted++;
+      }
+    }
+  log(`dedup: ${pairRows.length} candidate pairs, ${dropped.size} trips dropped as cross-feed duplicates, ${shapesAdopted} kept trips took a dropped copy's shape`);
   stats.dedupDropped = dropped.size;
 
   // ------------------------------------------------------------------ patterns
@@ -636,7 +647,10 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       const sl = sliceShape(sp, hop.from, hop.to);
       if (sl) hop.shape = sl;
     }
-    return { id, mode: (c.cats & RAIL ? "rail" : "road") as "rail" | "road", hops: [hop], a: hop.from, b: hop.to, anchored: true };
+    // rail trains per day: how much this hop tells the router about the track it uses (geometry/guide.ts)
+    const tpdLong = Math.round((c.tpd[Cat.LongDistance] ?? 0) * 100) / 100;
+    const tpd = Math.round(((c.tpd[Cat.LongDistance] ?? 0) + (c.tpd[Cat.Regional] ?? 0)) * 100) / 100;
+    return { id, mode: (c.cats & RAIL ? "rail" : "road") as "rail" | "road", hops: [hop], a: hop.from, b: hop.to, anchored: true, tpd, tpdLong };
   });
   if (process.env.ETBM_DUMP_GEOM_REQS) await writeFile(process.env.ETBM_DUMP_GEOM_REQS, JSON.stringify(reqs));
   // The database is not needed any more: close it and release big JS structures

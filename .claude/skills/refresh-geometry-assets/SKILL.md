@@ -86,3 +86,10 @@ Fallbacks should be a small fraction.
   station > 1.5 km from heavy-rail track (tram / light rail, not in the graph).
 - Fast geometry iteration: run the build once with `ETBM_DUMP_GEOM_REQS=work/geom-reqs.json`, then call `buildWithRouter(reqs, rail, log, road)`
   from a `.mts` script (about 1 min for all 69k corridors).
+- Overture rail segments carry no usage / service / maxspeed / electrification / track-count information: in release
+  2026-09-23.1 `subclass`, `speed_limits` and `routes` are empty for every rail segment (checked around Pardubice), only
+  `rail_flags` (is_passenger, is_freight, is_bridge, is_tunnel, is_covered, is_disused, is_abandoned) and names. So
+  "which line do trains really take" is not a graph cost question: it is solved at routing time in
+  `packages/etl/src/geometry/guide.ts` (feed shapes guide the route; hops ≥ 25 km are re-routed by the trains/day of
+  all other hops per edge). Tune it on a geometry dump (`ETBM_DUMP_GEOM_REQS`, requests carry `tpd` / `tpdLong`) with
+  shaped hops as ground truth: route them without the shape and count how often the result covers < 80 % of the shape.

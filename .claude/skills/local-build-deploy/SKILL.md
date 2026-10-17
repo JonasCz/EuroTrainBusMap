@@ -179,6 +179,8 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
   (assembled dist/site: 1781 files, 1.1 GB, no file over 25 MiB). The build id is the Berlin date of the day before the start date + time (e.g. `20261015-1428`).
   Download+load is the slow part (several 300-600 MB zips); geometry routing and the line graph are single-threaded.
 - Clock/timestamps in the cloud sandbox can look inconsistent between tool calls; trust the `[ MmSSs]` prefix in `work/build.log`.
+- Geometry stage ≈ 165–185 s since rail routes follow feed shapes and track usage (two passes, see `geometry/guide.ts`); the log line
+  `geometry: … rail N (routed X, along feed shape G, shape S, moved to busier track U, …)` shows the split.
 - The build holds up to ~6 GB RSS (`--max-old-space-size=8192` is set by the `build-data` script), so do not run other heavy jobs in parallel on a 15 GB machine.
 - `wrangler deploy` prints a proxy warning ("Proxy environment variables detected") - harmless.
 - `wrangler whoami` shows the account e-mail; do not paste it or the token into reports.
