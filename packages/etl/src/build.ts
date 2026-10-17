@@ -118,11 +118,19 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     stop_key: number; feed: number; stop_id: string; feed_key: string; agency: string | null; name: string; lat: number; lon: number; parent_key: number | null; tz: string | null; cats: number; rail: boolean; n: number;
   }>(`SELECT s.stop_key, s.feed, s.stop_id, f.key AS feed_key, u.agency, s.name, s.lat, s.lon, s.parent_key, s.tz, u.cats, u.rail, u.n
       FROM stops s JOIN (
-        SELECT st.stop_key, bit_or(t.cat) AS cats, bool_or(rc.cls = 'rail') AS rail, count(*)::INTEGER AS n, mode(rc.agency) AS agency
-        FROM stop_times st JOIN trips t USING (trip_key) JOIN rclass rc USING (rc) GROUP BY st.stop_key
+        SELECT stop_key, bit_or(cats) AS cats, bool_or(rail) AS rail, sum(n)::INTEGER AS n,
+          first(agency ORDER BY n DESC, agency) FILTER (WHERE agency IS NOT NULL) AS agency
+        FROM (
+          SELECT st.stop_key, rc.agency, bit_or(t.cat) AS cats, bool_or(rc.cls = 'rail') AS rail, count(*) AS n
+          FROM stop_times st JOIN trips t USING (trip_key) JOIN rclass rc USING (rc) GROUP BY st.stop_key, rc.agency
+        ) GROUP BY stop_key
       ) u USING (stop_key)
-      JOIN (SELECT DISTINCT ON (feed) feed, key FROM feeds) f ON f.feed = s.feed
-      WHERE s.lat BETWEEN ${BBOX.minLat} AND ${BBOX.maxLat} AND s.lon BETWEEN ${BBOX.minLon} AND ${BBOX.maxLon}`);
+      JOIN (SELECT DISTINCT ON (feed) feed, key FROM feeds ORDER BY feed, key) f ON f.feed = s.feed
+      WHERE s.lat BETWEEN ${BBOX.minLat} AND ${BBOX.maxLat} AND s.lon BETWEEN ${BBOX.minLon} AND ${BBOX.maxLon}
+      ORDER BY s.stop_key`);
+  // ORDER BY: DuckDB returns rows in no particular order (parallel scans), and everything below depends on
+  // the stop order: union-find merges and their tie-breaks, station ids, name choice on equal scores, city
+  // assignment of synthetic towns. Without it two runs on the same database give different stations / cities.
   log(`${stopRows.length} used stops`);
   // display-safe stop names (raw ids and "CITY | " prefixes removed); the reviewed-names keys use the raw ones
   const stopIns: StopIn[] = stopRows.map((s) => ({
@@ -358,11 +366,11 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   });
   const rclass = new Map<number, { cls: string; agency: string; short: string; long: string; color: string | null; tz: string; pname: string | null }>();
   for (const r of await db.all<{ rc: number; cls: string; agency: string; route_short: string; route_long: string; color: string | null; tz: string; pname: string | null }>(
-    `SELECT rc, cls, agency, route_short, route_long, color, tz, pname FROM rclass`,
+    `SELECT rc, cls, agency, route_short, route_long, color, tz, pname FROM rclass ORDER BY rc`,
   ))
     rclass.set(r.rc, { cls: r.cls, agency: r.agency ?? "", short: r.route_short ?? "", long: r.route_long ?? "", color: r.color, tz: r.tz, pname: r.pname });
   const feedPriority = new Map<number, number>();
-  for (const r of await db.all<{ feed: number; priority: number }>(`SELECT feed, priority FROM feeds`)) feedPriority.set(r.feed, r.priority);
+  for (const r of await db.all<{ feed: number; priority: number }>(`SELECT feed, priority FROM feeds ORDER BY feed`)) feedPriority.set(r.feed, r.priority);
 
   // ------------------------------------------------------------------ cross-feed dedup
   timer.start("dedup");
@@ -384,7 +392,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     SELECT a.trip_key AS ta, b.trip_key AS tb, count(DISTINCT a.city)::INTEGER AS n
     FROM ev2 a JOIN (SELECT ev2.*, d FROM ev2, (VALUES (-2), (-1), (0), (1), (2)) v(d)) b
       ON a.city = b.city AND a.rail = b.rail AND a.u = b.u + b.d AND a.feed < b.feed
-    GROUP BY ALL HAVING count(DISTINCT a.city) >= 2`);
+    GROUP BY ALL HAVING count(DISTINCT a.city) >= 2 ORDER BY ta, tb`);
   await db.run(`DROP TABLE IF EXISTS ev; DROP TABLE IF EXISTS ev2;`);
   const dupTripKeys = new Set<number>();
   for (const p of pairRows) {
@@ -415,7 +423,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   // A kept trip without a feed shape takes the shape of a dropped copy (an ÖBB Railjet listing only
   // Praha and Brno in Czechia gets the SŽ shape via Pardubice), so its hops follow the real track.
   let shapesAdopted = 0;
-  for (const p of [...pairs].sort((x, y) => y.shared - x.shared))
+  for (const p of [...pairs].sort((x, y) => y.shared - x.shared || x.a - y.a || x.b - y.b))
     for (const d of [p.a, p.b]) {
       const k = keptFor.get(d);
       if (k !== undefined && tShape[k]! < 0 && tShape[d]! >= 0) {
@@ -429,7 +437,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   // ------------------------------------------------------------------ patterns
   timer.start("patterns");
   const freq = new Map<number, { s: number; e: number; h: number }[]>();
-  for (const r of await db.all<{ trip_key: number; start_min: number; end_min: number; headway_s: number }>(`SELECT * FROM frequencies`)) {
+  for (const r of await db.all<{ trip_key: number; start_min: number; end_min: number; headway_s: number }>(`SELECT trip_key, start_min, end_min, headway_s FROM frequencies ORDER BY ALL`)) {
     let a = freq.get(r.trip_key);
     if (!a) freq.set(r.trip_key, (a = []));
     a.push({ s: r.start_min, e: r.end_min, h: r.headway_s });
@@ -552,7 +560,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   let nRows = 0;
   await db.stream(
     `SELECT st.trip_key, m.station, m.city, st.arr, st.dep FROM stop_times st JOIN stop_map m USING (stop_key)
-     ORDER BY st.trip_key, st.seq`,
+     ORDER BY st.trip_key, st.seq, st.dep, st.arr, m.station`,
     (c, n) => {
       const k = c[0]!, s = c[1]!, ci = c[2]!, a = c[3]!, d = c[4]!;
       for (let r = 0; r < n; r++) {

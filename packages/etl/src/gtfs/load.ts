@@ -123,7 +123,7 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
       `INSERT INTO t_agency SELECT coalesce(${c(ac, "agency_id")}, ''), coalesce(${c(ac, "agency_name")}, ''), ${c(ac, "agency_timezone")} FROM ${csv(files["agency.txt"])}`,
     );
   }
-  const agencies = await db.all<{ agency_id: string; name: string; tz: string | null }>(`SELECT * FROM t_agency`);
+  const agencies = await db.all<{ agency_id: string; name: string; tz: string | null }>(`SELECT * FROM t_agency ORDER BY ALL`);
   const defaultTz = validTz(agencies.find((a) => a.tz)?.tz) ?? "Europe/Berlin";
 
   // ---------- routes ----------
@@ -176,7 +176,7 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
   const combos = await db.all<{
     route_id: string; agency_id: string; route_type: number | null; short: string; long: string; desc: string; color: string | null; prefix: string; n: number;
   }>(`SELECT r.route_id, r.agency_id, r.route_type, r.short, r.long, r."desc", r.color, t.prefix, count(*) AS n
-      FROM t_trips t JOIN t_routes r USING (route_id) GROUP BY ALL`);
+      FROM t_trips t JOIN t_routes r USING (route_id) GROUP BY ALL ORDER BY ALL`);
   const agencyById = new Map(agencies.map((a) => [a.agency_id, a]));
   const onlyAgency = agencies.length === 1 ? agencies[0] : undefined;
   const cctx: ClassifyContext = {
@@ -246,15 +246,17 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
   stats.routes = rcRows.length;
 
   // ---------- services ----------
+  // Keys are numbered in a fixed order (ORDER BY in every row_number): DuckDB scans in parallel and does not
+  // preserve insertion order, so OVER () would number rows differently from run to run.
   const svcBase = await nextKey(db, "service_days", "service_key");
   await db.run(`DROP TABLE IF EXISTS t_svc; CREATE TEMP TABLE t_svc AS
-    SELECT service_id, ${svcBase} + (row_number() OVER () - 1)::INTEGER AS service_key
+    SELECT service_id, ${svcBase} + (row_number() OVER (ORDER BY service_id) - 1)::INTEGER AS service_key
     FROM (SELECT DISTINCT service_id FROM t_svcdays)`);
 
   // ---------- kept trips ----------
   const tripBase = await nextKey(db, "trips", "trip_key");
   await db.run(`DROP TABLE IF EXISTS t_kt; CREATE TEMP TABLE t_kt AS
-    SELECT ${tripBase} + (row_number() OVER () - 1)::INTEGER AS trip_key, t.trip_id, m.rc, s.service_key, t.headsign, t.short_name, t.shape_id,
+    SELECT ${tripBase} + (row_number() OVER (ORDER BY t.trip_id, m.rc, s.service_key, t.headsign, t.short_name, t.shape_id) - 1)::INTEGER AS trip_key, t.trip_id, m.rc, s.service_key, t.headsign, t.short_name, t.shape_id,
            rc.cls
     FROM t_trips t
     JOIN t_rcmap m ON m.route_id = t.route_id AND m.prefix = t.prefix
@@ -311,8 +313,11 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
       ${c(sp, "parent_station")} AS parent_id, ${c(sp, "stop_timezone")} AS tz,
       coalesce(try_cast(${c(sp, "location_type")} AS INTEGER), 0) AS loc_type
     FROM ${csv(files["stops.txt"]!)} WHERE ${c(sp, "stop_id")} IS NOT NULL`);
-  await db.run(`DELETE FROM t_stops_all WHERE stop_id IN (SELECT stop_id FROM t_stops_all GROUP BY stop_id HAVING count(*) > 1)
-                AND rowid NOT IN (SELECT min(rowid) FROM t_stops_all GROUP BY stop_id)`);
+  // Duplicate stop_ids: keep one by content (rowid is not file order: CSV scans run in parallel).
+  if ((await db.scalar(`SELECT count(*) - count(DISTINCT stop_id) FROM t_stops_all`)) > 0)
+    await db.run(`CREATE OR REPLACE TEMP TABLE t_stops_all AS SELECT * EXCLUDE (rn) FROM (
+        SELECT *, row_number() OVER (PARTITION BY stop_id ORDER BY name, lat, lon, parent_id, tz, loc_type) AS rn FROM t_stops_all
+      ) WHERE rn = 1`);
   // Drop stop_times at stops without valid coordinates.
   await db.run(`DELETE FROM t_st WHERE stop_id NOT IN (
       SELECT stop_id FROM t_stops_all WHERE lat BETWEEN ${BBOX.minLat} AND ${BBOX.maxLat} AND lon BETWEEN ${BBOX.minLon} AND ${BBOX.maxLon})`);
@@ -336,7 +341,7 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
     WITH used AS (SELECT DISTINCT stop_id FROM t_st),
     par AS (SELECT DISTINCT s.parent_id AS stop_id FROM t_stops_all s JOIN used USING (stop_id) WHERE s.parent_id IS NOT NULL),
     allids AS (SELECT stop_id FROM used UNION SELECT p.stop_id FROM par p JOIN t_stops_all s USING (stop_id))
-    SELECT stop_id, ${stopBase} + (row_number() OVER () - 1)::INTEGER AS stop_key FROM allids`);
+    SELECT stop_id, ${stopBase} + (row_number() OVER (ORDER BY stop_id) - 1)::INTEGER AS stop_key FROM allids`);
   await db.run(`INSERT INTO stops
     SELECT k.stop_key, ${feedIdx}, s.stop_id, s.name, s.lat, s.lon, pk.stop_key, s.tz, s.loc_type
     FROM t_stopkeys k JOIN t_stops_all s USING (stop_id) LEFT JOIN t_stopkeys pk ON pk.stop_id = s.parent_id`);
@@ -347,7 +352,7 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
   await db.run(`DROP TABLE IF EXISTS t_shapekeys; CREATE TEMP TABLE t_shapekeys(shape_id VARCHAR, shape_key INTEGER)`);
   if (shapesEntry && opts.shapes !== false) {
     const shapeBase = await nextKey(db, "shapes", "shape_key");
-    await db.run(`INSERT INTO t_shapekeys SELECT shape_id, ${shapeBase} + (row_number() OVER () - 1)::INTEGER FROM (
+    await db.run(`INSERT INTO t_shapekeys SELECT shape_id, ${shapeBase} + (row_number() OVER (ORDER BY shape_id) - 1)::INTEGER FROM (
         SELECT DISTINCT shape_id FROM t_kt WHERE cls = 'rail' AND shape_id IS NOT NULL
           AND trip_key IN (SELECT DISTINCT trip_key FROM t_st))`);
     if ((await db.scalar(`SELECT count(*) FROM t_shapekeys`)) > 0) {

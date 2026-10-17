@@ -52,4 +52,4 @@ export interface UrbanFeed {
 }
 
 /** Bump when the extraction changes (invalidates cached feeds). */
-export const EXTRACT_VERSION = 1;
+export const EXTRACT_VERSION = 2;

@@ -47,7 +47,7 @@ export async function extractFeed(db: Db, key: string, zip: string, opt: Extract
         coalesce(${c(rc, "route_desc")}, '') AS rdesc, ${c(rc, "route_color")} AS color
       FROM ${csv(rPath)} WHERE ${c(rc, "route_id")} IS NOT NULL`);
     const rrows = await db.all<{ route_id: string; agency_id: string; rtype: number | null; short: string; long: string; rdesc: string; color: string | null }>(
-      `SELECT * FROM u_routes`,
+      `SELECT * FROM u_routes ORDER BY ALL`,
     );
     const agencyName = new Map<string, string>();
     const aPath = find("agency.txt");
@@ -55,7 +55,7 @@ export async function extractFeed(db: Db, key: string, zip: string, opt: Extract
       const ap = extract(zip, aPath, dir);
       const ac = await columns(db, ap);
       for (const a of await db.all<{ id: string; name: string }>(
-        `SELECT coalesce(${c(ac, "agency_id")}, '') AS id, coalesce(${c(ac, "agency_name")}, '') AS name FROM ${csv(ap)}`,
+        `SELECT coalesce(${c(ac, "agency_id")}, '') AS id, coalesce(${c(ac, "agency_name")}, '') AS name FROM ${csv(ap)} ORDER BY ALL`,
       ))
         agencyName.set(a.id, a.name);
     }
@@ -122,8 +122,8 @@ export async function extractFeed(db: Db, key: string, zip: string, opt: Extract
     // ---- pattern groups: per route and direction the most frequent shape (or headsign)
     const groups = await db.all<{ route_id: string; dir: string; g: string; n: number; rep: string; shape_id: string; headsign: string }>(
       `SELECT route_id, dir, CASE WHEN shape_id <> '' THEN shape_id ELSE headsign END AS g, count(*) AS n, min(trip_id) AS rep,
-          any_value(shape_id) AS shape_id, any_value(headsign) AS headsign
-        FROM u_use GROUP BY route_id, dir, g`,
+          min(shape_id) AS shape_id, min(headsign) AS headsign
+        FROM u_use GROUP BY route_id, dir, g ORDER BY route_id, dir, g`,
     );
     const perRoute = new Map<string, typeof groups>();
     for (const g of groups) {
@@ -142,7 +142,7 @@ export async function extractFeed(db: Db, key: string, zip: string, opt: Extract
       }
       let tpd = 0;
       for (const [dir, ds] of byDir) {
-        ds.sort((a, b) => b.n - a.n);
+        ds.sort((a, b) => b.n - a.n || (a.g < b.g ? -1 : a.g > b.g ? 1 : 0));
         const total = ds.reduce((s, x) => s + x.n, 0);
         tpd = Math.max(tpd, byDir.size === 1 && dir === "" ? total / 2 : total);
         ds.slice(0, MAX_VARIANTS).forEach((g, i) => {
@@ -172,7 +172,9 @@ export async function extractFeed(db: Db, key: string, zip: string, opt: Extract
         coalesce(${c(sp, "parent_station")}, '') AS parent
       FROM ${csv(spPath)} WHERE ${c(sp, "stop_id")} IS NOT NULL`);
     await db.run(`DELETE FROM u_stops WHERE lat IS NULL OR lon IS NULL OR lat NOT BETWEEN ${BBOX.minLat} AND ${BBOX.maxLat} OR lon NOT BETWEEN ${BBOX.minLon} AND ${BBOX.maxLon}`);
-    await db.run(`DELETE FROM u_stops WHERE stop_id IN (SELECT stop_id FROM u_stops GROUP BY stop_id HAVING count(*) > 1) AND rowid NOT IN (SELECT min(rowid) FROM u_stops GROUP BY stop_id)`);
+    // duplicate stop_ids: keep one by content (rowid is not file order, CSV scans run in parallel)
+    await db.run(`CREATE OR REPLACE TEMP TABLE u_stops AS SELECT * EXCLUDE (rn) FROM (
+        SELECT *, row_number() OVER (PARTITION BY stop_id ORDER BY name, lat, lon, parent) AS rn FROM u_stops) WHERE rn = 1`);
     const stopRows = await db.all<{ ix: number; seq: number; stop_id: string; name: string; lat: number; lon: number; parent: string }>(
       `SELECT st.ix, st.seq, st.stop_id, s.name, s.lat, s.lon, s.parent FROM u_st st JOIN u_stops s USING (stop_id) ORDER BY st.ix, st.seq`,
     );
