@@ -1,5 +1,5 @@
 /** Side panel (desktop) / bottom sheet (mobile): search, mode chips and content views. */
-import { Cat } from "@etbm/shared";
+import { Cat, WALK_MAX_MIN, distanceM, walkDistanceM, walkMinutes } from "@etbm/shared";
 import { cityTz, slugify, stationName, type Net } from "../data/net.ts";
 import { addDays, formatDateShort, lastDate } from "../logic/calendar.ts";
 import type { Connection, OnwardStop } from "../logic/connections.ts";
@@ -12,7 +12,7 @@ import type { Departure } from "../logic/timetable.ts";
 import { fmtDuration, localDate } from "../logic/tz.ts";
 import { h, icon } from "./dom.ts";
 import { shortStationName } from "../map/features.ts";
-import { routeTag, timeAt, timeEl } from "./format.ts";
+import { fmtKm, routeTag, timeAt, timeEl } from "./format.ts";
 import { localIcon, modeIcon } from "./icons.ts";
 import { datePicker, focusPicker } from "./datepicker.ts";
 import { depCats, depsWith, type StationDeps } from "../logic/stations.ts";
@@ -592,7 +592,7 @@ export class Panel {
               h("span", { class: "muted" }, "minutes"),
               h("button", { type: "button", class: "icon-btn", "aria-label": "1 minute more", onclick: () => step(1) }, "+"),
             ),
-            h("p", { class: "small muted" }, "At the same station. Changing between stations of a city takes at least the walk between them (30 min where they are not within walking distance)."),
+            h("p", { class: "small muted" }, `At the same station. Changing between stations of a city takes at least the walk between them (estimated from the distance at a slow pace, up to ${fmtDuration(WALK_MAX_MIN)}; stations farther apart are not combined).`),
           ),
           h("div", { class: "xfer-field" }, h("label", { class: "xfer-label", for: "xfer-wait" }, "Maximum waiting time"), wait),
           h("p", { class: "small muted" }, "Destinations are searched for the travel day shown under the count; direct destinations are those served on any day."),
@@ -660,15 +660,15 @@ export class Panel {
             const sa = p.stations[p.alight]!, sb = l.stations[l.board]!;
             const wait = Math.round((l.depUtc - p.arrUtc) / 60000);
             const at = n.cities[n.ctx.stationCity[sb]!]!.name;
-            const walk = r.legs[i]?.walk;
+            const walk = r.legs[i]?.walk, km = walkKm(n, sa, sb, "");
             changes.push(
               sa === sb
                 ? h("span", null, `change at ${stationName(n, sb).includes(at) ? stationName(n, sb) : at} · ${fmtDuration(wait)}`)
                 : h(
                     "span",
-                    { class: "walk", title: `Change in ${at}: walk from ${stationName(n, sa)} to ${stationName(n, sb)}` },
+                    { class: "walk", title: `Change in ${at}: walk from ${stationName(n, sa)} to ${stationName(n, sb)}${walk !== undefined ? ` (about ${walk} min${km ? `, ${km}` : ""} on foot; ${fmtDuration(wait)} between the trains)` : ""}` },
                     icon("walk", 13),
-                    ` ${walk !== undefined ? `${walk} min walk ` : ""}${shortStationName(stationName(n, sa), at)} → ${shortStationName(stationName(n, sb), at)} (${at}) · ${fmtDuration(wait)}`,
+                    ` ${walk !== undefined ? `${walk} min walk ` : ""}${shortStationName(stationName(n, sa), at)} → ${shortStationName(stationName(n, sb), at)} (${at})${km ? ` · ${km}` : ""} · ${fmtDuration(wait)}`,
                   ),
             );
           }
@@ -1034,7 +1034,7 @@ export class Panel {
                   ? [icon("seat", 14), ` stay on board at ${stationName(n, l.depStation)} (${fmtDuration(xfer)})`]
                   : prev!.arrStation === l.depStation
                     ? `change at ${stationName(n, l.depStation)} · ${fmtDuration(xfer)}`
-                    : [icon("walk", 14), ` ${fmtDuration(xfer)} · ${stationName(n, prev!.arrStation)} → ${stationName(n, l.depStation)}`],
+                    : [icon("walk", 14), ` ${fmtDuration(xfer)} · ${stationName(n, prev!.arrStation)} → ${stationName(n, l.depStation)}${walkNote(n, prev!.arrStation, l.depStation)}`],
               )
             : null,
           h(
@@ -1275,7 +1275,7 @@ export class Panel {
           const transferNote = c.through
             ? h("span", { class: "tag tag--through" }, icon("seat", 13), " stay on board")
             : c.depStation !== last.arrStation
-              ? h("span", { class: "walk" }, icon("walk", 13), ` ${c.transfer} min to ${stationName(n, c.depStation)}`)
+              ? h("span", { class: "walk" }, icon("walk", 13), ` ${c.transfer} min walk to ${stationName(n, c.depStation)}${walkKm(n, last.arrStation, c.depStation, " · ")}`)
               : h("span", { class: "muted" }, `same station · min. ${c.transfer} min`);
           return h(
             "li",
@@ -1345,4 +1345,18 @@ function noDepartures(name: string, d: StationDeps | undefined): string {
   if (!cats.length) return `No departures to other cities from ${name}`;
   const list = cats.length === 1 ? cats[0]! : `${cats.slice(0, -1).join(", ")} and ${cats[cats.length - 1]}`;
   return `No departures with the selected modes – ${name} is only served by ${list}`;
+}
+
+/** Estimated walking distance between two (loaded) stations, prefixed by `sep`; "" while unknown. */
+function walkKm(n: Net, a: number, b: number, sep: string): string {
+  const sa = n.file.stations[a], sb = n.file.stations[b];
+  return sa && sb ? `${sep}${fmtKm(walkDistanceM(distanceM(sa.lon, sa.lat, sb.lon, sb.lat)) / 1000)}` : "";
+}
+
+/** " (walk ≈ 75 min, 5.4 km)" between two (loaded) stations; "" while unknown. */
+function walkNote(n: Net, a: number, b: number): string {
+  const sa = n.file.stations[a], sb = n.file.stations[b];
+  if (!sa || !sb) return "";
+  const d = distanceM(sa.lon, sa.lat, sb.lon, sb.lat);
+  return ` (walk ≈ ${fmtDuration(walkMinutes(d))}, ${fmtKm(walkDistanceM(d) / 1000)})`;
 }

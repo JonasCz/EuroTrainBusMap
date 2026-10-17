@@ -3,7 +3,7 @@ import type { CityFile } from "@etbm/shared";
 import { loadCity, loadSchedule } from "./data/load.ts";
 import { cityTz, ensureDetail, stationBySlug, stationName, stationSlug, type Net } from "./data/net.ts";
 import { addDays, inHorizon } from "./logic/calendar.ts";
-import { connections, transferMinutes, type Arrival, type Connection, type OnwardStop } from "./logic/connections.ts";
+import { connections, walkMinutesIn, type Arrival, type Connection, type OnwardStop } from "./logic/connections.ts";
 import { sameFilters, type Filters } from "./logic/filters.ts";
 import { encodeLegs, resolveLeg, type Leg, type LegInfo } from "./logic/journey.ts";
 import { computeReach } from "./logic/reach.ts";
@@ -439,7 +439,7 @@ export class App {
       // a change between two stations of the city: the walk the search assumed (shown with the change)
       const prev = j.legs[i - 1];
       const sa = prev?.stations[prev.alight], sb = jl.stations[jl.board]!;
-      const walk = prev && sa !== sb && lcf ? transferMinutes(lcf, sa!, sb) : undefined;
+      const walk = prev && sa !== sb && lcf ? walkMinutesIn(lcf, sa!, sb) : undefined;
       const leg = lcf ? matchLeg(lcf, jl, from) : null;
       const info = leg && lcf ? resolveLeg(lcf, ctx, leg) : null;
       if (!info) ok = false;

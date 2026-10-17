@@ -322,7 +322,5 @@ export function cleanStationName(name: string, cityName: string, rail: boolean):
   return n;
 }
 
-/** Walking minutes between two stations: ceil(dist·1.3 / 75 m/min) + 3 min buffer. */
-export function walkMinutes(distM: number): number {
-  return Math.ceil((distM * 1.3) / 75) + 3;
-}
+/** Walking minutes between two stations (see packages/shared/src/walk.ts). */
+export { walkMinutes } from "@etbm/shared";

@@ -1,6 +1,6 @@
 import { Cat } from "@etbm/shared";
 import { describe, expect, it } from "vitest";
-import { connections, transferMinutes } from "./connections.ts";
+import { connections, transferMinutes, walkMinutesIn } from "./connections.ts";
 import { ALL_CATS, decodeCats, encodeCats } from "./filters.ts";
 import { decodeLegs, encodeLegs, resolveLeg } from "./journey.ts";
 import { computeReach } from "./reach.ts";
@@ -146,6 +146,10 @@ describe("connections", () => {
   it("transfer minutes", () => {
     expect(transferMinutes(alpha, 0, 0)).toBe(5);
     expect(transferMinutes(alpha, 1, 0)).toBe(15);
+    expect(walkMinutesIn(alpha, 0, 1)).toBe(15);
+    // stations without a walking transfer are too far apart: no transfer at all
+    expect(walkMinutesIn(alpha, 0, 9)).toBeUndefined();
+    expect(transferMinutes(alpha, 0, 9)).toBe(Infinity);
   });
   it("respects walking transfer between stations", () => {
     const arr = { city: 0, station: 1, utc: wallToUtc("2026-10-10", 11 * 60, BER) };

@@ -146,7 +146,8 @@ Pipeline in short:
      counted), computed lazily when its row scrolls into view (`App.onwardCount`, loads that city's shard). Onward connections
      start from the arrival *station* only; "All stations of X" (offered once per city, for places with several stations and
      importance ≥ 0.6, shown once it adds departures; URL `onward=city`, toggle in the connections view) boards anywhere in the
-     city with the walking transfer time (`CityFile.transfers`, at least `minTransfer`, 30 min beyond walking range). Back goes
+     city with the walking transfer time (`CityFile.transfers`, at least `minTransfer`; stations too far apart to walk are not
+     combined, see the walking transfers below). Back goes
      connections → schedule → departures. On the map the ridden part is highlighted as before and the rest of the run (before
      boarding / after alighting) is drawn thin and faded (`Highlight.context`, layers `hl-ctx*`).
    - **Connections with changes** (`logic/transfer.ts`, worker `data/transfer.worker.ts`, client `data/transfer.ts`; URL
@@ -154,7 +155,7 @@ Pipeline in short:
      minimum transfer and maximum wait are also remembered in localStorage). The city panel shows "{n} direct destinations", then
      "{m} destinations with 1 same-day connection" (and with 2) with a pencil that opens the settings dialog: number of connections
      (0 = direct only, the default; 1; 2), minimum transfer time (at the same station; a change between two stations of a city takes at
-     least the walk between them, `CityFile.transfers`, 30 min beyond walking range) and maximum waiting time (1–12 h or "same day":
+     least the walk between them, `CityFile.transfers`) and maximum waiting time (1–12 h or "same day":
      the connecting departure leaves before local midnight of the arrival). The search runs for the travel day (the view's date, else
      today, origin-local; a date bar under the count changes it), mode filters apply to every leg. Lists: "Major destinations / Other
      places (direct)", then the same per level "(with 1 connection)", "(with 2 connections)", each place with the change city of its
@@ -172,6 +173,15 @@ Pipeline in short:
        picks the latest origin departure in O(log n)). The last round of a reach search keeps one entry per pattern and boarding stop
        (the best "slack"), not per trip. Results per city: first round, fastest duration, change city, modes; hops ridden per round
        for the map.
+     - **Walking transfers** (`packages/shared/src/walk.ts`, used by the ETL and the web app): a change between two stations of a
+       city is always a walk, never a metro / bus ride (local transport is not in the timetable), so its time is a conservative
+       estimate for every station pair: straight-line distance × 1.3 (street detour) at 75 m/min (4.5 km/h) + 3 min, rounded up,
+       and at least the minimum transfer time; e.g. Paris Montparnasse → Gare de Lyon (4.1 km straight) is 75 min, 5.4 km.
+       Pairs farther apart than a 2 h walk (6.75 km straight, ≈ 8.8 km on foot) get no walking transfer, i.e. no change between them
+       is offered. The ETL writes the minutes of every pair within that range to `CityFile.transfers` and the transfer timetable
+       chunks; the journeys view shows "75 min walk Montparnasse → Gare de Lyon (Paris) · 5.4 km". In the search, arrivals at
+       stations out of walking range of a departure station are left out of that station's range maximum (a filtered copy of the
+       city's arrivals, cached per excluded set).
      - **Data** (`packages/shared/src/tt.ts`, written by the map-data stage, `src/transfers.ts`): every pattern and trip of the
        shards deduplicated (412 k patterns, 2.19 M trips; shards repeat a pattern for every city it calls at, ~3 M times), as gzipped
        varint chunks: chunk 0 = the *trunk* (all long-distance trains and coaches of Europe, 1.1 MB gz) and 32 regions (k-d split of

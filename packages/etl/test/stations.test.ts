@@ -1,3 +1,4 @@
+import { WALK_MAX_M, WALK_MAX_MIN, distanceM } from "@etbm/shared";
 import { describe, expect, it } from "vitest";
 import { isTerminalName, nameSimilarity, normalizeStopName, prettifyName, sanitizeName, stripPlatform } from "../src/core/names.ts";
 import { classifyPair, cleanStationName, describeStation, mergeStations, walkMinutes, type PairInfo, type StopIn } from "../src/core/stations.ts";
@@ -103,6 +104,11 @@ describe("station merging", () => {
   it("walking time", () => {
     expect(walkMinutes(0)).toBe(3);
     expect(walkMinutes(750)).toBe(16);
+    // Paris Montparnasse → Gare de Lyon, 4.1 km straight: 5.4 km on foot
+    expect(walkMinutes(distanceM(2.31901, 48.84017, 2.37497, 48.84388))).toBe(75);
+    // the longest walk offered (farther pairs have no transfer)
+    expect(walkMinutes(WALK_MAX_M)).toBe(WALK_MAX_MIN);
+    expect(WALK_MAX_M).toBe(6750);
   });
 });
 

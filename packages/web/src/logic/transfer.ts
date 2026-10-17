@@ -5,9 +5,10 @@
  * Round 1 boards every trip leaving the origin (city, or one of its stations) on the day and records an
  * arrival event at every later stop of it – intermediate stops included, not only the last one. Round r + 1
  * boards, at every city reached in round r, every trip leaving one of the city's stations after an arrival
- * there: no earlier than the transfer time (the minimum transfer time at the same station, at least the walk
- * between two stations of the city, 30 min beyond walking range) and no later than the maximum wait (or, with
- * "same day", before local midnight of the arrival). Mode filters apply to every leg.
+ * there: no earlier than the transfer time (the minimum transfer time at the same station; between two stations
+ * of the city the walk between them, see packages/shared/src/walk.ts, and at least the minimum transfer time;
+ * stations too far apart to walk, i.e. without a walking transfer in the chunks, have no transfer) and no later
+ * than the maximum wait (or, with "same day", before local midnight of the arrival). Mode filters apply to every leg.
  *
  * The search is resumable round by round, so the caller can load the chunks of the cities where the next
  * round changes (`boardCities`) before running it.
@@ -16,8 +17,6 @@ import { Grow, type TtChunk } from "@etbm/shared";
 import { addDays, dayNumber, runsOnDay, type CalIndex } from "./calendar.ts";
 import { serviceTimeToUtc, wallToUtc } from "./tz.ts";
 
-/** Transfer between two stations of a city beyond walking range (as in connections.ts). */
-export const WALK_FALLBACK_MIN = 30;
 /** Most transfers (changes) the UI offers; see README "Connections with changes" for the measurements. */
 export const MAX_TRANSFERS = 2;
 
@@ -54,8 +53,6 @@ export class TtStore {
   readonly refTripBase = new Grow();
   private nTrips = 0;
   private walk = new Map<number, number>();
-  /** longest walking transfer of the loaded chunks, minutes */
-  maxWalk = 0;
   private board: { start: Int32Array; ref: Int32Array; stop: Int32Array } | null = null;
 
   constructor(readonly nStations: number) {}
@@ -77,12 +74,11 @@ export class TtStore {
     }
     for (let i = 0; i < c.walk.length; i += 3) {
       this.walk.set(c.walk[i]! * 1048576 + c.walk[i + 1]!, c.walk[i + 2]!);
-      this.maxWalk = Math.max(this.maxWalk, c.walk[i + 2]!);
     }
     this.board = null;
   }
 
-  /** Walking minutes between two stations of a city, undefined beyond walking range. */
+  /** Walking minutes between two stations of a city, undefined beyond walking range (no transfer). */
   walkMinutes(a: number, b: number): number | undefined {
     return a < b ? this.walk.get(a * 1048576 + b) : this.walk.get(b * 1048576 + a);
   }
@@ -278,11 +274,12 @@ export class TransferSearch {
     return (m & (1 << (dd + 4))) !== 0;
   }
 
+  /** Transfer minutes from station a to b of a city; Infinity when they are too far apart to walk. */
   private transferMin(a: number, b: number): number {
     const min = this.params.minTransfer;
     if (a === b) return min;
     const w = this.store.walkMinutes(a, b);
-    return Math.max(min, w ?? WALK_FALLBACK_MIN);
+    return w === undefined ? Infinity : Math.max(min, w);
   }
 
   /** Local midnights (relative minutes) around the day in a city's tz. */
@@ -350,7 +347,7 @@ export class TransferSearch {
       }
     } else {
       const ev = this.ev;
-      const et = ev.time.a, ed = ev.dep0.a, es = ev.station.a;
+      const et = ev.time.a, ed = ev.dep0.a;
       for (const [city, groups] of this.groups) {
         const mids = this.midnightsOf(city);
         const nextMid = (t: number) => {
@@ -367,29 +364,47 @@ export class TransferSearch {
         const keys = new Float64Array(n);
         let q = 0;
         for (const g of groups) for (const x of g.evs) keys[q] = (et[x]! + 65536) * IB + q++;
-        const flat = new Int32Array(n);
+        const flat = new Int32Array(n), flatG = new Int32Array(n);
         q = 0;
-        for (const g of groups) for (const x of g.evs) flat[q++] = x;
+        for (let gi = 0; gi < groups.length; gi++) for (const x of groups[gi]!.evs) (flatG[q] = gi), (flat[q++] = x);
         keys.sort();
-        const time = new Int32Array(n), dep0 = new Int32Array(n), lim = new Int32Array(n), evs = new Int32Array(n), est = new Int32Array(n);
+        const time = new Int32Array(n), dep0 = new Int32Array(n), lim = new Int32Array(n), evs = new Int32Array(n), eg = new Int32Array(n);
         for (let k = 0; k < n; k++) {
-          const x = flat[keys[k]! % IB]!;
+          const f = keys[k]! % IB, x = flat[f]!;
           evs[k] = x;
           time[k] = et[x]!;
           dep0[k] = ed[x]!;
-          est[k] = es[x]!;
+          eg[k] = flatG[f]!;
           lim[k] = W === null ? nextMid(et[x]!) - 1 : et[x]! + W;
         }
-        const rmq = new RangeMax(dep0, W === null ? lim : null);
-        const lo = time[0]! + P.minTransfer, hi = lim[n - 1]!;
+        const all: Arrivals = { time, dep0, lim, evs, eg, rmq: new RangeMax(dep0, W === null ? lim : null) };
+        // arrivals without the stations too far from a departure station to walk (cached by the excluded set)
+        const views = new Map<string, Arrivals>();
         const stations = this.net.cityStations(city);
+        // transfer minutes from each group's station to the departure station (Infinity: too far to walk)
+        const xg = new Float64Array(groups.length);
         for (let si = 0; si < stations.length; si++) {
           const s2 = stations[si]!;
           if (s2 >= store.nStations || B.start[s2] === B.start[s2 + 1]) continue;
-          const xOf = new Map<number, number>();
-          for (const g of groups) xOf.set(g.station, this.transferMin(g.station, s2));
-          // arrivals at least this long before a departure make it whatever their station
-          const maxX = groups.length === 1 && groups[0]!.station === s2 ? P.minTransfer : Math.max(P.minTransfer, WALK_FALLBACK_MIN, store.maxWalk);
+          let maxX = P.minTransfer, far = "", near = 0;
+          for (let gi = 0; gi < groups.length; gi++) {
+            const x = (xg[gi] = this.transferMin(groups[gi]!.station, s2));
+            if (x === Infinity) far += `${gi},`;
+            else {
+              near++;
+              // arrivals at least this long before a departure make it whatever their station
+              if (x > maxX) maxX = x;
+            }
+          }
+          if (!near) continue;
+          let A = all;
+          if (far) {
+            let v = views.get(far);
+            if (!v) views.set(far, (v = filterArrivals(all, xg, W === null)));
+            A = v;
+          }
+          const { time, dep0, lim, evs, eg, rmq } = A;
+          const lo = time[0]! + P.minTransfer, hi = lim[lim.length - 1]!;
           for (let e = B.start[s2]!; e < B.start[s2 + 1]!; e++) {
             const ref = B.ref[e]!, i = B.stop[e]!;
             const c = chunks[rc[ref]!]!, p = rp[ref]!;
@@ -415,7 +430,7 @@ export class TransferSearch {
                 const hiAll = Math.min(hiK, upperBound(time, d - maxX) - 1);
                 let best = hiAll >= kLo ? rmq.argmax(kLo, hiAll) : -1;
                 for (let k = Math.max(kLo, hiAll + 1); k <= hiK; k++) {
-                  if ((best < 0 || dep0[k]! > dep0[best]!) && time[k]! + xOf.get(est[k]!)! <= d) best = k;
+                  if ((best < 0 || dep0[k]! > dep0[best]!) && time[k]! + xg[eg[k]!]! <= d) best = k;
                 }
                 if (best < 0) continue;
                 const bd = dep0[best]!, bx = evs[best]!;
@@ -600,6 +615,37 @@ export class TransferSearch {
       arrUtc: (this.t0 + base + c.stArr[k0 + alight]!) * 60000,
     };
   }
+}
+
+/**
+ * Arrivals in a city sorted by time: time, origin departure, latest departure each allows, event, station group
+ * (index into the city's groups); range max over the origin departures.
+ */
+interface Arrivals {
+  time: Int32Array;
+  dep0: Int32Array;
+  lim: Int32Array;
+  evs: Int32Array;
+  eg: Int32Array;
+  rmq: RangeMax;
+}
+
+/** The arrivals of the groups with a finite transfer time `xg` (a subsequence, so still sorted by time and by limit). */
+function filterArrivals(a: Arrivals, xg: Float64Array, segByLim: boolean): Arrivals {
+  const n = a.eg.length;
+  let m = 0;
+  for (let k = 0; k < n; k++) if (xg[a.eg[k]!] !== Infinity) m++;
+  const time = new Int32Array(m), dep0 = new Int32Array(m), lim = new Int32Array(m), evs = new Int32Array(m), eg = new Int32Array(m);
+  m = 0;
+  for (let k = 0; k < n; k++) {
+    if (xg[a.eg[k]!] === Infinity) continue;
+    time[m] = a.time[k]!;
+    dep0[m] = a.dep0[k]!;
+    lim[m] = a.lim[k]!;
+    evs[m] = a.evs[k]!;
+    eg[m++] = a.eg[k]!;
+  }
+  return { time, dep0, lim, evs, eg, rmq: new RangeMax(dep0, segByLim ? lim : null) };
 }
 
 /**

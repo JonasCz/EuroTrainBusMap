@@ -52,14 +52,23 @@ export interface Connection {
   tripTz: string;
 }
 
-/** Transfer minutes between two stations of the city described by `cf`. */
-export function transferMinutes(cf: CityFile, from: number, to: number): number {
-  if (from === to) return cf.minTransfer;
+/** Walking minutes between two stations of the city described by `cf`; undefined when they are too far apart to walk. */
+export function walkMinutesIn(cf: CityFile, from: number, to: number): number | undefined {
   let best = Infinity;
   for (const [a, b, m] of cf.transfers) {
     if ((a === from && b === to) || (a === to && b === from)) best = Math.min(best, m);
   }
-  return Number.isFinite(best) ? Math.max(best, cf.minTransfer) : Math.max(cf.minTransfer, 30);
+  return Number.isFinite(best) ? best : undefined;
+}
+
+/**
+ * Transfer minutes between two stations of the city described by `cf`: the same-station minimum, or the walk
+ * between them (at least that minimum); Infinity when they are beyond walking range (no transfer).
+ */
+export function transferMinutes(cf: CityFile, from: number, to: number): number {
+  if (from === to) return cf.minTransfer;
+  const w = walkMinutesIn(cf, from, to);
+  return w === undefined ? Infinity : Math.max(w, cf.minTransfer);
 }
 
 export function connections(cf: CityFile, ctx: NetCtx, f: Filters, arrival: Arrival, windowMin = 180): Connection[] {

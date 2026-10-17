@@ -246,8 +246,9 @@ export interface CityFile {
   patternTz: number[];
   trips: Trip[];
   /**
-   * Walking transfer minutes between stations of this city:
-   * [fromStation, toStation, minutes][]; same-station minimum is `minTransfer`.
+   * Walking transfer minutes between stations of this city (`walkMinutes`, packages/shared/src/walk.ts):
+   * [fromStation, toStation, minutes][], every pair within `WALK_MAX_M`; a pair missing here is too far
+   * apart to walk and has no transfer. Same-station minimum is `minTransfer`.
    */
   transfers: [number, number, number][];
   minTransfer: number;

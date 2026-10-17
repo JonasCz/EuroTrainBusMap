@@ -58,3 +58,9 @@ export function routeTag(r: Route, number?: string): HTMLElement {
 export function station(net: Net, id: number): string {
   return stationName(net, id);
 }
+
+/** Walking distance: "650 m", "4.6 km", "12 km". */
+export function fmtKm(km: number): string {
+  if (km < 1) return `${Math.max(100, Math.round(km * 10) * 100)} m`;
+  return km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
+}

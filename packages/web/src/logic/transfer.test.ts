@@ -25,7 +25,7 @@ const CITY: Record<string, number[]> = {
   E: [5],
   F: [6], // reached late in the evening
   G: [7],
-  W: [8, 9, 10], // 8 – 9: 12 min walk; 10 beyond walking range
+  W: [8, 9, 10, 16], // 8 – 9: 12 min walk; 10 and 16 beyond walking range (no walking transfer)
   X: [11],
   Y: [12],
   Z: [13],
@@ -34,7 +34,7 @@ const CITY: Record<string, number[]> = {
 };
 const names = Object.keys(CITY);
 const cityId = (n: string) => names.indexOf(n);
-const stationCity = new Int32Array(16).fill(-1);
+const stationCity = new Int32Array(17).fill(-1);
 names.forEach((n, i) => CITY[n]!.forEach((s) => (stationCity[s] = i)));
 const net: TtNet = {
   stationCity,
@@ -70,10 +70,12 @@ const patterns: TtPatternIn[] = [
   pat(Cat.Regional, [[6, 0], [7, 30]], [h(0, 20)]),
   // A → W(8) 10:00 → 12:00
   pat(Cat.Regional, [[0, 0], [8, 120]], [h(10)]),
-  // from W: station 9 (12 min walk) 12:15 and 12:08, station 10 (beyond walking range) 12:25
+  // A → W(16) 11:00 → 11:50: a later origin departure, but 16 is too far from 9 and 10 to walk
+  pat(Cat.Regional, [[1, 0], [16, 50]], [h(11)]),
+  // from W: station 9 (12 min walk) 12:15 and 12:08, station 10 (beyond walking range) 12:25 and 15:00
   pat(Cat.Bus, [[9, 0], [11, 20]], [h(12, 15)]),
   pat(Cat.Bus, [[9, 0], [12, 20]], [h(12, 8)]),
-  pat(Cat.Bus, [[10, 0], [13, 20]], [h(12, 25)]),
+  pat(Cat.Bus, [[10, 0], [13, 20]], [h(12, 25), h(15)]),
   // E → T 11:00 (a second change after B → E)
   pat(Cat.Regional, [[5, 0], [15, 40]], [h(11)]),
   // A → Q only on Thursdays (not on the travel day)
@@ -84,8 +86,8 @@ const walk: [number, number, number][] = [[8, 9, 12]];
 function store(): TtStore {
   const s = new TtStore(stationCity.length);
   // two chunks, the pattern list split (and one pattern in both: kept once)
-  s.addChunk(decodeTtChunk(encodeTtChunk({ patterns: patterns.slice(0, 7), walk: [] })));
-  s.addChunk(decodeTtChunk(encodeTtChunk({ patterns: patterns.slice(6), walk })));
+  s.addChunk(decodeTtChunk(encodeTtChunk({ patterns: patterns.slice(0, 8), walk: [] })));
+  s.addChunk(decodeTtChunk(encodeTtChunk({ patterns: patterns.slice(7), walk })));
   return s;
 }
 
@@ -134,11 +136,13 @@ describe("reach with changes", () => {
     expect(reach({ maxWait: null }).lv("G")).toBe(0);
     expect(reach({ maxWait: 120 }).lv("G")).toBe(2);
   });
-  it("walks between the stations of a city (at least the walk, 30 min beyond walking range)", () => {
+  it("walks between the stations of a city (at least the walk, no transfer beyond walking range)", () => {
     const r = reach({ minTransfer: 5 });
     expect(r.lv("X")).toBe(2); // 15 min ≥ 12 min walk
+    // from the 10:00 train (the 11:00 one arrives at station 16, too far from 9 to walk)
+    expect(r.s.out.minutes[cityId("X")]).toBe(h(12, 35) - h(10));
     expect(r.lv("Y")).toBe(0); // 8 min < 12 min walk
-    expect(r.lv("Z")).toBe(0); // 25 min < 30 min, no walking connection
+    expect(r.lv("Z")).toBe(0); // station 10 is beyond walking range: not even after 3 h
     expect(reach({ minTransfer: 13 }).lv("X")).toBe(2); // 15 ≥ max(13, 12)
     expect(reach({ minTransfer: 16 }).lv("X")).toBe(0);
   });
