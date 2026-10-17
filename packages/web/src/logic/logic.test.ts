@@ -4,10 +4,11 @@ import { connections, transferMinutes } from "./connections.ts";
 import { ALL_CATS, decodeCats, encodeCats } from "./filters.ts";
 import { decodeLegs, encodeLegs, resolveLeg } from "./journey.ts";
 import { computeReach } from "./reach.ts";
-import { nextServiceDates, pairCandidates, pairCorridors, timetable } from "./timetable.ts";
+import { nextServiceDates, pairCandidates, pairCorridors, serviceDates, timetable } from "./timetable.ts";
+import { depCats, depsWith, stationDepartures } from "./stations.ts";
 import { fmtTime, wallToUtc } from "./tz.ts";
-import { alpha, calendars, ctx, network } from "./testdata.ts";
-import { buildCalIndex, encodeMask } from "./calendar.ts";
+import { START, alpha, cal, calendars, ctx, network } from "./testdata.ts";
+import { addDays, buildCalIndex, encodeMask } from "./calendar.ts";
 import { buildNetCtx } from "./context.ts";
 import type { CityFile } from "@etbm/shared";
 
@@ -110,6 +111,24 @@ describe("timetable", () => {
     expect(nextServiceDates(alpha, ctx, coach, 1, "2026-10-08")).toEqual([]);
     expect(nextServiceDates(alpha, ctx, all, 1, "2026-10-10", 2)).toEqual(["2026-10-11", "2026-10-12"]);
   });
+  it("service dates: the dates the timetable has departures on", () => {
+    const coach = { cats: Cat.Coach };
+    expect([...serviceDates(alpha, ctx, coach, 1)].sort()).toEqual(["2026-10-05", "2026-10-06", "2026-10-07"]);
+    expect(serviceDates(alpha, ctx, { cats: Cat.Bus }, 1).size).toBe(0);
+    // every date of the horizon (and the day after): a dot exactly where the timetable lists departures
+    for (const dest of [1, 2, 4]) {
+      const days = serviceDates(alpha, ctx, all, dest);
+      for (let i = -1; i <= cal.days; i++) {
+        const d = addDays(START, i);
+        expect(days.has(d), `${dest} ${d}`).toBe(timetable(alpha, ctx, all, dest, d).length > 0);
+      }
+    }
+    // the RE at 24:20 of the last service day departs the day after the horizon
+    expect(serviceDates(alpha, ctx, all, 4).has(addDays(START, cal.days))).toBe(true);
+    // from one station only: the coach boards at Alpha Süd, not at Alpha Hbf
+    expect(serviceDates(alpha, ctx, coach, 1, 0).size).toBe(0);
+    expect(serviceDates(alpha, ctx, coach, 1, 1).size).toBe(3);
+  });
   it("pair corridors", () => {
     // the ride from Alpha Hbf: its first hop is inside Alpha (Hbf → Süd), then Beta and Gamma
     expect([...pairCorridors(alpha, ctx, all, 2)]).toEqual([[9, Cat.LongDistance], [10, Cat.LongDistance], [11, Cat.LongDistance]]);
@@ -186,5 +205,33 @@ describe("split trips", () => {
     expect(c.map((x) => `${fmtTime(x.depUtc, BER)} ${x.number}`)).toEqual(["08:00 77", "10:00 1"]);
     expect(c[0]!.note).toBeNull();
     expect(c[1]!.stops.map((s) => s.city)).toEqual([1, 2]);
+  });
+});
+
+describe("station departures", () => {
+  it("counts departures per day by mode at each station of the city", () => {
+    const deps = stationDepartures(alpha, ctx);
+    // Alpha Hbf: ICE daily + Fri/Sun (8 of 28 days), RE p1 daily, RE p3 twice daily; the never-running coach is absent
+    expect(deps.get(0)![Cat.LongDistance]).toBeCloseTo(1 + 8 / 28);
+    expect(deps.get(0)![Cat.Regional]).toBeCloseTo(3);
+    expect(deps.get(0)![Cat.Coach]).toBeUndefined();
+    // Alpha Süd: the same ICE trips (they call at both) + the coach on 3 of 28 days
+    expect(deps.get(1)![Cat.LongDistance]).toBeCloseTo(1 + 8 / 28);
+    expect(deps.get(1)![Cat.Coach]).toBeCloseTo(3 / 28);
+    expect(deps.has(2)).toBe(false); // Beta is another city
+    expect(depsWith(deps.get(0), { cats: Cat.Coach })).toBe(0);
+    expect(depsWith(deps.get(1), { cats: Cat.Coach })).toBeCloseTo(3 / 28);
+    expect(depsWith(undefined, all)).toBe(0);
+    expect(depCats(deps.get(1))).toEqual([Cat.LongDistance, Cat.Coach]);
+  });
+  it("agrees with the reach of the station: no departures, no destinations", () => {
+    const deps = stationDepartures(alpha, ctx);
+    for (const cats of [Cat.LongDistance, Cat.Regional, Cat.Coach, Cat.Bus, ALL_CATS])
+      for (const st of [0, 1]) expect(depsWith(deps.get(st), { cats }) > 0, `${cats} ${st}`).toBe(computeReach(alpha, ctx, { cats }, st).dests.size > 0);
+  });
+  it("ignores the last stop of a pattern ending in the city", () => {
+    // RE Delta → Alpha Hbf (terminates): arrivals only
+    const cf: CityFile = { ...alpha, patterns: [{ route: 1, stations: [4, 0], arr: [0, 60], dep: [0, 60], corridors: [12], headsign: "Alpha" }], patternTz: [3], trips: [[0, 600, 0, "1"]] };
+    expect(stationDepartures(cf, ctx).size).toBe(0);
   });
 });

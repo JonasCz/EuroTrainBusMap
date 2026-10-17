@@ -2,7 +2,7 @@
  * Direct departures between two cities on a given (origin-local) date.
  */
 import type { CityFile, Route } from "@etbm/shared";
-import { addDays, dayNumber, inHorizon, lastDate, runsOnDate } from "./calendar.ts";
+import { addDays, dateFromDayNumber, inHorizon, lastDate, runsOnDate, runsOnDay } from "./calendar.ts";
 import { ServiceDays, mergeRows, serviceKey } from "./merge.ts";
 import { addTraffic, bestStop, patternTpd, prepare, stopAt, trafficCats, type CorridorTraffic, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
@@ -172,19 +172,36 @@ export function timetable(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, d
   return mergeRows(order.map((i) => out[i]!), order.map((i) => keys[i]!), ctx.cal, services);
 }
 
-/** Next dates (after `date`) with at least one departure, up to `limit`. */
-export function nextServiceDates(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, date: string, limit = 5, originStation?: number): string[] {
-  const cands = pairCandidates(cf, ctx, f, dest, originStation);
-  if (!cands.length) return [];
-  const out: string[] = [];
-  const end = dayNumber(lastDate(ctx.cal)) + 1;
-  let d = dayNumber(date) < ctx.cal.start ? addDays(ctx.cal.startDate, -1) : date;
-  while (out.length < limit) {
-    d = addDays(d, 1);
-    if (dayNumber(d) > end) break;
-    if (timetable(cf, ctx, f, dest, d, cands).length) out.push(d);
+/**
+ * Origin-local dates on which at least one direct departure to `dest` leaves (any day of the horizon;
+ * a departure after midnight of the last service day can fall one day beyond it). Feeds the date
+ * picker's service dots and `nextServiceDates`.
+ */
+export function serviceDates(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, originStation?: number, cands = pairCandidates(cf, ctx, f, dest, originStation)): Set<string> {
+  const prep = prepare(cf, ctx);
+  const originTz = ctx.cityTz[cf.city]!;
+  const out = new Set<string>();
+  for (const c of cands) {
+    const p = cf.patterns[c.pattern]!;
+    const tz = prep.tz[c.pattern]!;
+    for (const ti of prep.tripsByPattern[c.pattern]!) {
+      const [, start, calendar] = cf.trips[ti]!;
+      for (let i = 0; i < ctx.cal.days; i++) {
+        if (!runsOnDay(ctx.cal, calendar, i)) continue;
+        out.add(localDate(serviceTimeToUtc(dateFromDayNumber(ctx.cal.start + i), start + p.dep[c.board]!, tz), originTz));
+      }
+    }
   }
   return out;
+}
+
+/** Next dates (after `date`) with at least one departure, up to `limit`. */
+export function nextServiceDates(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, date: string, limit = 5, originStation?: number): string[] {
+  const end = addDays(lastDate(ctx.cal), 1);
+  return [...serviceDates(cf, ctx, f, dest, originStation)]
+    .filter((d) => d > date && d <= end)
+    .sort()
+    .slice(0, limit);
 }
 
 export { inHorizon };
