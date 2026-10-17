@@ -1515,3 +1515,149 @@ dialog::backdrop {
   font-size: 12.5px;
   padding: 2px 8px;
 }
+
+/* connections with changes: summary line under the city name, settings dialog, journeys */
+.xfer {
+  margin: 0 0 4px;
+}
+.xfer-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 0 16px 2px 18px;
+}
+.xfer-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 13.5px;
+  padding-top: 6px;
+}
+.xfer-count {
+  font-weight: 600;
+}
+.xfer-count.is-loading {
+  font-weight: 500;
+  color: var(--muted);
+  animation: xfer-pulse 1.4s ease-in-out infinite;
+}
+@keyframes xfer-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .xfer-count.is-loading {
+    animation: none;
+  }
+}
+.xfer-rules {
+  margin-top: 1px;
+}
+.xfer-edit {
+  color: var(--text);
+  border: 1px solid var(--line);
+  margin-right: 0;
+}
+.xfer-edit:hover {
+  background: var(--surface-2);
+}
+.xfer .datebar {
+  padding-top: 4px;
+}
+.dest-via {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.dest--xfer .dest-name {
+  font-weight: 500;
+}
+.dest--xfer .dest-cats {
+  opacity: 0.75;
+}
+.xfer-dialog .view-head {
+  position: static;
+}
+.xfer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 18px 6px;
+}
+.xfer-form p {
+  margin: 4px 0 0;
+}
+.xfer-field .scope {
+  padding: 6px 0 0;
+}
+.xfer-label {
+  display: block;
+  font-weight: 650;
+  font-size: 13.5px;
+  margin-bottom: 4px;
+}
+.xfer-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.xfer-stepper .icon-btn {
+  border: 1px solid var(--line);
+  font-size: 18px;
+  color: var(--text);
+  margin: 0;
+}
+.xfer-stepper input,
+.xfer-field select {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.xfer-stepper input {
+  width: 64px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.xfer-field select {
+  min-width: 200px;
+}
+.xfer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 18px 0;
+}
+.btn {
+  font: inherit;
+  font-weight: 600;
+  border-radius: 10px;
+  padding: 7px 16px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface);
+}
+.jr-legs {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+.jr-sep {
+  color: var(--faint);
+  display: inline-flex;
+}
+.jr-list .tt-row:disabled {
+  cursor: default;
+  opacity: 0.75;
+}

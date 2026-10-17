@@ -15,6 +15,8 @@ export interface DatePickerOpts {
   max: string;
   /** dates with at least one departure */
   serviceDays: ReadonlySet<string>;
+  /** No service dots (a day of travel for a whole city, not a pair): no "no direct service" wording. */
+  plain?: boolean;
   onPick(date: string): void;
   onClose(): void;
 }
@@ -61,8 +63,8 @@ export function datePicker(o: DatePickerOpts): HTMLElement {
     h(
       "p",
       { class: "dp-legend" },
-      anyService ? [h("span", { class: "dp-dot", "aria-hidden": "true" }), " runs on this day"] : "No direct service with the selected modes",
-      ` · timetables ${formatDateShort(o.min)} – ${formatDateShort(o.max)}`,
+      o.plain ? null : anyService ? [h("span", { class: "dp-dot", "aria-hidden": "true" }), " runs on this day"] : "No direct service with the selected modes",
+      `${o.plain ? "Timetables" : " · timetables"} ${formatDateShort(o.min)} – ${formatDateShort(o.max)}`,
     ),
   );
 
@@ -103,8 +105,8 @@ export function datePicker(o: DatePickerOpts): HTMLElement {
                     disabled: out,
                     tabindex: d === focusDate ? "0" : "-1",
                     "aria-pressed": String(d === o.date),
-                    "aria-label": `${formatDateShort(d)}${d === o.today ? ", today" : ""}${out ? ", no timetable data" : runs ? ", runs" : ", no direct service"}`,
-                    title: out ? "Outside the timetable period" : runs ? null : "No direct service on this day",
+                    "aria-label": `${formatDateShort(d)}${d === o.today ? ", today" : ""}${out ? ", no timetable data" : o.plain ? "" : runs ? ", runs" : ", no direct service"}`,
+                    title: out ? "Outside the timetable period" : runs || o.plain ? null : "No direct service on this day",
                     onclick: () => o.onPick(d),
                   },
                   String(Number(d.slice(8))),

@@ -3,7 +3,7 @@ import type { CityFile } from "@etbm/shared";
 import { loadCity } from "./data/load.ts";
 import { cityTz, ensureDetail, stationBySlug, stationName, stationSlug, type Net } from "./data/net.ts";
 import { addDays, inHorizon } from "./logic/calendar.ts";
-import { connections, type Arrival, type Connection, type OnwardStop } from "./logic/connections.ts";
+import { connections, transferMinutes, type Arrival, type Connection, type OnwardStop } from "./logic/connections.ts";
 import { sameFilters, type Filters } from "./logic/filters.ts";
 import { encodeLegs, resolveLeg, type Leg, type LegInfo } from "./logic/journey.ts";
 import { computeReach } from "./logic/reach.ts";
@@ -15,9 +15,15 @@ import { localDate } from "./logic/tz.ts";
 import { STATION_ZOOM } from "./map/lod.ts";
 import type { MapView, Highlight } from "./map/mapview.ts";
 import { Panel, type View } from "./ui/panel.ts";
-import { parseHash, toHash, type AppState } from "./ui/state.ts";
+import { parseHash, storeSettings, toHash, type AppState } from "./ui/state.ts";
+import { TransferClient, matchLeg, type ReachLines, type ReachRound } from "./data/transfer.ts";
+import type { Journey, SearchParams, TransferSettings } from "./logic/transfer.ts";
+import type { JourneyRow, XferDest, XferView } from "./ui/panel.ts";
+import type { Reach } from "./logic/reach.ts";
 
 export const CONNECTION_WINDOW_MIN = 180;
+/** Places reached with connections drawn as emphasised dots / labels (the most important ones). */
+const MAP_XFER_CITIES = 1500;
 
 /** A value computed on first use (e.g. the date picker's service days, only needed when it opens). */
 function lazy<T>(f: () => T): () => T {
@@ -37,6 +43,9 @@ export class App {
   private token = 0;
   private lastFilters: Filters | null = null;
   private lastFocusKey = "";
+  /** connections with changes: worker client, last reach result */
+  readonly transfers: TransferClient;
+  private xferCache: { key: string; view: XferView; lines: string | null; levels: Map<number, number> } | null = null;
 
   constructor(
     readonly net: Net,
@@ -45,6 +54,7 @@ export class App {
     private padding: () => { top: number; bottom: number; left: number; right: number },
   ) {
     this.state = parseHash(net, location.hash);
+    this.transfers = new TransferClient(net);
     addEventListener("popstate", () => this.fromUrl());
     addEventListener("hashchange", () => this.fromUrl());
   }
@@ -179,15 +189,61 @@ export class App {
       // panel first (the list is what the user waits for), then the map highlight
       const label = originStation !== undefined ? `${stationName(net, originStation)}` : originName;
       document.title = `${label} – EuroTrainBusMap`;
-      this.panel.show({ kind: "reach", city: origin, ...(originStation !== undefined ? { station: originStation } : {}), reach, stationDeps: stationDepartures(cf, net.ctx) });
+      const date = s.date ?? this.today(origin);
+      const xs = s.xfer;
+      const params: SearchParams = { origin, ...(originStation !== undefined ? { originStation } : {}), date, cats: s.filters.cats, ...xs };
+      const key = JSON.stringify(params);
+      const cached = xs.transfers > 0 && this.xferCache?.key === key ? this.xferCache : null;
+      const xv: XferView = cached?.view ?? {
+        settings: xs,
+        date,
+        today: this.today(origin),
+        status: xs.transfers === 0 ? "off" : this.transfers.available ? "loading" : "unavailable",
+        dests: [],
+        rounds: 0,
+      };
+      const reachView: View = { kind: "reach", city: origin, ...(originStation !== undefined ? { station: originStation } : {}), reach, stationDeps: stationDepartures(cf, net.ctx), xfer: xv };
+      this.panel.show(reachView);
       await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
       if (stale()) return;
-      await this.map.setHighlight({ emphasis: { focus, active: true, origin, ...(originStation !== undefined ? { originStation } : {}) }, corridors: reach.corridors, traffic: reach.traffic });
+      const emphasis = { focus, active: true, origin, ...(originStation !== undefined ? { originStation } : {}) };
+      await this.map.setHighlight({ emphasis: { ...emphasis, ...(cached ? { levels: cached.levels } : {}) }, corridors: reach.corridors, traffic: reach.traffic, ...(cached?.lines ? { xferJson: cached.lines } : {}) });
       // frame the origin and its most important destinations (not every bus stop)
       const top = [...reach.dests.keys()].sort((a, b) => net.cities[b]!.importance - net.cities[a]!.importance).slice(0, 25);
       // a station picked at station zoom keeps the view (the panel lists its destinations); a city fits its destinations
       if (originStation !== undefined && this.map.map.getZoom() >= STATION_ZOOM) this.lastFocusKey = `r${origin}`;
       else this.frame([origin, ...top], `r${origin}`);
+      if (xv.status !== "loading") return;
+      // ---- connections with changes: rounds arrive from the worker; each one updates the list and the map
+      let chain = Promise.resolve();
+      const t0 = performance.now();
+      let lastLines: string | null = null;
+      const onRound = (m: ReachRound) => {
+        chain = chain.then(async () => {
+          if (stale()) return;
+          const st = this.xferState(m, reach, origin, xv);
+          this.xferCache = { key, view: st.view, lines: lastLines, levels: st.levels };
+          if (import.meta.env.DEV) console.debug(`[perf] transfers round ${m.round}: ${Math.round(performance.now() - t0)} ms since start`);
+          this.panel.show({ ...reachView, xfer: st.view });
+          // keep the lines of the previous round until this round's arrive
+          await this.map.setHighlight({ emphasis: { ...emphasis, levels: st.levels }, corridors: reach.corridors, traffic: reach.traffic, ...(lastLines ? { xferJson: lastLines } : {}) });
+        });
+      };
+      const onLines = (l: ReachLines) => {
+        chain = chain.then(() => {
+          if (stale()) return;
+          lastLines = l.lines;
+          if (this.xferCache?.key === key) this.xferCache.lines = l.lines;
+          if (import.meta.env.DEV) console.debug(`[perf] transfers lines of round ${l.round}: ${Math.round(performance.now() - t0)} ms since start, ${(l.lines.length / 1e6).toFixed(1)} MB GeoJSON built in ${l.ms} ms`);
+          this.map.setXferLines(l.lines);
+        });
+      };
+      try {
+        await this.transfers.reach(params, reach.corridors.keys(), onRound, onLines, originName);
+        await chain;
+      } catch (e) {
+        if (!stale()) this.panel.show({ ...reachView, xfer: { ...xv, status: "error", message: (e as Error).message } });
+      }
       return;
     }
 
@@ -200,6 +256,10 @@ export class App {
       const deps = timetable(cf, net.ctx, s.filters, dest, date, cands);
       const traffic = pairTraffic(cf, net.ctx, s.filters, dest, originStation);
       const corridors = trafficCats(traffic);
+      if (!corridors.size && s.xfer.transfers > 0 && this.transfers.available) {
+        await this.renderJourneys(cf, origin, originStation, dest, date, stale);
+        return;
+      }
       const next = deps.length ? [] : nextServiceDates(cf, net.ctx, s.filters, dest, date, 5, originStation);
       await this.map.setHighlight({
         emphasis: { focus: this.withCorridorEnds(new Set([origin, dest]), corridors), active: true, origin, dest, ...(originStation !== undefined ? { originStation } : {}) },
@@ -302,6 +362,90 @@ export class App {
     );
   }
 
+  /** The panel / map state of a reach-with-changes round. */
+  private xferState(m: ReachRound, reach: Reach, origin: number, base: XferView): { view: XferView; levels: Map<number, number> } {
+    const dests: XferDest[] = [];
+    for (let c = 0; c < m.level.length; c++) {
+      const lv = m.level[c]!;
+      if (lv < 2 || c === origin || reach.dests.has(c)) continue;
+      dests.push({ city: c, level: lv, minutes: m.minutes[c]!, via: m.via[c]!, cats: m.cats[c]! });
+    }
+    // on the map: the most important places reached with connections (thousands of extra labels would slow every frame)
+    const cities = this.net.cities;
+    const levels = new Map<number, number>();
+    for (const d of [...dests].sort((a, b) => a.level - b.level || cities[b.city]!.importance - cities[a.city]!.importance).slice(0, MAP_XFER_CITIES)) levels.set(d.city, d.level);
+    return { view: { ...base, status: m.done ? "done" : "loading", dests, rounds: m.round }, levels };
+  }
+
+  /**
+   * A pair without a direct service, with connections enabled: the journeys with changes on the day, each
+   * resolved to the legs of the boarding cities' timetables (route names, schedule view).
+   */
+  private async renderJourneys(cf: CityFile, origin: number, originStation: number | undefined, dest: number, date: string, stale: () => boolean): Promise<void> {
+    const net = this.net;
+    const s = this.state;
+    const xs = s.xfer;
+    const base = {
+      kind: "journeys" as const,
+      city: origin,
+      ...(originStation !== undefined ? { station: originStation } : {}),
+      dest,
+      date,
+      today: this.today(origin),
+      settings: xs,
+    };
+    document.title = `${originStation !== undefined ? stationName(net, originStation) : net.cities[origin]!.name} → ${net.cities[dest]!.name} – EuroTrainBusMap`;
+    this.panel.show({ ...base, status: "loading", rows: [] });
+    this.frame([origin, dest], `p${origin}-${dest}`);
+    const emphasis = { focus: new Set([origin, dest]), active: true, origin, dest, ...(originStation !== undefined ? { originStation } : {}) };
+    await this.map.setHighlight({ emphasis, corridors: new Map() });
+    const params: SearchParams = { origin, ...(originStation !== undefined ? { originStation } : {}), date, cats: s.filters.cats, ...xs, target: dest };
+    let res: Awaited<ReturnType<TransferClient["journeys"]>>;
+    try {
+      res = await this.transfers.journeys(params, `${net.cities[origin]!.name}→${net.cities[dest]!.name}`);
+      if (!res || stale()) return;
+      await this.transfers.loadLines(res.chunks);
+    } catch (e) {
+      if (!stale()) this.panel.show({ ...base, status: "error", rows: [], message: (e as Error).message });
+      return;
+    }
+    if (stale()) return;
+    const rows: JourneyRow[] = [];
+    const traffic: CorridorTraffic = new Map();
+    const files = new Map<number, Promise<CityFile | null>>([[origin, Promise.resolve(cf)]]);
+    const fileOf = (c: number) => {
+      let p = files.get(c);
+      if (!p) files.set(c, (p = loadCity(net.ds, c).catch(() => null)));
+      return p;
+    };
+    for (const j of res.journeys.slice(0, 80)) rows.push(await this.journeyRow(j, fileOf, traffic));
+    if (stale()) return;
+    const corridors = trafficCats(traffic);
+    this.panel.show({ ...base, status: "done", rows });
+    await this.map.setHighlight({ emphasis: { ...emphasis, focus: this.withCorridorEnds(new Set([origin, dest]), corridors) }, corridors, traffic });
+  }
+
+  private async journeyRow(j: Journey, fileOf: (city: number) => Promise<CityFile | null>, traffic: CorridorTraffic): Promise<JourneyRow> {
+    const ctx = this.net.ctx;
+    const legs: JourneyRow["legs"] = [];
+    let ok = true;
+    for (const [i, jl] of j.legs.entries()) {
+      const from = ctx.stationCity[jl.stations[jl.board]!]!;
+      const lcf = await fileOf(from);
+      // a change between two stations of the city: the walk the search assumed (shown with the change)
+      const prev = j.legs[i - 1];
+      const sa = prev?.stations[prev.alight], sb = jl.stations[jl.board]!;
+      const walk = prev && sa !== sb && lcf ? transferMinutes(lcf, sa!, sb) : undefined;
+      const leg = lcf ? matchLeg(lcf, jl, from) : null;
+      const info = leg && lcf ? resolveLeg(lcf, ctx, leg) : null;
+      if (!info) ok = false;
+      const corr = info ? info.corridors : this.transfers.legCorridors(jl);
+      addTraffic(traffic, corr, jl.cat, 1);
+      legs.push({ raw: jl, ...(info ? { info } : {}), ...(walk !== undefined ? { walk } : {}) });
+    }
+    return { journey: j, legs, ...(ok ? { route: legs.map((l) => l.info!.leg) } : {}) };
+  }
+
   private withCorridorEnds(focus: Set<number>, corridors: Map<number, number>): Set<number> {
     // corridors join stations: their cities are emphasised too
     for (const cid of corridors.keys()) {
@@ -369,6 +513,17 @@ export class App {
     const v = stop.via ?? { trip: c.trip, serviceDate: c.serviceDate, board: c.board };
     const leg: Leg = { from: fromCity, trip: v.trip, date: v.serviceDate, board: v.board, alight: stop.stop };
     this.set({ legs: [...this.state.legs, leg] });
+  }
+
+  /** A journey with changes (journeys view): its legs, showing the last leg's schedule. */
+  chooseJourney(legs: Leg[]): void {
+    if (legs.length) this.set({ legs, schedule: true });
+  }
+
+  /** New settings for connections with changes (the dialog); the minimum transfer and maximum wait are remembered. */
+  setTransfers(x: TransferSettings): void {
+    storeSettings(x);
+    this.set({ xfer: x }, { replace: true });
   }
 
   shiftDate(days: number): void {

@@ -110,6 +110,32 @@ export function contextData(geo: GeoStore, corridors: Map<number, number>): FC {
   return { type: "FeatureCollection", features: mergeLines(lines) };
 }
 
+/**
+ * Lines reached with changes (connections search): one feature per segment and level (2 = one change, 3 = two),
+ * coloured by the most prominent category, drawn thin and more transparent with every change.
+ */
+export function xferData(geo: GeoStore, xfer: Map<number, { level: number; cats: number }>): FC {
+  const segs = new Map<number, { level: number; cats: number }>();
+  for (const [cid, v] of xfer) {
+    const c = geo.corridors.get(cid);
+    if (!c?.segs?.length) continue;
+    for (const code of c.segs) {
+      const s = segId(code);
+      const o = segs.get(s);
+      if (!o || v.level < o.level) segs.set(s, { level: v.level, cats: v.cats });
+      else if (o.level === v.level) o.cats |= v.cats;
+    }
+  }
+  const lines: Feature[] = [];
+  for (const [sid, v] of segs) {
+    const s = geo.segments.get(sid);
+    if (!s || s.coords.length < 2) continue;
+    const k = CAT_BITS.find((b) => v.cats & b)!;
+    lines.push({ type: "Feature", properties: { cat: k, lvl: v.level }, geometry: { type: "LineString", coordinates: s.coords } });
+  }
+  return { type: "FeatureCollection", features: mergeLines(lines) };
+}
+
 export interface Emphasis {
   /** Cities to emphasise (selection + reachable). */
   focus: Set<number>;
@@ -119,15 +145,21 @@ export interface Emphasis {
   /** The origin narrowed to one of its stations. */
   originStation?: number;
   dest?: number;
+  /** Cities reached only with changes: city → level (2 = one change, 3 = two); drawn lighter, after the direct ones. */
+  levels?: Map<number, number>;
 }
 
 /** Selection layer: reachable cities as small dots, labels by importance. */
 export function focusCityData(cities: City[], em: Emphasis): FC {
   const features: Feature[] = [];
-  for (const id of em.focus) {
+  const ids = em.levels?.size ? new Set([...em.focus, ...em.levels.keys()]) : em.focus;
+  for (const id of ids) {
     const c = cities[id];
     if (!c) continue;
     const sel = id === em.origin ? 1 : id === em.dest ? 2 : 0;
+    const x = sel ? 0 : Math.max(0, (em.levels?.get(id) ?? 1) - 1);
+    // places reached with changes keep their own LOD level (no early labels) and rank after the direct ones
+    const boost = x ? 0 : 1;
     features.push({
       type: "Feature",
       id,
@@ -137,9 +169,10 @@ export function focusCityData(cities: City[], em: Emphasis): FC {
         imp: c.importance,
         sel,
         // reachable places appear 1 (label) / 2 (dot) LOD levels earlier than in the base map
-        lz: sel ? 0 : Math.max(0, levelIndex(cityTierZoom(c.importance)) - 1),
-        dz: sel ? 0 : Math.max(0, levelIndex(cityTierZoom(c.importance)) - 2),
-        rank: sel ? -1 : round2(1 - c.importance),
+        lz: sel ? 0 : Math.max(0, levelIndex(cityTierZoom(c.importance)) - boost),
+        dz: sel ? 0 : Math.max(0, levelIndex(cityTierZoom(c.importance)) - 2 * boost),
+        rank: sel ? -1 : round2(x + 1 - c.importance),
+        x,
       },
       geometry: { type: "Point", coordinates: [c.lon, c.lat] },
     });

@@ -39,6 +39,7 @@ const ICONS: Record<string, string> = {
   seat: "M5 4v7a3 3 0 0 0 3 3h11M15 10l4 4-4 4",
   arrow: "M5 12h14M13 6l6 6-6 6",
   check: "M5 12.5l4.5 4.5L19 7.5",
+  edit: "M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4zM13.5 6.5l4 4",
   calendar: "M6 5h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM4 10h16M8.5 3v4M15.5 3v4",
 };
 

@@ -4,7 +4,7 @@ import { TILE_LAYERS, tileSet, type TileIndex, type UrbanInfo } from "@etbm/shar
 import type * as GeoJSON from "geojson";
 import type { Net } from "../data/net.ts";
 import { sameFilters, type Filters } from "../logic/filters.ts";
-import { contextData, focusCityData, highlightData, stationData, type Emphasis } from "./features.ts";
+import { contextData, focusCityData, highlightData, stationData, xferData, type Emphasis } from "./features.ts";
 import { CITY_AREA_LAYER, CITY_LAYERS, FOCUS_LAYERS, STATION_LAYERS, STATION_ZOOM, cityFilter, geojsonSources, networkLayers, type LayerState } from "./layers.ts";
 import { URBAN_HIT_LAYERS, URBAN_LAYER_IDS, urbanLayers, urbanSources, urbanTileKeys, type UrbanHit } from "./urban.ts";
 import { urbanPopup } from "../ui/urbanpopup.ts";
@@ -40,6 +40,10 @@ export interface Highlight {
   traffic?: Map<number, Partial<Record<number, number>>>;
   /** corridor id → Cat bits of the not-ridden part of a selected vehicle run, drawn faded under the highlight */
   context?: Map<number, number>;
+  /** corridor id → level (2 = one change …) and Cat bits: lines reached with changes, drawn lighter */
+  xfer?: Map<number, { level: number; cats: number }>;
+  /** the same, prebuilt as GeoJSON text (by the transfer worker) */
+  xferJson?: string;
 }
 
 const EUROPE: [[number, number], [number, number]] = [
@@ -215,6 +219,22 @@ export class MapView {
     if (old) setTimeout(() => URL.revokeObjectURL(old), 30_000);
   }
 
+  /** Only the lines reached with changes (GeoJSON text from the transfer worker), after the rest of the highlight. */
+  setXferLines(json: string): void {
+    this.setJson("hl-xfer", json);
+  }
+
+  /** GeoJSON already serialised (e.g. by a worker): handed to MapLibre's worker as a blob URL. */
+  private setJson(source: string, json: string): void {
+    const src = this.map.getSource(source) as GeoJSONSource | undefined;
+    if (!src) return;
+    const old = this.blobUrls.get(source);
+    const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+    this.blobUrls.set(source, url);
+    src.setData(url);
+    if (old) setTimeout(() => URL.revokeObjectURL(old), 30_000);
+  }
+
   // ---- interaction ------------------------------------------------------------
 
   private interactiveLayers(): string[] {
@@ -367,6 +387,8 @@ export class MapView {
     const t0 = performance.now();
     const em = h.emphasis;
     const d = highlightData(net.geo, h.corridors, h.traffic);
+    if (h.xferJson !== undefined) this.setJson("hl-xfer", h.xferJson);
+    else this.setData("hl-xfer", xferData(net.geo, h.xfer ?? new Map()));
     this.setData("hl-ctx", contextData(net.geo, h.context ?? new Map()));
     this.setData("hl-casing", d.casing);
     this.setData("hl", d.lines);

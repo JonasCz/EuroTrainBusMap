@@ -2,7 +2,8 @@
 
 A transit-diagram style map of intercity rail and bus connections across Europe (incl. UK,
 CH, NO, the Balkans, Turkey and Ukraine). Click a city to see every city reachable by a
-*direct* train/coach/bus, click a pair for the timetable, click a departure for the trip's stops and
+*direct* train/coach/bus – and, if you switch it on, every city reachable with one or two same-day
+connections –, click a pair for the timetable (or the journeys with changes), click a departure for the trip's stops and
 the onward connections from any of them. Fully static: a weekly pipeline turns ~150 public GTFS feeds into JSON files
 served from Cloudflare.
 
@@ -145,12 +146,51 @@ Pipeline in short:
      city with the walking transfer time (`CityFile.transfers`, at least `minTransfer`, 30 min beyond walking range). Back goes
      connections → schedule → departures. On the map the ridden part is highlighted as before and the rest of the run (before
      boarding / after alighting) is drawn thin and faded (`Highlight.context`, layers `hl-ctx*`).
+   - **Connections with changes** (`logic/transfer.ts`, worker `data/transfer.worker.ts`, client `data/transfer.ts`; URL
+     `changes=1|2`, `mintransfer=<min>`, `wait=<min>|day`, written only when they differ from the defaults 0 / 10 / same day; the
+     minimum transfer and maximum wait are also remembered in localStorage). The city panel shows "{n} direct destinations", then
+     "{m} destinations with 1 same-day connection" (and with 2) with a pencil that opens the settings dialog: number of connections
+     (0 = direct only, the default; 1; 2), minimum transfer time (at the same station; a change between two stations of a city takes at
+     least the walk between them, `CityFile.transfers`, 30 min beyond walking range) and maximum waiting time (1–12 h or "same day":
+     the connecting departure leaves before local midnight of the arrival). The search runs for the travel day (the view's date, else
+     today, origin-local; a date bar under the count changes it), mode filters apply to every leg. Lists: "Major destinations / Other
+     places (direct)", then the same per level "(with 1 connection)", "(with 2 connections)", each place with the change city of its
+     fastest journey ("via Limoges") and that journey's duration; lists of places with connections render 300 rows until "Show all" or
+     a filter. On the map direct lines keep their colour and width, lines ridden after one change are drawn thin in the category colour
+     at ~50 % opacity, after two changes at ~25 %, everything else stays grey (layer `hl-xfer`, built as GeoJSON in the worker); the
+     1500 most important places reached with changes get lighter dots / labels. A place reached only with changes opens the
+     **journeys view** (a pair without a direct service, `renderJourneys`): the Pareto-optimal journeys of the day (later departure,
+     earlier arrival, fewer changes), each matched back to the boarding cities' shards (`matchLeg`) for route names; a journey opens
+     its legs (schedule of the last leg, crumbs, the walk between stations shown with the change).
+     - **Search**: round-based (RAPTOR-like) over trips, not a time-expanded graph. Round 1 boards every trip leaving the origin on
+       the day and records an arrival event at every later stop (intermediate stops included); round r + 1 boards at every city
+       reached in round r every trip whose departure is feasible after one of the city's arrivals (transfer time per station pair,
+       maximum wait / same day; arrivals per city sorted by time with a range maximum over the origin departure, so the boarding
+       picks the latest origin departure in O(log n)). The last round of a reach search keeps one entry per pattern and boarding stop
+       (the best "slack"), not per trip. Results per city: first round, fastest duration, change city, modes; hops ridden per round
+       for the map.
+     - **Data** (`packages/shared/src/tt.ts`, written by the map-data stage, `src/transfers.ts`): every pattern and trip of the
+       shards deduplicated (412 k patterns, 2.19 M trips; shards repeat a pattern for every city it calls at, ~3 M times), as gzipped
+       varint chunks: chunk 0 = the *trunk* (all long-distance trains and coaches of Europe, 1.1 MB gz) and 32 regions (k-d split of
+       the cities by regional rail / bus departures, 0.08–0.36 MB gz each; a regional pattern is in every region it can be boarded
+       in), plus per chunk a line file (corridor → segment codes, segments simplified to 100 m, 1e-4° coordinates; 4.7 MB gz in
+       all) and `tt/index.json` (chunk of every city). 8 MB + 4.7 MB gz, 67 files. A search loads the trunk plus the regions of the
+       cities where it changes; the worker keeps loaded chunks for later searches.
+     - **Measured** (full build, Tue 20 Oct, desktop Node; chunk download excluded, decode included): Orléans k=1 0.6 s (9 chunks,
+       2.4 MB), Berlin k=1 1.0 s (23 chunks, 5.9 MB), Paris k=1 1.2 s (26 chunks, 6.4 MB), Gien k=1 0.2 s; k=2: Bad Belzig 0.3 s,
+       Gien 1.4 s, Berlin 4.9 s, Paris 5.5 s (1.2–1.4 M arrival events, ~100 MB worker memory, all 33 chunks). In the browser
+       (production build, headless Chromium without GPU, local files): Orléans k=1 2.3 s for the first search (worker start, 13 chunks,
+       lines included), Berlin k=1 2.9 s, Paris k=1 2.6 s, Gien 0.3 s with chunks cached, Berlin k=2 8.7 s; the list shows after the
+       search, the lines (line files + GeoJSON, 1.1–1.5 s for k=1) follow. **Maximum k = 2**: one
+       connection stays around a second on a desktop (a few seconds on a mid-range phone, off the main thread, results shown per
+       round); two connections are fine from towns but take 5–15 s from big hubs (and then cover nearly all of Europe), so the
+       dialog warns about it; a third round would load and scan everything for every origin and add little information.
    - `geo/<shard>.json` (~80 KB gzip on average): for each timetable shard, the corridors its patterns
      use (with segment geometry, for the selection highlight) and the stations it references
      (names/positions). Loaded together with the shard on a click. Highlighted lines are sized by the
      selection's own trips/day (the selected city's / pair's patterns, a journey leg = 1), not by the line's
      total traffic, and a pair is drawn from the first stop of each trip in the origin city.
-   `manifest.json` points to `core.json` and lists the tiles (`Manifest.mapdata`).
+   `manifest.json` points to `core.json` and lists the tiles (`Manifest.mapdata`) and the transfer timetable (`Manifest.transfers`, `tt/index.json`).
    Rebuild just this stage for an existing build: `node --import tsx packages/etl/src/mapdata.ts <out>/<build>`.
 
 11. **Local transport** (`src/urban/`, formats in `packages/shared/src/urban.ts`) – metro, tram, light rail,

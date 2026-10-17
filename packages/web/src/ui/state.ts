@@ -4,6 +4,7 @@ import { cityByRef } from "../data/net.ts";
 import { isValidDate } from "../logic/calendar.ts";
 import { ALL_CATS, decodeCats, encodeCats, type Filters } from "../logic/filters.ts";
 import { decodeLegs, encodeLegs, type Leg } from "../logic/journey.ts";
+import { DEFAULT_SETTINGS, MAX_TRANSFERS, type TransferSettings } from "../logic/transfer.ts";
 
 export interface AppState {
   city?: number;
@@ -19,6 +20,52 @@ export interface AppState {
   schedule?: boolean;
   /** Onward connections from every station of the last leg's arrival city, not only the arrival station (URL `onward=city`). */
   wholeCity?: boolean;
+  /**
+   * Connections with changes (URL `changes=1&mintransfer=10&wait=180|day`, only values that differ from the defaults; the
+   * minimum transfer time and maximum wait are also remembered in localStorage as the viewer's defaults).
+   */
+  xfer: TransferSettings;
+}
+
+const PREFS_KEY = "etbm.transfers";
+
+/** The viewer's remembered minimum transfer time / maximum wait (defaults when the URL names none). */
+export function storedSettings(): TransferSettings {
+  try {
+    const v = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "null") as Partial<TransferSettings> | null;
+    if (v && typeof v === "object") return sanitize({ ...DEFAULT_SETTINGS, ...v, transfers: 0 });
+  } catch {
+    /* no storage */
+  }
+  return DEFAULT_SETTINGS;
+}
+
+export function storeSettings(x: TransferSettings): void {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ minTransfer: x.minTransfer, maxWait: x.maxWait }));
+  } catch {
+    /* no storage */
+  }
+}
+
+function sanitize(x: TransferSettings): TransferSettings {
+  const int = (v: unknown, lo: number, hi: number, d: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v))) : d);
+  return {
+    transfers: int(x.transfers, 0, MAX_TRANSFERS, 0),
+    minTransfer: int(x.minTransfer, 0, 120, DEFAULT_SETTINGS.minTransfer),
+    maxWait: x.maxWait === null ? null : int(x.maxWait, 15, 24 * 60, 180),
+  };
+}
+
+function parseSettings(q: URLSearchParams): TransferSettings {
+  const base = storedSettings();
+  const num = (k: string) => (q.get(k) !== null && /^\d{1,4}$/.test(q.get(k)!) ? Number(q.get(k)) : undefined);
+  const wait = q.get("wait");
+  return sanitize({
+    transfers: num("changes") ?? 0,
+    minTransfer: num("mintransfer") ?? base.minTransfer,
+    maxWait: wait === "day" ? null : (num("wait") ?? base.maxWait),
+  });
 }
 
 export function parseHash(net: Net, hash: string): AppState {
@@ -39,6 +86,7 @@ export function parseHash(net: Net, hash: string): AppState {
     legs,
     ...(legs.length && q.get("trip") === "1" ? { schedule: true } : {}),
     ...(legs.length && q.get("onward") === "city" ? { wholeCity: true } : {}),
+    xfer: parseSettings(q),
   };
 }
 
@@ -55,5 +103,11 @@ export function toHash(net: Net, s: AppState): string {
   }
   if (s.filters.cats !== ALL_CATS) q.push(`modes=${encodeCats(s.filters.cats) || "none"}`);
   if (s.filters.local === false) q.push("local=0");
+  const x = s.xfer ?? DEFAULT_SETTINGS;
+  if (x.transfers > 0) {
+    q.push(`changes=${x.transfers}`);
+    if (x.minTransfer !== DEFAULT_SETTINGS.minTransfer) q.push(`mintransfer=${x.minTransfer}`);
+    if (x.maxWait !== DEFAULT_SETTINGS.maxWait) q.push(`wait=${x.maxWait === null ? "day" : x.maxWait}`);
+  }
   return q.length ? `#${q.join("&")}` : "";
 }

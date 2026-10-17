@@ -206,6 +206,11 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
 - Style expressions: the fade is an `["interpolate",["linear"],["zoom"], stop, expr(stop)...]` whose stop outputs read the per-feature level (`["at",["get","l1"],["literal",LEVEL_ZOOM]]`), with stops at every level and level - 0.7 (the fade is piecewise linear with kinks only there). Width/offset are laid out at stop z for levels <= z + 0.7 (`byZoom` uses `lvlAt(z + FADE_ZOOM)`), so a category's width is full when its opacity starts to rise. Casing (land colour halo) must fade too, else it erases neighbours before the line shows. Changing LEVELS changes the `l{k}` indices in tiles: MAPDATA_VERSION was bumped to 3, rebuild tiles together with the web app.
 - Screenshots at Playwright: each full-size view takes 30-60 s with SwiftShader; run `shots.cjs`-style loops in the background and poll for the last file; the sticky panel covers the left 400 px of the 1280 px viewport, so centre views a bit west of the area of interest.
 
+- Transfer timetable (connections with changes): the map-data stage also writes `<build>/tt/` (index + 33 chunks + 33 line
+  files, ~13 MB gz, ~40 s of the stage: it re-reads every shard to deduplicate the patterns) and `Manifest.transfers`. Profile the
+  search without a browser from a `.mts` script: `decodeTtChunk(gunzipSync(file))` into a `TtStore`, then `new TransferSearch(...)`
+  and `run(load)` (see `packages/web/src/logic/transfer.ts`); in the app the timings are in `window.__etbm.app.transfers.perf`.
+
 ## Gotcha: redeploying regenerated data under the same build id
 
 `/data/<build>/*` is served `immutable` for a year (`packages/web/public/_headers`). If you rerun only

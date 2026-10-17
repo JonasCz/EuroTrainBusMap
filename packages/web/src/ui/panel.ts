@@ -6,6 +6,7 @@ import type { Connection, OnwardStop } from "../logic/connections.ts";
 import { ALL_CATS, CAT_LABEL, CAT_ORDER, localOn, type Filters } from "../logic/filters.ts";
 import type { Leg, LegInfo } from "../logic/journey.ts";
 import type { Reach } from "../logic/reach.ts";
+import { MAX_TRANSFERS, type Journey, type JourneyLeg, type TransferSettings } from "../logic/transfer.ts";
 import type { ScheduleStop, TripSchedule } from "../logic/schedule.ts";
 import type { Departure } from "../logic/timetable.ts";
 import { fmtDuration, localDate } from "../logic/tz.ts";
@@ -28,6 +29,20 @@ export type View =
       reach: Reach;
       /** departures/day by mode per station of the city (unfiltered; greys out stations without departures) */
       stationDeps: Map<number, StationDeps>;
+      /** connections with changes (settings, travel day, destinations found so far) */
+      xfer: XferView;
+    }
+  | {
+      kind: "journeys";
+      city: number;
+      station?: number;
+      dest: number;
+      date: string;
+      today: string;
+      settings: TransferSettings;
+      status: "loading" | "done" | "error";
+      rows: JourneyRow[];
+      message?: string;
     }
   | {
       kind: "timetable";
@@ -54,6 +69,36 @@ export type View =
     }
   | { kind: "connections"; legs: LegInfo[]; conns: Connection[]; windowMin: number; wholeCity: boolean };
 
+/** A place reached only with changes. */
+export interface XferDest {
+  city: number;
+  /** 2 = one connection, 3 = two */
+  level: number;
+  minutes: number;
+  /** change city of the fastest journey */
+  via: number;
+  cats: number;
+}
+
+export interface XferView {
+  settings: TransferSettings;
+  date: string;
+  today: string;
+  status: "off" | "loading" | "done" | "error" | "unavailable";
+  dests: XferDest[];
+  /** search rounds completed (1 = direct trips of the day) */
+  rounds: number;
+  message?: string;
+}
+
+/** A journey with changes; `route` is set when every leg was found in the boarding city's timetable. */
+export interface JourneyRow {
+  journey: Journey;
+  /** `walk`: minutes walked between the two stations of the change before this leg */
+  legs: { raw: JourneyLeg; info?: LegInfo; walk?: number }[];
+  route?: Leg[];
+}
+
 export interface PanelActions {
   state: { city?: number; station?: string; dest?: number; filters: Filters; legs: Leg[] };
   set(patch: Record<string, unknown>, opts?: { replace?: boolean }): void;
@@ -63,6 +108,8 @@ export interface PanelActions {
   chooseDeparture(d: Departure): void;
   chooseConnection(c: Connection, stop: OnwardStop, fromCity: number): void;
   chooseStop(stop: number, wholeCity: boolean): void;
+  chooseJourney(legs: Leg[]): void;
+  setTransfers(x: TransferSettings): void;
   showSchedule(leg: number): void;
   shiftDate(days: number): void;
   today(city: number): string;
@@ -283,7 +330,9 @@ export class Panel {
       case "error":
         return [this.header("Something went wrong", null), h("p", { class: "pad error" }, v.message)];
       case "reach":
-        return this.reach(v.city, v.reach, v.station, v.stationDeps);
+        return this.reach(v);
+      case "journeys":
+        return this.journeys(v);
       case "timetable":
         return this.timetable(v);
       case "schedule":
@@ -350,60 +399,81 @@ export class Panel {
     ];
   }
 
-  private reach(city: number, r: Reach, station: number | undefined, stationDeps: Map<number, StationDeps>): Node[] {
+  private reach(v: Extract<View, { kind: "reach" }>): Node[] {
     const n = this.net;
+    const { city, reach: r, station, stationDeps } = v;
+    const x = v.xfer;
     const c = n.cities[city]!;
-    const dests = [...r.dests.values()].sort((a, b) => n.cities[b.city]!.importance - n.cities[a.city]!.importance || a.minutes - b.minutes);
+    const byImportance = <T extends { city: number; minutes: number }>(a: T, b: T) => n.cities[b.city]!.importance - n.cities[a.city]!.importance || a.minutes - b.minutes;
+    const dests = [...r.dests.values()].sort(byImportance);
     const count = `${dests.length} direct destination${dests.length === 1 ? "" : "s"}`;
-    const out: Node[] =
-      station !== undefined
-        ? [this.header(stationName(n, station), `${count} from this station · ${c.name}, ${countryName(c.country)}`)]
-        : [this.header(c.name, `${count} · ${countryName(c.country)}`)];
+    const out: Node[] = station !== undefined ? [this.header(stationName(n, station), `${count} from this station · ${c.name}`)] : [this.header(c.name, count)];
+    out.push(this.xferSummary(x));
     if (c.stations.length > 1) out.push(this.stationsLine(city, station, stationDeps));
-    if (!dests.length) {
-      out.push(h("p", { class: "pad muted" }, "No direct services from here with the selected modes."));
+    const xd = x.status === "off" ? [] : [...x.dests].sort(byImportance);
+    if (!dests.length && !xd.length) {
+      out.push(h("p", { class: "pad muted" }, x.status === "loading" ? "No direct services from here with the selected modes." : "No services from here with the selected modes."));
       return out;
     }
-    const row = (d: (typeof dests)[number]) => {
+    type Row = { city: number; minutes: number; cats: number; via?: number };
+    const row = (d: Row) => {
       const dc = n.cities[d.city]!;
       return h(
         "li",
         { "data-q": slugify(dc.name) },
         h(
           "button",
-          { type: "button", class: "dest", onclick: () => this.actions.set({ dest: d.city, legs: [] }) },
+          { type: "button", class: `dest${d.via !== undefined ? " dest--xfer" : ""}`, onclick: () => this.actions.set({ dest: d.city, legs: [] }) },
           h("span", { class: "dest-cats" }, CAT_ORDER.filter((k) => d.cats & k).map((k) => modeIcon(k, 14, CAT_LABEL[k]))),
-          h("span", { class: "dest-name" }, dc.name, dc.country !== c.country ? h("span", { class: "cc" }, dc.country) : null),
+          h(
+            "span",
+            { class: "dest-name" },
+            dc.name,
+            dc.country !== c.country ? h("span", { class: "cc" }, dc.country) : null,
+            d.via !== undefined && d.via >= 0 ? h("span", { class: "dest-via" }, `via ${n.cities[d.via]?.name ?? "?"}`) : null,
+          ),
           // a trip whose feed has no real times between two cities gives 0 minutes: show no duration rather than "0 min"
           h("span", { class: "dest-time" }, d.minutes >= 1 ? [h("span", { class: "muted small" }, "from "), fmtDuration(d.minutes)] : null),
         ),
       );
     };
-    // group: major places first, then everything else (still by importance)
-    const major = dests.filter((d) => n.cities[d.city]!.importance >= 0.6);
-    const minor = dests.filter((d) => n.cities[d.city]!.importance < 0.6);
-    const groups: [string, typeof dests][] = major.length && minor.length && dests.length > 20 ? [["Major destinations", major], [`Other places (${minor.length})`, minor]] : [["", dests]];
+    // groups: per level (direct, 1 connection, 2 …) major places first, then everything else (still by importance)
+    const levels: [string, Row[]][] = [[x.status === "off" ? "" : " (direct)", dests]];
+    for (let lv = 2; lv <= 1 + x.settings.transfers; lv++) {
+      const items = xd.filter((d) => d.level === lv);
+      if (items.length) levels.push([` (with ${connWord(lv - 1)})`, items]);
+    }
+    const all = levels.flatMap(([, items]) => items);
+    const groups: [string, Row[]][] = [];
+    for (const [suffix, items] of levels) {
+      const major = items.filter((d) => n.cities[d.city]!.importance >= 0.6);
+      const minor = items.filter((d) => n.cities[d.city]!.importance < 0.6);
+      if (major.length && minor.length && (items.length > 20 || levels.length > 1)) groups.push([`Major destinations${suffix}`, major], [`Other places${suffix} · ${minor.length}`, minor]);
+      else if (items.length) groups.push([levels.length > 1 ? (major.length ? `Major destinations${suffix}` : `Other places${suffix}`) : "", items]);
+    }
     // the mode icon column is as wide as the most modes any destination has
-    const ncats = Math.max(1, ...dests.map((d) => CAT_ORDER.filter((k) => d.cats & k).length));
+    const ncats = Math.max(1, ...all.map((d) => CAT_ORDER.filter((k) => d.cats & k).length));
     const lists = groups.map(([title, items]) =>
       h(
         "section",
         { class: "dest-group", style: `--ncats:${ncats}` },
         title ? h("h3", { class: "section" }, title) : null,
-        this.lazyList(h("ul", { class: "dest-list", "aria-label": title || `Direct destinations from ${c.name}` }), items, row),
+        this.lazyList(h("ul", { class: "dest-list", "aria-label": title || `Direct destinations from ${c.name}` }), items, row, items[0]?.via !== undefined ? 300 : Infinity),
       ),
     );
     const empty = h("p", { class: "pad muted", hidden: true }, "No destination matches.");
-    if (dests.length > 12) {
+    if (all.length > 12) {
       const input = h("input", {
         type: "search",
         class: "dest-filter",
-        placeholder: `Filter ${dests.length} destinations…`,
+        placeholder: `Filter ${all.length} destinations…`,
         "aria-label": "Filter destinations",
         oninput: (e: Event) => {
           const q = slugify((e.target as HTMLInputElement).value);
+          // a filter searches every place: render the capped lists completely
+          if (q) for (const ul of this.body.querySelectorAll<HTMLElement & { expand?: () => void }>(".dest-list")) ul.expand?.();
           let shown = 0;
-          for (const li of this.body.querySelectorAll<HTMLLIElement>(".dest-list li")) {
+          for (const li of this.body.querySelectorAll<HTMLLIElement>(".dest-list li:not(.dest-more)")) {
             const hit = !q || li.dataset.q!.includes(q);
             li.hidden = !hit;
             if (hit) shown++;
@@ -418,22 +488,265 @@ export class Panel {
     return out;
   }
 
-  /** Long lists: render the first rows now and append the rest in idle chunks (keeps taps responsive on phones). */
-  private lazyList<T>(ul: HTMLElement, items: T[], row: (x: T) => HTMLElement): HTMLElement {
+  /**
+   * "{n} destinations with {k} same-day connection(s)" with the pencil that opens the settings (number of
+   * connections, minimum transfer, maximum wait); with connections on, the travel day under it.
+   */
+  private xferSummary(x: XferView): HTMLElement {
+    const k = x.settings.transfers;
+    const edit = h(
+      "button",
+      { type: "button", class: "icon-btn xfer-edit", "aria-label": "Connections with changes: settings", title: "Connections, minimum transfer time and maximum wait", onclick: () => this.openTransfers(x.settings) },
+      icon("edit", 16),
+    );
+    const kind = x.settings.maxWait === null ? "same-day " : "";
+    const lines: (Node | string)[] = [];
+    if (x.status === "off") lines.push(h("span", { class: "muted" }, "Direct only – tap the pencil to add destinations with connections"));
+    else if (x.status === "unavailable") lines.push(h("span", { class: "muted" }, "Connections with changes are not available for this data build."));
+    else if (x.status === "error") lines.push(h("span", { class: "error" }, `Could not search connections: ${x.message ?? ""}`));
+    else {
+      for (let lv = 2; lv <= 1 + k; lv++) {
+        const m = x.dests.filter((d) => d.level === lv).length;
+        const pending = x.status === "loading" && x.rounds < lv;
+        lines.push(
+          h(
+            "span",
+            { class: `xfer-count${pending ? " is-loading" : ""}` },
+            pending ? `Searching destinations with ${lv - 1} ${kind}${connNoun(lv - 1)}…` : `${m} destination${m === 1 ? "" : "s"} with ${lv - 1} ${kind}${connNoun(lv - 1)}`,
+          ),
+        );
+      }
+    }
+    const rules =
+      x.status === "off" || x.status === "unavailable"
+        ? null
+        : h(
+            "span",
+            { class: "xfer-rules muted small" },
+            `min. ${x.settings.minTransfer} min to change${x.settings.maxWait === null ? ", same day" : `, max. ${fmtWait(x.settings.maxWait)} wait`}`,
+          );
+    return h(
+      "div",
+      { class: "xfer" },
+      h("div", { class: "xfer-line" }, h("div", { class: "xfer-text" }, lines, rules), edit),
+      x.status === "off" || x.status === "unavailable" ? null : this.dateBar(x.date, x.today, () => new Set(), true),
+    );
+  }
+
+  /** Settings dialog of connections with changes. */
+  private openTransfers(cur: TransferSettings): void {
+    document.querySelector("dialog.xfer-dialog")?.remove();
+    const dlg = h("dialog", { class: "xfer-dialog", "aria-labelledby": "xfer-title" });
+    let k = cur.transfers;
+    const kBtns = [0, 1, 2].filter((i) => i <= MAX_TRANSFERS).map((i) =>
+      h(
+        "button",
+        { type: "button", class: "scope-opt", "aria-pressed": String(i === k), onclick: () => {
+          k = i;
+          for (const b of kBtns) b.setAttribute("aria-pressed", String(b === kBtns[i]));
+          note.hidden = k < 2;
+        } },
+        i === 0 ? "Direct only" : connWord(i),
+      ),
+    );
+    const note = h("p", { class: "small muted xfer-note", hidden: k < 2 }, "Two connections reach most of Europe from a big city and take a few seconds to compute (and several MB of timetable data).");
+    const min = h("input", { type: "number", id: "xfer-min", min: "0", max: "120", step: "1", inputmode: "numeric", value: String(cur.minTransfer) });
+    const step = (d: number) => {
+      min.value = String(Math.max(0, Math.min(120, (Number(min.value) || 0) + d)));
+    };
+    const waits: [string, string][] = [["60", "1 hour"], ["120", "2 hours"], ["180", "3 hours"], ["240", "4 hours"], ["360", "6 hours"], ["480", "8 hours"], ["720", "12 hours"], ["day", "Same day (until 23:59)"]];
+    const curWait = cur.maxWait === null ? "day" : String(cur.maxWait);
+    if (!waits.some(([v]) => v === curWait)) waits.unshift([curWait, fmtWait(cur.maxWait!)]);
+    const wait = h("select", { id: "xfer-wait" }, waits.map(([v, label]) => h("option", { value: v, selected: v === curWait }, label)));
+    const close = () => {
+      dlg.close();
+      dlg.remove();
+    };
+    const apply = () => {
+      const m = Math.max(0, Math.min(120, Math.round(Number(min.value) || 0)));
+      const w = wait.value === "day" ? null : Number(wait.value);
+      close();
+      this.actions.setTransfers({ transfers: k, minTransfer: m, maxWait: w });
+    };
+    dlg.append(
+      h(
+        "form",
+        { class: "dialog-inner", onsubmit: (e: Event) => {
+          e.preventDefault();
+          apply();
+        } },
+        h("div", { class: "view-head" }, h("div", { class: "view-title" }, h("h2", { id: "xfer-title" }, "Connections with changes")), h("button", { type: "button", class: "icon-btn", "aria-label": "Close", onclick: close }, icon("close"))),
+        h(
+          "div",
+          { class: "xfer-form" },
+          h("div", { class: "xfer-field" }, h("span", { class: "xfer-label", id: "xfer-k" }, "Connections"), h("div", { class: "scope", role: "group", "aria-labelledby": "xfer-k" }, kBtns), note),
+          h(
+            "div",
+            { class: "xfer-field" },
+            h("label", { class: "xfer-label", for: "xfer-min" }, "Minimum transfer time"),
+            h(
+              "div",
+              { class: "xfer-stepper" },
+              h("button", { type: "button", class: "icon-btn", "aria-label": "1 minute less", onclick: () => step(-1) }, "−"),
+              min,
+              h("span", { class: "muted" }, "minutes"),
+              h("button", { type: "button", class: "icon-btn", "aria-label": "1 minute more", onclick: () => step(1) }, "+"),
+            ),
+            h("p", { class: "small muted" }, "At the same station. Changing between stations of a city takes at least the walk between them (30 min where they are not within walking distance)."),
+          ),
+          h("div", { class: "xfer-field" }, h("label", { class: "xfer-label", for: "xfer-wait" }, "Maximum waiting time"), wait),
+          h("p", { class: "small muted" }, "Destinations are searched for the travel day shown under the count; direct destinations are those served on any day."),
+        ),
+        h("div", { class: "xfer-actions" }, h("button", { type: "button", class: "btn", onclick: close }, "Cancel"), h("button", { type: "submit", class: "btn btn--primary" }, "Apply")),
+      ),
+    );
+    dlg.addEventListener("click", (e) => {
+      if (e.target === dlg) close();
+    });
+    dlg.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      close();
+    });
+    document.body.append(dlg);
+    dlg.showModal();
+  }
+
+  /** Journeys with changes between a pair without a direct service (connections enabled). */
+  private journeys(v: Extract<View, { kind: "journeys" }>): Node[] {
+    const n = this.net;
+    const a = n.cities[v.city]!;
+    const b = n.cities[v.dest]!;
+    const originTz = cityTz(n, v.city);
+    const from = v.station !== undefined ? shortStationName(stationName(n, v.station), a.name) : a.name;
+    const title = h("span", { class: "pair" }, v.station !== undefined ? `${from} (${a.name})` : from, h("span", { class: "pair-arrow", "aria-label": "to" }, icon("arrow", 16)), b.name);
+    const k = v.settings.transfers;
+    const sub =
+      v.status === "done"
+        ? `${v.rows.length} journey${v.rows.length === 1 ? "" : "s"} with up to ${connWord(k)} · no direct service`
+        : `No direct service · searching journeys with up to ${connWord(k)}…`;
+    const out: Node[] = [this.header(title, sub, { back: true })];
+    out.push(this.dateBar(v.date, v.today, () => new Set(), true));
+    if (v.status === "loading") {
+      out.push(h("p", { class: "pad muted" }, "Searching connections…"));
+      return out;
+    }
+    if (v.status === "error") {
+      out.push(h("p", { class: "pad error" }, `Could not search connections: ${v.message ?? ""}`));
+      return out;
+    }
+    if (!v.rows.length) {
+      out.push(
+        h(
+          "p",
+          { class: "pad muted" },
+          `No journey with up to ${connWord(k)} on ${formatDateShort(v.date)} (min. ${v.settings.minTransfer} min to change${v.settings.maxWait === null ? ", same day" : `, max. ${fmtWait(v.settings.maxWait)} wait`}).`,
+        ),
+      );
+      return out;
+    }
+    const nowUtc = Date.now();
+    out.push(
+      h(
+        "ol",
+        { class: "tt-list jr-list", "aria-label": `Journeys ${a.name} to ${b.name}` },
+        v.rows.map((r) => {
+          const j = r.journey;
+          const first = j.legs[0]!, last = j.legs[j.legs.length - 1]!;
+          const depStation = first.stations[first.board]!, arrStation = last.stations[last.alight]!;
+          const mins = Math.round((j.arrUtc - j.depUtc) / 60000);
+          const changes: Node[] = [];
+          for (let i = 1; i < j.legs.length; i++) {
+            const p = j.legs[i - 1]!, l = j.legs[i]!;
+            const sa = p.stations[p.alight]!, sb = l.stations[l.board]!;
+            const wait = Math.round((l.depUtc - p.arrUtc) / 60000);
+            const at = n.cities[n.ctx.stationCity[sb]!]!.name;
+            const walk = r.legs[i]?.walk;
+            changes.push(
+              sa === sb
+                ? h("span", null, `change at ${stationName(n, sb).includes(at) ? stationName(n, sb) : at} · ${fmtDuration(wait)}`)
+                : h(
+                    "span",
+                    { class: "walk", title: `Change in ${at}: walk from ${stationName(n, sa)} to ${stationName(n, sb)}` },
+                    icon("walk", 13),
+                    ` ${walk !== undefined ? `${walk} min walk ` : ""}${shortStationName(stationName(n, sa), at)} → ${shortStationName(stationName(n, sb), at)} (${at}) · ${fmtDuration(wait)}`,
+                  ),
+            );
+          }
+          return h(
+            "li",
+            { class: j.depUtc < nowUtc ? "past" : "" },
+            h(
+              "button",
+              {
+                type: "button",
+                class: "tt-row",
+                disabled: !r.route,
+                title: r.route ? "Show the legs and the stops" : "This journey could not be matched to the timetable",
+                onclick: () => r.route && this.actions.chooseJourney(r.route),
+              },
+              h("span", { class: "tt-times" }, timeEl(n, j.depUtc, depStation, { strong: true }), timeEl(n, j.arrUtc, arrStation, { refDate: localDate(j.depUtc, originTz), refTz: originTz })),
+              h(
+                "span",
+                { class: "tt-main" },
+                h("span", { class: "tt-line jr-legs" }, r.legs.map((l, i) => [i ? h("span", { class: "jr-sep", "aria-hidden": "true" }, icon("next", 12)) : null, l.info ? routeTag(l.info.route, l.info.number) : modeIcon(l.raw.cat, 16, CAT_LABEL[l.raw.cat])])),
+                h("span", { class: "tt-stations" }, stationName(n, depStation), h("span", { class: "arr" }, " → "), stationName(n, arrStation)),
+                h("span", { class: "tt-meta" }, changes.map((m, i) => [i ? h("span", { class: "sep" }, "·") : null, m])),
+              ),
+              h("span", { class: "tt-dur" }, fmtDuration(mins)),
+            ),
+          );
+        }),
+      ),
+    );
+    out.push(h("p", { class: "hint" }, "Times are local. Earliest arrivals for every departure; changes include the walk between stations. Select a journey for its legs and stops."));
+    return out;
+  }
+
+  /**
+   * Long lists: render the first rows now and append the rest in idle chunks (keeps taps responsive on phones).
+   * With `cap`, only that many rows are rendered until "Show all" is pressed (or a filter is typed): lists of
+   * places reached with connections can hold thousands of rows.
+   */
+  private lazyList<T>(ul: HTMLElement, items: T[], row: (x: T) => HTMLElement, cap = Infinity): HTMLElement {
     const FIRST = 40, CHUNK = 150;
     ul.append(...items.slice(0, FIRST).map(row));
     let i = FIRST;
+    let limit = Math.min(items.length, cap);
+    let more: HTMLElement | null = null;
     const next = () => {
       if (!ul.isConnected && i > FIRST) return; // view replaced
-      ul.append(...items.slice(i, i + CHUNK).map(row));
-      i += CHUNK;
+      const end = Math.min(i + CHUNK, limit);
+      const rows = items.slice(i, end).map(row);
+      if (more) more.before(...rows);
+      else ul.append(...rows);
+      i = end;
       const f = this.body.querySelector<HTMLInputElement>(".dest-filter");
       if (f?.value) f.dispatchEvent(new Event("input")); // apply an active filter to the new rows
-      if (i < items.length) schedule();
-      else ul.dispatchEvent(new Event("rendered"));
+      if (i < limit) schedule();
+      else if (i >= items.length) {
+        more?.remove();
+        more = null;
+        ul.dispatchEvent(new Event("rendered"));
+      }
     };
     const schedule = () => ("requestIdleCallback" in window ? requestIdleCallback(next, { timeout: 500 }) : setTimeout(next, 16));
-    if (i < items.length) schedule();
+    const expand = () => {
+      if (limit >= items.length) return;
+      const start = i < limit;
+      limit = items.length;
+      if (more) more.querySelector("button")!.disabled = true;
+      if (!start) schedule();
+    };
+    if (items.length > cap) {
+      more = h(
+        "li",
+        { class: "dest-more", "data-q": "" },
+        h("button", { type: "button", class: "link small", onclick: expand }, `Show all ${items.length.toLocaleString("en")}`),
+      );
+      ul.append(more);
+      (ul as HTMLElement & { expand?: () => void }).expand = expand;
+    }
+    if (i < limit) schedule();
     return ul;
   }
 
@@ -618,7 +931,7 @@ export class Panel {
    * Previous / next day around the date; the date opens a month calendar with a dot under each day the
    * pair's service runs (days outside the timetable period disabled).
    */
-  private dateBar(date: string, today: string, serviceDays: () => ReadonlySet<string>): HTMLElement {
+  private dateBar(date: string, today: string, serviceDays: () => ReadonlySet<string>, plain = false): HTMLElement {
     const n = this.net;
     const label = date === today ? `Today, ${formatDateShort(date)}` : date === addDays(today, 1) ? `Tomorrow, ${formatDateShort(date)}` : formatDateShort(date);
     const wrap = h("div", { class: "datebar-wrap" });
@@ -645,6 +958,7 @@ export class Panel {
             min: n.cal.startDate,
             max: lastDate(n.cal),
             serviceDays: serviceDays(),
+            plain,
             onPick: (d) => {
               close(false);
               this.actions.set({ date: d }, { replace: true });
@@ -1010,19 +1324,22 @@ interface OnwardCount {
   whole?: { el: HTMLElement; btn: HTMLElement };
 }
 
+/** "1 connection", "2 connections" */
+function connWord(k: number): string {
+  return `${k} ${connNoun(k)}`;
+}
+function connNoun(k: number): string {
+  return k === 1 ? "connection" : "connections";
+}
+/** Maximum wait: "3 h", "90 min" */
+function fmtWait(min: number): string {
+  return min % 60 === 0 ? `${min / 60} h` : fmtDuration(min);
+}
+
 /** Tooltip of a station without departures under the mode filter. */
 function noDepartures(name: string, d: StationDeps | undefined): string {
   const cats = depCats(d).map((k) => CAT_LABEL[k]!);
   if (!cats.length) return `No departures to other cities from ${name}`;
   const list = cats.length === 1 ? cats[0]! : `${cats.slice(0, -1).join(", ")} and ${cats[cats.length - 1]}`;
   return `No departures with the selected modes – ${name} is only served by ${list}`;
-}
-
-const regionNames = typeof Intl.DisplayNames === "function" ? new Intl.DisplayNames(["en"], { type: "region" }) : null;
-function countryName(cc: string): string {
-  try {
-    return regionNames?.of(cc) ?? cc;
-  } catch {
-    return cc;
-  }
 }

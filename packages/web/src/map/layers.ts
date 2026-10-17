@@ -164,7 +164,10 @@ function scaled(prop: string, zf: [number, number][], add = 0): Expr {
 
 const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
-export const GEOJSON_SOURCES = ["hl-ctx", "hl-casing", "hl", "focus", "focus-stations"] as const;
+export const GEOJSON_SOURCES = ["hl-xfer", "hl-ctx", "hl-casing", "hl", "focus", "focus-stations"] as const;
+
+/** Opacity of the lines reached with one / two changes (light, dark theme). */
+export const XFER_OPACITY: Record<number, [number, number]> = { 2: [0.5, 0.45], 3: [0.26, 0.24] };
 
 export function geojsonSources(): Record<string, { type: "geojson"; data: GeoJSON.FeatureCollection; tolerance?: number; buffer?: number; maxzoom?: number }> {
   const out: Record<string, { type: "geojson"; data: GeoJSON.FeatureCollection; tolerance?: number; buffer?: number; maxzoom?: number }> = {};
@@ -290,6 +293,18 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
   }
 
   // ---- highlighted corridors (selection), always above the dimmed network
+  // lines reached with changes: the category colour, thin, more transparent with every change
+  layers.push({
+    id: "hl-xfer",
+    type: "line",
+    source: "hl-xfer",
+    layout: lineLayout,
+    paint: {
+      "line-color": catColor(t),
+      "line-width": ["interpolate", ["linear"], ["zoom"], 3, ["match", ["get", "lvl"], 2, 1.3, 1], 8, ["match", ["get", "lvl"], 2, 2.2, 1.7], 12, ["match", ["get", "lvl"], 2, 3.2, 2.4]],
+      "line-opacity": ["match", ["get", "lvl"], 2, XFER_OPACITY[2]![t.dark ? 1 : 0], XFER_OPACITY[3]![t.dark ? 1 : 0]],
+    },
+  });
   // the rest of a selected vehicle run (before boarding / after alighting): thin, faded, under the ride
   for (const hop of [0, 1])
     layers.push({
@@ -363,7 +378,8 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
     return ["+", v, add, ["case", hover, 1.5, 0]];
   };
   const focusR = (add: number): Expr => E(["interpolate", ["linear"], ["zoom"], 3, focusStop(3, add), 7, focusStop(7, add), 10.5, focusStop(10.5, add)]);
-  const fade: Expr = E(["interpolate", ["linear"], ["zoom"], STATION_ZOOM, 1, STATION_ZOOM + 0.5, ["case", sel, 1, 0]]);
+  // places reached with changes (x = number of changes) are drawn lighter
+  const fadeX = (m: unknown): Expr => E(["interpolate", ["linear"], ["zoom"], STATION_ZOOM, m, STATION_ZOOM + 0.5, ["case", sel, 1, 0]]);
   layers.push({
     id: "focus-ring",
     type: "circle",
@@ -384,8 +400,8 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
         "circle-color": ["case", sel, t.accent, t.markerFill],
         "circle-stroke-color": ["case", sel, t.markerFill, t.markerStroke],
         "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 3, ["case", sel, 2.5, 1], 8, ["case", sel, 2.5, 1.6]],
-        "circle-opacity": fade,
-        "circle-stroke-opacity": fade,
+        "circle-opacity": fadeX(["match", ["get", "x"], 1, 0.7, 2, 0.45, 1]),
+        "circle-stroke-opacity": fadeX(["match", ["get", "x"], 1, 0.55, 2, 0.35, 1]),
         "circle-pitch-alignment": "map",
       },
     });
@@ -495,7 +511,7 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
         "text-color": dim && !focus ? t.dimText : t.text,
         "text-halo-color": t.halo,
         "text-halo-width": 2,
-        "text-opacity": focus ? 1 : cityFade(st, dim ? 0.8 : 1),
+        "text-opacity": focus ? ["match", ["get", "x"], 1, 0.8, 2, 0.6, 1] : cityFade(st, dim ? 0.8 : 1),
       },
     }) as LayerSpecification;
   // city name as a faint area label once the city has broken out into stations

@@ -52,3 +52,17 @@ describe("journey steps in the URL", () => {
     expect(parseHash(net, "#from=paris&to=lyon&trip=1").schedule).toBeUndefined(); // no legs, no trip
   });
 });
+
+describe("connection settings in the URL", () => {
+  it("keeps changes, minimum transfer and maximum wait only when they differ from the defaults", () => {
+    expect(parseHash(net, "#from=paris").xfer).toEqual({ transfers: 0, minTransfer: 10, maxWait: null });
+    const s = parseHash(net, "#from=paris&changes=1&mintransfer=15&wait=180");
+    expect(s.xfer).toEqual({ transfers: 1, minTransfer: 15, maxWait: 180 });
+    expect(toHash(net, s)).toBe("#from=paris&changes=1&mintransfer=15&wait=180");
+    expect(toHash(net, parseHash(net, "#from=paris&changes=2&wait=day"))).toBe("#from=paris&changes=2");
+    // out of range values are clamped
+    expect(parseHash(net, "#from=paris&changes=9&mintransfer=999").xfer).toEqual({ transfers: 2, minTransfer: 120, maxWait: null });
+    // settings without changes stay out of the URL
+    expect(toHash(net, parseHash(net, "#from=paris&mintransfer=15"))).toBe("#from=paris");
+  });
+});
