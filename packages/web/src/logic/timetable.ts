@@ -48,7 +48,13 @@ interface Candidate {
   alight: number;
   boardSeg: [number, number];
   alightSeg: [number, number];
+  /** hops of the chosen board → alight stops (the departure row's journey) */
   corridors: number[];
+  /**
+   * Hops drawn for the pair: from the first stop in the origin city (or the chosen origin station) to the
+   * alight stop, so the whole run from the origin city's stations is highlighted, as in the reach view.
+   */
+  span: number[];
 }
 
 /** Pattern/stop combinations that go from cf.city (or only from `originStation` of it) directly to `dest`. */
@@ -83,6 +89,7 @@ export function pairCandidates(cf: CityFile, ctx: NetCtx, f: Filters, dest: numb
       boardSeg: originStation !== undefined ? [board, board] : [sa.first, sa.last],
       alightSeg: [sb.first, sb.last],
       corridors: p.corridors.slice(board, alight),
+      span: p.corridors.slice(originStation !== undefined ? board : sa.first, alight),
     });
   });
   return out;
@@ -94,7 +101,7 @@ export function pairTraffic(cf: CityFile, ctx: NetCtx, f: Filters, dest: number,
   const prep = prepare(cf, ctx);
   for (const c of pairCandidates(cf, ctx, f, dest, originStation)) {
     if (!prep.tripsByPattern[c.pattern]!.some((ti) => ctx.cal.anyDay[cf.trips[ti]![2]])) continue;
-    addTraffic(t, c.corridors, cf.routes[cf.patterns[c.pattern]!.route]!.cat, patternTpd(cf, ctx, c.pattern));
+    addTraffic(t, c.span, cf.routes[cf.patterns[c.pattern]!.route]!.cat, patternTpd(cf, ctx, c.pattern));
   }
   return t;
 }

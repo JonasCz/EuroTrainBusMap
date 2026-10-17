@@ -114,6 +114,13 @@ describe("timetable", () => {
     // the ride from Alpha Hbf: its first hop is inside Alpha (Hbf → Süd), then Beta and Gamma
     expect([...pairCorridors(alpha, ctx, all, 2)]).toEqual([[9, Cat.LongDistance], [10, Cat.LongDistance], [11, Cat.LongDistance]]);
   });
+  it("pair corridors start at the first stop in the origin city, not at the row's boarding station", () => {
+    // RE Alpha Süd → Alpha Hbf → Beta: the rows board at Hbf (main station), the line is drawn from Süd
+    const cf: CityFile = { ...alpha, patterns: [{ route: 1, stations: [1, 0, 2], arr: [0, 10, 60], dep: [0, 12, 60], corridors: [20, 21], headsign: "Beta" }], patternTz: [0], trips: [[0, 600, 0, "11"]] };
+    expect(pairCandidates(cf, ctx, all, 1)[0]!.corridors).toEqual([21]);
+    expect([...pairCorridors(cf, ctx, all, 1).keys()]).toEqual([20, 21]);
+    expect([...pairCorridors(cf, ctx, all, 1, 0).keys()]).toEqual([21]); // from Hbf only
+  });
 });
 
 describe("connections", () => {
