@@ -8,7 +8,7 @@ import { focusCityData, highlightData, stationData, type Emphasis } from "./feat
 import { CITY_AREA_LAYER, CITY_LAYERS, FOCUS_LAYERS, STATION_LAYERS, STATION_ZOOM, cityFilter, geojsonSources, networkLayers, type LayerState } from "./layers.ts";
 import { URBAN_HIT_LAYERS, URBAN_LAYER_IDS, urbanLayers, urbanSources, urbanTileKeys, type UrbanHit } from "./urban.ts";
 import { urbanPopup } from "../ui/urbanpopup.ts";
-import { DEFAULT_FILTERS, localOn } from "../logic/filters.ts";
+import { ALL_CATS, DEFAULT_FILTERS, localOn } from "../logic/filters.ts";
 import { prefetchBasemapIndex, registerBasemapProtocol } from "./basemap.ts";
 import { prefetchGz, registerGzProtocol } from "./protocol.ts";
 import { baseLayers, baseStyle, glyphPrefetchUrls } from "./style.ts";
@@ -65,6 +65,8 @@ export class MapView {
   private hasUrban = false;
   private popup: maplibregl.Popup | null = null;
   private resolveNetPaint: () => void = () => undefined;
+  /** URL template of the network tiles for the filters (every mode on, or a mode filter). */
+  private netUrl: (f: Filters) => string;
   /** Resolves once the network tiles have been drawn for the first time. */
   readonly firstNetPaint: Promise<void>;
 
@@ -83,7 +85,12 @@ export class MapView {
   ) {
     this.theme = currentTheme();
     this.hasUrban = !!urban;
-    registerGzProtocol(new Set([...tileSet(tiles), ...(urban ? urbanTileKeys(urban) : [])]));
+    const dirOf = (template: string) => `/${template.split("/{z}")[0]}/`;
+    registerGzProtocol(
+      new Set([...tileSet(tiles), ...(urban ? urbanTileKeys(urban) : [])]),
+      tiles.modes ? { dir: dirOf(tiles.modes.url), plainDir: dirOf(tiles.url), maxzoom: tiles.modes.maxzoom, keys: tileSet({ ...tiles, tiles: tiles.modes.tiles }) } : null,
+    );
+    this.netUrl = (f) => `etbmgz://${dataUrl("")}${tiles.modes && f.cats !== ALL_CATS ? tiles.modes.url : tiles.url}`;
     if (basemap) {
       registerBasemapProtocol();
       prefetchBasemapIndex(basemap.root);
@@ -92,7 +99,7 @@ export class MapView {
     const style: StyleSpecification = baseStyle(this.theme, (n) => dataUrl(`basemap/${n}.json`), basemap);
     style.sources.net = {
       type: "vector",
-      tiles: [`etbmgz://${dataUrl("")}${tiles.url}`],
+      tiles: [this.netUrl(this.state.filters)],
       minzoom: tiles.minzoom,
       maxzoom: tiles.maxzoom,
       bounds: [-32, 26, 62, 75],
@@ -328,9 +335,13 @@ export class MapView {
     if (sameFilters(this.state.filters, f)) return;
     await this.ready;
     const catsChanged = f.cats !== this.state.filters.cats;
+    const url = this.netUrl(f);
+    const urlChanged = url !== this.netUrl(this.state.filters);
     this.state = { ...this.state, filters: f };
     this.applyUrbanVisibility();
     if (!catsChanged) return;
+    // mode filters show more lines at low zoom: they have their own tiles
+    if (urlChanged) (this.map.getSource("net") as maplibregl.VectorTileSource | undefined)?.setTiles([url]);
     // the set of category layers depends on the filters: rebuild the network layers
     const t0 = performance.now();
     for (const id of this.layerIds) if (this.map.getLayer(id)) this.map.removeLayer(id);

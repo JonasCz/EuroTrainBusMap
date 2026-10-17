@@ -89,7 +89,7 @@ Pipeline in short:
    actually loads, so phones never download the whole network:
    - `core.json` (~0.7 MB gzip): cities only (names, positions, importance, shard) + tile index;
      the only data needed to start.
-   - `tiles/{z}/{x}/{y}.pbf.gz` (z2–9, ~4100 files, ~26 MB gzip total; only tiles that contain data):
+   - `tiles/{z}/{x}/{y}.pbf.gz` (z2–9, ~4100 files, ~30 MB gzip total, + `tiles-m/` z2–6 for mode filters; only tiles that contain data):
      gzipped Mapbox vector tiles of the drawn network (layers `seg`, `city`, and at z9 also `st` stations),
      overzoomed beyond z9. z9 (extent 8192 ≈ 6 m) holds the stored
      geometry almost unsimplified, z7/z8 are simplified to ~200 / ~100 m. Features are filter-independent: per category width/LOD level; the
@@ -102,9 +102,18 @@ Pipeline in short:
      (`packages/shared/src/density.ts`): the target is a roughly even amount of ink per screen
      cell, so where the map around a line is sparse, whole chains of regional rail, coach and bus
      lines appear as early as the budget allows (floors: long-distance 3, regional/coach 4, bus 5),
-     in importance order within an ink budget per 256 px cell, never in dense areas beyond the
-     budget, and only connected to the visible network; computed globally in the ETL, so
-     neighbouring tiles always agree. Lines fade in over 0.7 zoom levels ending at their level
+     in importance order within an ink budget (3000 px of line per 256 × 256 px, checked on a
+     64 px grid over a 192 px window, so a sparse region next to a dense one – Northern Ireland,
+     Northern England, the Balkans – fills up on its own), never in dense areas beyond the
+     budget, and only connected to the visible network (by city); computed globally in the ETL, so
+     neighbouring tiles always agree. **Mode filters**: the levels are computed for every subset of
+     the four modes (15 scenarios sharing one pass, ~40 s; only the subset's own ink counts, so
+     with "Coach" alone the coaches fill the room the trains left; a subset never shows a line later
+     than a superset). Tiles store the all-modes level `l{k}` plus, where it differs, the subset levels
+     packed as base-16 digits `s{k}` (cities: `n{k}`), and the style picks the digit of the active
+     filter. Up to z6 a filtered view loads its own tile set `tiles-m/` (~9 MB, 134 files: the union of
+     all scenarios is 2–3× heavier at low zoom), so the default view stays light; from z7 `tiles/`
+     serves every filter (the protocol redirects). Lines fade in over 0.7 zoom levels ending at their level
      (`FADE_ZOOM`; tile z already holds everything that starts fading in before z+1), city
      markers/labels and stations fade the same way (style `line-opacity` / `circle-opacity`
      interpolated over zoom with per-feature stops). Stored gzipped because static hosts don't

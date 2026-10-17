@@ -9,6 +9,19 @@ import maplibregl from "maplibre-gl";
 
 let registered = false;
 let known: Set<string> | null = null;
+
+/**
+ * A second tile set for the network under mode filters (`TileIndex.modes`): up to `maxzoom` its own
+ * tiles (`keys`), beyond it the URLs are redirected to the plain tile directory, which serves every filter.
+ */
+export interface ModeTiles {
+  /** URL path parts of the two tile directories, e.g. "/tiles-m/" and "/tiles/" */
+  dir: string;
+  plainDir: string;
+  maxzoom: number;
+  keys: Set<string>;
+}
+let modeTiles: ModeTiles | null = null;
 const prefetched = new Map<string, Promise<ArrayBuffer>>();
 
 async function fetchGz(url: string, signal?: AbortSignal): Promise<ArrayBuffer | null> {
@@ -46,14 +59,20 @@ export async function inflate(buf: ArrayBuffer): Promise<ArrayBuffer> {
   return new Response(stream).arrayBuffer();
 }
 
-export function registerGzProtocol(tiles?: Set<string>): void {
+export function registerGzProtocol(tiles?: Set<string>, modes?: ModeTiles | null): void {
   if (tiles) known = tiles;
+  if (modes !== undefined) modeTiles = modes;
   if (registered) return;
   registered = true;
   maplibregl.addProtocol("etbmgz", async (params, abort) => {
-    const url = params.url.slice("etbmgz://".length);
+    let url = params.url.slice("etbmgz://".length);
     const m = TILE_RE.exec(url);
-    if (m && known && !known.has(`${m[1]}/${m[2]}/${m[3]}`)) return { data: new ArrayBuffer(0) };
+    const mt = modeTiles;
+    if (m && mt && url.includes(mt.dir)) {
+      if (+m[1]! > mt.maxzoom) url = url.replace(mt.dir, mt.plainDir);
+      else if (!mt.keys.has(`${m[1]}/${m[2]}/${m[3]}`)) return { data: new ArrayBuffer(0) };
+    }
+    if (m && known && !(mt && url.includes(mt.dir)) && !known.has(`${m[1]}/${m[2]}/${m[3]}`)) return { data: new ArrayBuffer(0) };
     const pre = prefetched.get(key(url));
     if (pre) {
       prefetched.delete(key(url)); // one use: MapLibre may transfer (detach) the buffer

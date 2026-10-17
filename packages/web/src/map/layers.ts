@@ -4,11 +4,12 @@
  * selection layers come from small client-built GeoJSON sources.
  *
  * Tile features are filter-independent: each segment carries per-category
- * widths `w{k}`, and LOD levels `l{k}`, and the
- * style expressions below pack the categories that are visible (under the
+ * widths `w{k}`, and LOD levels `l{k}` (every mode on) / `s{k}` (packed levels
+ * with other modes hidden), and the style expressions below pick the level of
+ * the current filters and pack the categories that are visible (under the
  * current filters, at the current LOD level) side by side.
  */
-import { CAT_BITS, Cat, TILE_LAYERS } from "@etbm/shared";
+import { CAT_BITS, Cat, SCEN_BASE, SCEN_DIGITS, TILE_LAYERS, scenarioDigit } from "@etbm/shared";
 import type { ExpressionSpecification, FilterSpecification, LayerSpecification } from "maplibre-gl";
 import type * as GeoJSON from "geojson";
 import type { Filters } from "../logic/filters.ts";
@@ -97,14 +98,26 @@ function fadeStops(shift: number): number[] {
   }
   return [...zs].sort((a, b) => a - b);
 }
-/** line-opacity of one category: a feature is fully shown at its own level `l{k}` and fades in over the FADE_ZOOM before. */
-function lineFade(k: number, base: unknown): Expr {
-  const start = ["at", ["get", `l${k}`], ["literal", LEVEL_ZOOM]];
+/**
+ * A packed mode-scenario level (`s{k}` on segments, `n{k}` on cities, see netmap.ts): the level of
+ * category k when only the categories of the filter are shown. Falls back to `plain` (all categories)
+ * where the feature has no packed value or every other category is on.
+ */
+function scenarioLevel(k: number, f: Filters, plain: unknown, packed: string, map = (lv: unknown) => lv): unknown {
+  const d = scenarioDigit(CAT_BITS.indexOf(k as (typeof CAT_BITS)[number]), f.cats);
+  if (d >= SCEN_DIGITS) return plain;
+  return ["case", ["has", packed], map(["%", ["floor", ["/", ["get", packed], SCEN_BASE ** d]], SCEN_BASE]), plain];
+}
+/** LOD level index of category k of a segment under the filters. */
+export const levelOf = (k: number, f: Filters): unknown => scenarioLevel(k, f, ["get", `l${k}`], `s${k}`);
+/** line-opacity of one category: a feature is fully shown at its own level and fades in over the FADE_ZOOM before. */
+function lineFade(k: number, f: Filters, base: unknown): Expr {
+  const start = ["at", levelOf(k, f), ["literal", LEVEL_ZOOM]];
   return E(["interpolate", ["linear"], ["zoom"], ...fadeStops(0).flatMap((z) => [z, ["*", base, fadeAt(z, start)]])]);
 }
 /** Casing opacity: follows the earliest-fading category present on the feature. */
-function casingFade(cats: number[], base: unknown): Expr {
-  const one = (z: number) => cats.map((k) => ["case", ["has", `l${k}`], fadeAt(z, ["at", ["get", `l${k}`], ["literal", LEVEL_ZOOM]]), 0]);
+function casingFade(cats: number[], f: Filters, base: unknown): Expr {
+  const one = (z: number) => cats.map((k) => ["case", ["has", `l${k}`], fadeAt(z, ["at", levelOf(k, f), ["literal", LEVEL_ZOOM]]), 0]);
   return E(["interpolate", ["linear"], ["zoom"], ...fadeStops(0).flatMap((z) => [z, ["*", base, ["max", 0, ...one(z)]]])]);
 }
 /** Fade of a plain layer that starts at zoom z0 (station levels). */
@@ -115,7 +128,7 @@ const rampFrom = (z0: number, to: number): Expr => E(["interpolate", ["linear"],
 /** Whether category k of a feature is drawn at LOD level L under the filters. */
 function vis(k: number, L: number, f: Filters): unknown {
   if (!(f.cats & k)) return false;
-  return ["all", ["has", `w${k}`], ["<=", ["get", `l${k}`], L]];
+  return ["all", ["has", `w${k}`], ["<=", levelOf(k, f), L]];
 }
 const wOf = (k: number) => ["get", `w${k}`];
 /** Total bundle width (units) at level L. */
@@ -188,7 +201,8 @@ export interface LayerState {
 const CITY_LEAD = 0.5;
 function cityZoomExpr(st: LayerState): unknown {
   const cats = CAT_BITS.filter((k) => st.filters.cats & k);
-  const zOf = (k: number) => ["coalesce", ["get", `m${k}`], 99];
+  // `m{k}` is a zoom, the packed `n{k}` holds level indices
+  const zOf = (k: number) => ["case", ["has", `m${k}`], scenarioLevel(k, st.filters, ["get", `m${k}`], `n${k}`, (lv) => ["at", lv, ["literal", LEVELS]]), 99];
   const minLine = cats.length ? ["min", 99, ...cats.map(zOf)] : 99;
   return ["max", ["get", "tz"], minLine];
 }
@@ -230,7 +244,7 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
     paint: {
       "line-color": t.land,
       "line-width": byZoom(ZF, (_z, fz, L) => ["case", [">", total(L, f), 0], ["+", ["*", fz * wMul, total(L, f)], 1.2], 0]),
-      "line-opacity": casingFade(cats as number[], dim ? 0.6 : 1),
+      "line-opacity": casingFade(cats as number[], f, dim ? 0.6 : 1),
     },
   });
   // long straight hops: thin dashed, from LONG_HOP_ZOOM
@@ -268,7 +282,7 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
           "line-color": dim ? t.dimLine : catColorConst(t, k),
           "line-width": width,
           "line-offset": byZoom(ZF, (_z, fz, L) => ["*", fz * wMul, offset(k, L, f)]),
-          "line-opacity": lineFade(k, dim ? 1 : k === Cat.Bus ? 0.65 : approx ? 0.85 : 1),
+          "line-opacity": lineFade(k, f, dim ? 1 : k === Cat.Bus ? 0.65 : approx ? 0.85 : 1),
           ...(approx ? { "line-dasharray": [2, 1.6] } : {}),
         },
       });

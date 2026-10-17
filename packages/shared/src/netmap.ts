@@ -15,17 +15,19 @@ import { decodePolyline, encodePolyline, packCities, packStations, unpackCities,
 import type { CatBit, City, Corridor, Segment, Station } from "./schema.ts";
 import type * as GeoJSON from "geojson";
 import { Cat } from "./schema.ts";
-import { promoteSparse } from "./density.ts";
+import { monotoneLevels, promoteScenarios } from "./density.ts";
 import { lineGroups, smoothLevels } from "./lines.ts";
 import { LEVELS, LONG_HOP_ZOOM, catWidth, cityTierZoom, corridorMinZoom, haversineKm, isLongHop, levelIndex, stationLevel } from "./lod.ts";
 
-export const MAPDATA_VERSION = 5;
+export const MAPDATA_VERSION = 6;
 export const CAT_BITS = [Cat.LongDistance, Cat.Regional, Cat.Coach, Cat.Bus] as const;
 /**
  * Vector tiles: zoom range (tileSize 512) and source-layer names. Tiles at the max zoom hold the full
  * stored geometry (8192 units ≈ 6 m at z9, 50° N); the map overzooms them to its max zoom.
  */
 export const TILE_MAXZOOM = 9;
+/** Up to this tile zoom, mode filters (not every category on) use their own tile set (`TileIndex.modes`). */
+export const MODES_TILE_MAXZOOM = 6;
 export const TILE_LAYERS = { seg: "seg", city: "city", station: "st" } as const;
 
 export type Pos = [number, number];
@@ -66,11 +68,59 @@ export interface NetIndex {
   segLen: Float32Array;
   /** per segment × CAT_BITS index: earliest LOD level of the corridors using it */
   segLevel: Int8Array;
+  /**
+   * Mode scenarios: the same per category subset (key: mask over CAT_BITS indices, i.e. the Cat
+   * bitmask of the enabled categories). Only with density LOD; the full mask is `segLevel`.
+   */
+  segLevelBy?: Map<number, Int8Array>;
+}
+
+/** Packed scenario levels: one base-16 digit (LOD level index) per subset of the other categories. */
+export const SCEN_BASE = 16;
+/** Digits per category: the subsets of the other categories without "all of them" (that is `l{k}`). */
+export const SCEN_DIGITS = 7;
+
+/**
+ * Digit of category index `ki` in the packed scenario levels (`s{k}` / `n{k}`) when the categories of
+ * `mask` (bits over CAT_BITS indices = Cat bits) are enabled: bit j = the j-th other category is on.
+ * SCEN_DIGITS (7) = all others on, i.e. the plain level `l{k}`.
+ */
+export function scenarioDigit(ki: number, mask: number): number {
+  let d = 0, j = 0;
+  for (let o = 0; o < CAT_BITS.length; o++) {
+    if (o === ki) continue;
+    if ((mask >> o) & 1) d |= 1 << j;
+    j++;
+  }
+  return d;
+}
+
+/** Inverse of scenarioDigit: the mask (incl. `ki`) of digit `d`. */
+export function scenarioMask(ki: number, d: number): number {
+  let m = 1 << ki, j = 0;
+  for (let o = 0; o < CAT_BITS.length; o++) {
+    if (o === ki) continue;
+    if ((d >> j) & 1) m |= 1 << o;
+    j++;
+  }
+  return m;
+}
+
+export function unpackScenario(v: number): number[] {
+  const out: number[] = [];
+  for (let d = 0; d < SCEN_DIGITS; d++) out.push(Math.floor(v / SCEN_BASE ** d) % SCEN_BASE);
+  return out;
+}
+
+export function packScenario(digits: number[]): number {
+  return digits.reduce((a, v, d) => a + v * SCEN_BASE ** d, 0);
 }
 
 export interface NetIndexOptions {
   /** Density-aware LOD (density.ts): lines appear earlier where the map is sparse. */
-  density?: boolean | { budget?: number; maxPromote?: number };
+  density?: boolean | { budget?: number; maxPromote?: number; cellPx?: number; radius?: number };
+  /** With density: also compute the levels of every category subset (`segLevelBy`); default true. */
+  scenarios?: boolean;
   /** Reveal chains of hops as a whole (lines.ts); default true. */
   lines?: boolean;
   log?: (s: string) => void;
@@ -81,7 +131,6 @@ export function buildNetIndex(net: MapNet, opts: NetIndexOptions = {}): NetIndex
   const nS = net.segments.length;
   const segLen = new Float32Array(nS);
   const NC = CAT_BITS.length;
-  const segLevel = new Int8Array(nS * NC).fill(127);
   // corridor × cat level (base rules), and corridor length
   const corLevel = new Int8Array(nC * NC).fill(127);
   const corLen = new Float32Array(nC);
@@ -102,39 +151,70 @@ export function buildNetIndex(net: MapNet, opts: NetIndexOptions = {}): NetIndex
   const corList = net.corridors.map((c) => (c ? { a: c.a, b: c.b, segs: c.segs ?? [], cats: c.cats, tpd: c.tpd } : undefined));
   const group = lineGroups(corList, CAT_BITS, fixed);
   if (opts.lines !== false) smoothLevels(corLevel, group);
+  let byMask: Map<number, Int8Array> | undefined;
   if (opts.density) {
     const t0 = Date.now();
-    const r = promoteSparse(
+    const full = (1 << NC) - 1;
+    // the full set first (reference scenario), then every other non-empty subset
+    const masks = opts.scenarios === false ? [full] : [full, ...Array.from({ length: full - 1 }, (_, i) => full - 1 - i)];
+    // connectivity by city: a coach line from a city's bus station grows out of the city's rail network
+    const nodeOf = (station: number) => {
+      const city = net.stations[station]?.city;
+      return city === undefined || city < 0 ? -1 - station : city;
+    };
+    const res = promoteScenarios(
       {
         segCoords: net.segments.map((s) => s?.coords),
-        corridors: corList,
+        corridors: corList.map((c) => (c ? { ...c, a: nodeOf(c.a), b: nodeOf(c.b) } : undefined)),
         cats: CAT_BITS,
         levels: corLevel,
         fixed,
         group: opts.lines !== false ? group : undefined,
       },
+      masks,
       typeof opts.density === "object" ? opts.density : {},
     );
-    opts.log?.(`mapdata: density LOD promoted ${CAT_BITS.map((k, i) => `${k}:${r.promoted[i]}`).join(" ")} corridor lines (${Date.now() - t0} ms)`);
+    monotoneLevels(res, NC);
+    corLevel.set(res[0]!.levels);
+    opts.log?.(`mapdata: density LOD promoted ${CAT_BITS.map((k, i) => `${k}:${res[0]!.promoted[i]}`).join(" ")} corridor lines, ${masks.length} mode scenarios (${Date.now() - t0} ms)`);
+    if (masks.length > 1) {
+      byMask = new Map();
+      for (const r of res.slice(1)) byMask.set(r.mask, segLevels(net, r.levels, NC));
+    }
   }
+  const segLevel = segLevels(net, corLevel, NC);
   for (const c of net.corridors) {
     if (!c) continue;
     const len = corLen[c.id]!;
     for (const code of c.segs ?? []) {
       const s = segId(code);
-      for (let k = 0; k < NC; k++) if (corLevel[c.id * NC + k]! < segLevel[s * NC + k]!) segLevel[s * NC + k] = corLevel[c.id * NC + k]!;
       if (len > segLen[s]!) segLen[s] = len;
     }
   }
-  return { segLen, segLevel };
+  return { segLen, segLevel, ...(byMask ? { segLevelBy: byMask } : {}) };
+}
+
+/** Segment × cat level = earliest level of the corridors using the segment. */
+function segLevels(net: MapNet, corLevel: Int8Array, NC: number): Int8Array {
+  const segLevel = new Int8Array(net.segments.length * NC).fill(127);
+  for (const c of net.corridors) {
+    if (!c) continue;
+    for (const code of c.segs ?? []) {
+      const s = segId(code);
+      for (let k = 0; k < NC; k++) if (corLevel[c.id * NC + k]! < segLevel[s * NC + k]!) segLevel[s * NC + k] = corLevel[c.id * NC + k]!;
+    }
+  }
+  return segLevel;
 }
 
 // ---------------------------------------------------------------- tile features
 
 /**
- * Properties of one drawn segment (layer `seg`/`term`). Per present category k
- * (1, 2, 4, 8): `w{k}` width unit, `l{k}` LOD level index. The client packs visible categories side by side
- * with style expressions, so tiles do not depend on the active filters.
+ * Properties of one drawn segment (layer `seg`). Per present category k
+ * (1, 2, 4, 8): `w{k}` width unit, `l{k}` LOD level index with every mode on and, where hiding other
+ * modes moves it earlier, `s{k}` = the levels of the other mode subsets packed as base-16 digits
+ * (scenarioDigit). The client packs visible categories side by side and picks the level of the active
+ * filter with style expressions, so tiles do not depend on the active filters.
  */
 export function segmentProps(net: MapNet, idx: NetIndex, s: Segment): Record<string, number> | null {
   if (!s.cats || s.coords.length < 2) return null;
@@ -145,30 +225,49 @@ export function segmentProps(net: MapNet, idx: NetIndex, s: Segment): Record<str
     if (!(s.cats & k)) return;
     const tpd = s.tpd[k] ?? 0;
     props.k! += tpd;
-    const users = idx.segLevel[s.id * CAT_BITS.length + i]!;
     // long-distance trunks may appear earlier on their aggregated traffic
     const agg = k === Cat.LongDistance ? levelIndex(corridorMinZoom(k, tpd, len, s.snapped)) : 127;
-    props[`l${k}`] = hop ? levelIndex(LONG_HOP_ZOOM) : Math.min(users, agg, LEVELS.length - 1);
+    const level = (segLevel: Int8Array) => (hop ? levelIndex(LONG_HOP_ZOOM) : Math.min(segLevel[s.id * CAT_BITS.length + i]!, agg, LEVELS.length - 1));
+    const l = level(idx.segLevel);
+    props[`l${k}`] = l;
+    // levels with other categories hidden, packed (only where one differs)
+    if (idx.segLevelBy) {
+      const digits = Array.from({ length: SCEN_DIGITS }, (_, d) => {
+        const by = idx.segLevelBy!.get(scenarioMask(i, d));
+        return by ? level(by) : l;
+      });
+      if (digits.some((v) => v !== l)) props[`s${k}`] = packScenario(digits);
+    }
     props[`w${k}`] = Math.round(catWidth(k, tpd, s.snapped) * 100) / 100;
   });
   props.k = Math.round(props.k! * 10) / 10;
   return props;
 }
 
-/** Zoom from which any line of a segment is drawn. */
-export function segmentMinZoom(props: Record<string, number>): number {
+/** Earliest level of category k on a feature over all mode scenarios (`l{k}` and the packed `s{k}`), undefined if absent. */
+export function minScenarioLevel(props: Record<string, number | string>, k: number, plain = "l", packed = "s"): number | undefined {
+  const l = props[`${plain}${k}`] as number | undefined;
+  if (l === undefined) return undefined;
+  const p = props[`${packed}${k}`] as number | undefined;
+  return p === undefined ? l : Math.min(l, ...unpackScenario(p));
+}
+
+/** Zoom from which any line of a segment is drawn (under some mode filter; `modes` false: with every mode on). */
+export function segmentMinZoom(props: Record<string, number>, modes = true): number {
   let l = 127;
-  for (const k of CAT_BITS) if (props[`l${k}`] !== undefined) l = Math.min(l, props[`l${k}`]!);
+  for (const k of CAT_BITS) l = Math.min(l, (modes ? minScenarioLevel(props, k) : props[`l${k}`]) ?? 127);
   return LEVELS[Math.min(l, LEVELS.length - 1)]!;
 }
 
 /**
  * City marker properties: `m{k}` = earliest zoom of a line of category k ending
- * at the city, `tz` the
+ * at the city (`n{k}`: the earliest level index per mode subset, packed like `s{k}`), `tz` the
  * importance tier zoom; the client shows a city from max(tz, min visible m).
  */
 export function cityProps(net: MapNet, idx: NetIndex, segProps: (Record<string, number> | null)[]): (Record<string, number | string> | null)[] {
   const m = net.cities.map(() => ({}) as Record<string, number>);
+  /** per city and category: earliest level per mode scenario digit */
+  const sl: Record<number, number[]>[] = [];
   const width = new Float32Array(net.cities.length);
   const midLevel = levelIndex(7.5);
   for (const c of net.corridors) {
@@ -185,6 +284,10 @@ export function cityProps(net: MapNet, idx: NetIndex, segProps: (Record<string, 
         const z = LEVELS[p[`l${k}`]!]!;
         const r = m[city]!;
         if (r[`m${k}`] === undefined || z < r[`m${k}`]!) r[`m${k}`] = z;
+        // per mode scenario (level indices)
+        const ds = p[`s${k}`] !== undefined ? unpackScenario(p[`s${k}`]!) : new Array<number>(SCEN_DIGITS).fill(p[`l${k}`]!);
+        const cur = (sl[city] ??= {})[k];
+        sl[city]![k] = cur ? cur.map((v, d) => Math.min(v, ds[d]!)) : ds;
         if (p[`l${k}`]! <= midLevel) w += p[`w${k}`]! + 0.3;
       }
       if (w > width[city]!) width[city] = w;
@@ -193,14 +296,24 @@ export function cityProps(net: MapNet, idx: NetIndex, segProps: (Record<string, 
   return net.cities.map((c) => {
     const r = m[c.id]!;
     if (!Object.keys(r).length) return null;
-    return { id: c.id, name: c.name, imp: c.importance, ns: c.stations.length, mw: Math.round(width[c.id]! * 100) / 100, tz: cityTierZoom(c.importance), ...r };
+    // `n{k}`: packed level indices of the earliest line per mode scenario, where one differs from `m{k}`
+    const n: Record<string, number> = {};
+    for (const k of CAT_BITS) {
+      const ds = sl[c.id]?.[k];
+      if (ds && r[`m${k}`] !== undefined && ds.some((v) => LEVELS[v] !== r[`m${k}`])) n[`n${k}`] = packScenario(ds);
+    }
+    return { id: c.id, name: c.name, imp: c.importance, ns: c.stations.length, mw: Math.round(width[c.id]! * 100) / 100, tz: cityTierZoom(c.importance), ...r, ...n };
   });
 }
 
-/** Zoom from which a city marker is shown with all categories enabled. */
+/** Zoom from which a city marker may be shown (under some mode filter). */
 export function cityMinZoom(props: Record<string, number | string>): number {
   let z = Infinity;
-  for (const k of CAT_BITS) if (props[`m${k}`] !== undefined) z = Math.min(z, props[`m${k}`] as number);
+  for (const k of CAT_BITS) {
+    if (props[`m${k}`] === undefined) continue;
+    z = Math.min(z, props[`m${k}`] as number);
+    if (props[`n${k}`] !== undefined) z = Math.min(z, ...unpackScenario(props[`n${k}`] as number).map((l) => LEVELS[l]!));
+  }
   return Math.max(z, props.tz as number);
 }
 
@@ -262,6 +375,11 @@ export interface TileIndex {
   tiles: Record<string, number[]>;
   /** Path template relative to the build dir. */
   url: string;
+  /**
+   * Tiles for mode filters up to `maxzoom` (they hold the lines every category subset shows earlier,
+   * density.ts); beyond it `url` serves every filter.
+   */
+  modes?: { maxzoom: number; tiles: Record<string, number[]>; url: string };
 }
 
 /** Startup file: cities only (stations, corridors and geometry are loaded on demand). */

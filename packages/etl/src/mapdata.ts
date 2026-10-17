@@ -19,8 +19,12 @@ import {
   FADE_ZOOM,
   STATION_ZOOM,
   levelIndex,
+  minScenarioLevel,
+  packScenario,
+  unpackScenario,
   TILE_LAYERS,
   TILE_MAXZOOM,
+  MODES_TILE_MAXZOOM,
   buildNetIndex,
   ensureSegments,
   mergeLines,
@@ -45,6 +49,9 @@ type Feature = GeoJSON.Feature;
 type Log = (msg: string) => void;
 
 const TILE_MINZOOM = 2;
+const TILES_DIR = "tiles";
+/** Tiles for mode filters (see writeMapData), up to MODES_TILE_MAXZOOM. */
+const MODES_TILES_DIR = "tiles-m";
 /** City markers are fully shown this much before the zoom of their level (must match the style); they fade in over FADE_ZOOM before that. */
 const CITY_LEAD = 0.5;
 
@@ -80,11 +87,12 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
 
   // ---- features
   const segProps = segments.map((s: Segment) => segmentProps(net, idx, s));
-  const segFeatures: { f: Feature; z: number }[] = [];
+  /** z: earliest zoom under any mode filter, zAll: with every mode on */
+  const segFeatures: { f: Feature; z: number; zAll: number }[] = [];
   segments.forEach((s, i) => {
     const p = segProps[i];
     if (!p) return;
-    segFeatures.push({ f: { type: "Feature", properties: tileProps(p), geometry: { type: "LineString", coordinates: s.coords } }, z: segmentMinZoom(p) });
+    segFeatures.push({ f: { type: "Feature", properties: tileProps(p), geometry: { type: "LineString", coordinates: s.coords } }, z: segmentMinZoom(p), zAll: segmentMinZoom(p, false) });
   });
   const cityFeatures: { f: Feature; z: number }[] = [];
   cityProps(net, idx, segProps).forEach((p, i) => {
@@ -102,10 +110,13 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
   log(`mapdata: ${segFeatures.length} segments, ${cityFeatures.length} cities, ${stationFeatures.length} stations`);
 
   // ---- vector tiles (tileSize 512: tile zoom z is shown from map zoom z to z+1, and overzoomed past TILE_MAXZOOM)
-  const tileDir = join(buildDir, "tiles");
-  if (existsSync(tileDir)) await rm(tileDir, { recursive: true });
+  // Up to MODES_TILE_MAXZOOM there are two sets: `tiles/` with every mode on (what nearly everybody loads)
+  // and `tiles-m/` with the lines of every mode filter (density.ts scenarios; far more lines at low zoom).
+  // From there on `tiles/` serves both.
+  for (const d of [TILES_DIR, MODES_TILES_DIR]) if (existsSync(join(buildDir, d))) await rm(join(buildDir, d), { recursive: true });
   const index: Record<string, number[]> = {};
-  let tileBytes = 0, maxTile = 0;
+  const modesIndex: Record<string, number[]> = {};
+  let tileBytes = 0, maxTile = 0, modesBytes = 0;
   for (let z = TILE_MINZOOM; z <= TILE_MAXZOOM; z++) {
     const last = z === TILE_MAXZOOM;
     // The last level keeps (nearly) all stored detail: 1 unit ≈ 6 m at z9. Lower levels are only
@@ -113,40 +124,44 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
     const extent = last ? 8192 : 4096;
     const opts = { maxZoom: z, indexMaxZoom: z, indexMaxPoints: 0, extent, buffer: last ? 512 : 256, tolerance: last ? 1 : 4 };
     const fc = (fs: Feature[]): GeoJSON.FeatureCollection => ({ type: "FeatureCollection", features: fs });
-    const layers: Record<string, ReturnType<typeof geojsonvt>> = {
-      [TILE_LAYERS.seg]: geojsonvt(fc(mergeLines(segFeatures.filter((x) => last || x.z - FADE_ZOOM < z + 1).map((x) => (last ? x.f : forZoom(x.f, z))))), opts),
-      [TILE_LAYERS.city]: geojsonvt(fc(cityFeatures.filter((x) => last || x.z - CITY_LEAD - FADE_ZOOM < z + 1).map((x) => x.f)), { ...opts, buffer: 64 }),
-    };
-    if (last) {
-      layers[TILE_LAYERS.station] = geojsonvt(fc(stationFeatures), { ...opts, buffer: 64 });
-    }
-    const keys = new Map<string, [number, number]>();
-    for (const l of Object.values(layers)) {
-      for (const t of (l as unknown as { tileCoords: { z: number; x: number; y: number }[] }).tileCoords) if (t.z === z) keys.set(`${t.x}/${t.y}`, [t.x, t.y]);
-    }
-    const list: number[] = [];
-    for (const [x, y] of keys.values()) {
-      const tl: Record<string, unknown> = {};
-      let n = 0;
-      for (const [name, l] of Object.entries(layers)) {
-        const t = l.getTile(z, x, y);
-        if (t && t.features.length) {
-          tl[name] = t;
-          n += t.features.length;
-        }
+    const cityVt = geojsonvt(fc(cityFeatures.filter((x) => last || x.z - CITY_LEAD - FADE_ZOOM < z + 1).map((x) => x.f)), { ...opts, buffer: 64 });
+    const sets = z <= MODES_TILE_MAXZOOM ? [{ dir: MODES_TILES_DIR, modes: true }, { dir: TILES_DIR, modes: false }] : [{ dir: TILES_DIR, modes: true }];
+    for (const set of sets) {
+      const segs = segFeatures.filter((x) => last || (set.modes ? x.z : x.zAll) - FADE_ZOOM < z + 1).map((x) => (last ? x.f : forZoom(x.f, z, set.modes)));
+      const layers: Record<string, ReturnType<typeof geojsonvt>> = {
+        [TILE_LAYERS.seg]: geojsonvt(fc(mergeLines(segs)), opts),
+        [TILE_LAYERS.city]: cityVt,
+      };
+      if (last) layers[TILE_LAYERS.station] = geojsonvt(fc(stationFeatures), { ...opts, buffer: 64 });
+      const keys = new Map<string, [number, number]>();
+      for (const l of Object.values(layers)) {
+        for (const t of (l as unknown as { tileCoords: { z: number; x: number; y: number }[] }).tileCoords) if (t.z === z) keys.set(`${t.x}/${t.y}`, [t.x, t.y]);
       }
-      if (!n) continue;
-      const pbf = vtpbf.fromGeojsonVt(tl, { version: 2, extent });
-      const gz = gzipSync(pbf, { level: 9 });
-      await write(join("tiles", String(z), String(x), `${y}.pbf.gz`), gz);
-      tileBytes += gz.length;
-      maxTile = Math.max(maxTile, gz.length);
-      list.push(x, y);
+      const list: number[] = [];
+      for (const [x, y] of keys.values()) {
+        const tl: Record<string, unknown> = {};
+        let n = 0;
+        for (const [name, l] of Object.entries(layers)) {
+          const t = l.getTile(z, x, y);
+          if (t && t.features.length) {
+            tl[name] = t;
+            n += t.features.length;
+          }
+        }
+        if (!n) continue;
+        const pbf = vtpbf.fromGeojsonVt(tl, { version: 2, extent });
+        const gz = gzipSync(pbf, { level: 9 });
+        await write(join(set.dir, String(z), String(x), `${y}.pbf.gz`), gz);
+        if (set.dir === TILES_DIR) tileBytes += gz.length;
+        else modesBytes += gz.length;
+        maxTile = Math.max(maxTile, gz.length);
+        list.push(x, y);
+      }
+      (set.dir === TILES_DIR ? index : modesIndex)[z] = list;
+      log(`mapdata: z${z}${set.dir === TILES_DIR ? "" : " (mode filters)"}: ${list.length / 2} tiles`);
     }
-    index[z] = list;
-    log(`mapdata: z${z}: ${list.length / 2} tiles`);
   }
-  log(`mapdata: tiles ${(tileBytes / 1e6).toFixed(1)} MB gz, largest ${(maxTile / 1024).toFixed(0)} KB`);
+  log(`mapdata: tiles ${(tileBytes / 1e6).toFixed(1)} MB gz + ${(modesBytes / 1e6).toFixed(1)} MB for mode filters (z≤${MODES_TILE_MAXZOOM}), largest ${(maxTile / 1024).toFixed(0)} KB`);
 
   // ---- core + stations
   const core = packCore({
@@ -156,7 +171,13 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
     cityList: network.cities,
     nStations: network.stations.length,
     counts: { stations: network.stations.length, corridors: network.corridors.length, segments: segments.length },
-    tiles: { minzoom: TILE_MINZOOM, maxzoom: TILE_MAXZOOM, tiles: index, url: "tiles/{z}/{x}/{y}.pbf.gz" },
+    tiles: {
+      minzoom: TILE_MINZOOM,
+      maxzoom: TILE_MAXZOOM,
+      tiles: index,
+      url: `${TILES_DIR}/{z}/{x}/{y}.pbf.gz`,
+      modes: { maxzoom: MODES_TILE_MAXZOOM, tiles: modesIndex, url: `${MODES_TILES_DIR}/{z}/{x}/{y}.pbf.gz` },
+    },
   });
   await write("core.json", JSON.stringify(core));
 
@@ -213,24 +234,33 @@ export function tileProps(p: Record<string, number>): Record<string, number> {
     if (k === "sid") continue;
     if (k === "k") out.k = Math.round(Math.log2(1 + v) * 2);
     else if (k[0] === "w") out[k] = Math.round(v * 4) / 4;
-    else if (v !== 0 || k === "u" || k[0] === "l") out[k] = v;
+    else if (v !== 0 || k === "u" || k[0] === "l" || k[0] === "s") out[k] = v;
   }
   return out;
 }
 
 /**
  * Coarser properties for a tile shown from zoom z to z+1: categories not yet
- * fading in by z+1 (FADE_ZOOM before their level) are dropped, levels reached by z (fully faded in) are clamped, widths rounded
+ * fading in by z+1 (FADE_ZOOM before their level) under any mode filter are dropped, levels reached by z
+ * (fully faded in) and levels not reached by then are clamped (also the packed scenario levels `s{k}`; `modes` false:
+ * only the levels with every mode on are kept), widths rounded
  * to half units and no sort key – so more neighbours share properties.
  */
-export function forZoom(f: Feature, z: number): Feature {
+export function forZoom(f: Feature, z: number, modes = true): Feature {
   const p = f.properties as Record<string, number>;
   const lo = levelIndex(z), hi = levelIndex(z + 1 + FADE_ZOOM - 0.001);
+  // levels not reached before z + 1 (+ fade) all look the same here: "later"
+  const clamp = (l: number) => Math.min(Math.max(l, lo), hi + 1);
   const out: Record<string, number> = {};
   for (const k of CAT_BITS) {
     const l = p[`l${k}`];
-    if (l === undefined || l > hi) continue;
-    out[`l${k}`] = Math.max(l, lo);
+    const min = modes ? minScenarioLevel(p, k) : l;
+    if (l === undefined || min === undefined || min > hi) continue;
+    out[`l${k}`] = clamp(l);
+    if (modes && p[`s${k}`] !== undefined) {
+      const ds = unpackScenario(p[`s${k}`]!).map(clamp);
+      if (ds.some((v) => v !== out[`l${k}`])) out[`s${k}`] = packScenario(ds);
+    }
     out[`w${k}`] = Math.round(p[`w${k}`]! * 2) / 2;
     if (p[`d${k}`]) out[`d${k}`] = 1;
   }

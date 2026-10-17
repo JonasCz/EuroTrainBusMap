@@ -20,7 +20,7 @@ import {
   type MapNet,
   type NetworkFile,
 } from "@etbm/shared";
-import { levelIndex, mergeLines, TILE_MAXZOOM } from "@etbm/shared";
+import { CAT_BITS, cityMinZoom, levelIndex, mergeLines, packScenario, scenarioDigit, scenarioMask, segmentMinZoom, SCEN_DIGITS, TILE_MAXZOOM, unpackScenario } from "@etbm/shared";
 import { forZoom, tileProps, writeMapData } from "../src/mapdata.ts";
 
 const net: NetworkFile = {
@@ -106,6 +106,53 @@ describe("map data (netmap)", () => {
     expect(z5.l2).toBe(7);
     expect(z5.l1).toBe(levelIndex(5)); // finished fading in: clamped
   });
+  it("packs per mode-scenario levels", () => {
+    for (let ki = 0; ki < CAT_BITS.length; ki++)
+      for (let d = 0; d <= SCEN_DIGITS; d++) {
+        const m = scenarioMask(ki, d);
+        expect(m & (1 << ki)).toBeTruthy();
+        expect(scenarioDigit(ki, m)).toBe(d);
+      }
+    // all categories on = the plain level
+    expect(scenarioDigit(1, 15)).toBe(SCEN_DIGITS);
+    // coach alone (Cat bits = masks over CAT_BITS indices)
+    expect(scenarioDigit(CAT_BITS.indexOf(Cat.Coach), Cat.Coach)).toBe(0);
+    const ds = [1, 2, 3, 4, 5, 6, 12];
+    expect(unpackScenario(packScenario(ds))).toEqual(ds);
+  });
+  it("stores levels with other modes hidden where they differ", () => {
+    // regional alone may appear earlier than beside the long-distance line on the same track
+    const d = buildNetIndex(mnet, { density: { budget: 300 } });
+    expect(d.segLevelBy?.size).toBe(14);
+    const p = segmentProps(mnet, d, net.segments![0]!)!;
+    const ri = CAT_BITS.indexOf(Cat.Regional);
+    const alone = p.s2 !== undefined ? unpackScenario(p.s2)[scenarioDigit(ri, Cat.Regional)]! : p.l2!;
+    expect(alone).toBeLessThanOrEqual(p.l2!);
+    expect(segmentMinZoom(p)).toBe(0);
+    // hand-made: regional alone at level 2, with others at 8
+    const q = { l2: 8, w2: 1, s2: packScenario([2, 8, 8, 8, 8, 8, 8]), u: 0 };
+    expect(segmentMinZoom(q)).toBe(LEVELS[2]);
+    expect(cityMinZoom({ tz: 0, m2: LEVELS[8]!, n2: packScenario([2, 8, 8, 8, 8, 8, 8]) })).toBe(LEVELS[2]);
+    expect(cityMinZoom({ tz: 5, m2: LEVELS[8]! })).toBe(LEVELS[8]);
+  });
+  it("keeps a category in low-zoom tiles when a mode scenario shows it there", () => {
+    const f = (p: Record<string, number>) => ({ type: "Feature" as const, properties: p, geometry: { type: "LineString" as const, coordinates: [[0, 0], [1, 0]] } });
+    // regional: level 10 (z8) with everything on, level 2 (z4) alone
+    const p = { u: 0, l2: 10, w2: 1, s2: packScenario([2, 10, 10, 10, 10, 10, 10]) };
+    const z3 = forZoom(f(p), 3).properties as Record<string, number>;
+    const hi = levelIndex(3 + 1 + 0.7 - 0.001);
+    expect(z3.l2).toBe(hi + 1); // not before z4 + fade with all modes: "later"
+    expect(unpackScenario(z3.s2!)).toEqual([2, hi + 1, hi + 1, hi + 1, hi + 1, hi + 1, hi + 1]);
+    // from z8 on every scenario has it: the packed value collapses into l2
+    const z8 = forZoom(f(p), 8).properties as Record<string, number>;
+    expect(z8.s2).toBeUndefined();
+    expect(z8.l2).toBe(levelIndex(8));
+    // the every-mode-on tiles leave it out until it shows with every mode on
+    expect((forZoom(f(p), 3, false).properties as Record<string, number>).w2).toBeUndefined();
+    expect((forZoom(f(p), 7, false).properties as Record<string, number>).s2).toBeUndefined();
+    // nowhere before z5.7: not in the z2 tile
+    expect((forZoom(f({ u: 0, l2: 10, w2: 1, s2: packScenario([6, 10, 10, 10, 10, 10, 10]) }), 2).properties as Record<string, number>).w2).toBeUndefined();
+  });
   it("writes tiles, core, stations and geo files", async () => {
     const dir = await mkdtemp(join(tmpdir(), "mapdata-"));
     try {
@@ -121,7 +168,12 @@ describe("map data (netmap)", () => {
       const geo = unpackGeo(JSON.parse(await readFile(join(dir, "geo", "0.json"), "utf8")));
       expect(geo.corridors.map((c) => c.id)).toEqual([2]);
       expect(geo.stations.map((s) => s.id)).toEqual([0, 1, 3]);
-      expect((await readdir(dir)).sort()).toEqual(["core.json", "geo", "shard", "tiles"]);
+      expect((await readdir(dir)).sort()).toEqual(["core.json", "geo", "shard", "tiles", "tiles-m"]);
+      // mode-filter tiles up to their max zoom, beyond it the plain tiles serve every filter
+      const modes = r.mapdata.tiles.modes!;
+      expect(modes.url).toBe("tiles-m/{z}/{x}/{y}.pbf.gz");
+      expect(Object.keys(modes.tiles).map(Number).every((z) => z <= modes.maxzoom)).toBe(true);
+      expect(modes.tiles["2"]!.length).toBeGreaterThan(0);
     } finally {
       await rm(dir, { recursive: true });
     }
