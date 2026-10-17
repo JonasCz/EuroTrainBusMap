@@ -2,8 +2,8 @@
 
 A transit-diagram style map of intercity rail and bus connections across Europe (incl. UK,
 CH, NO, the Balkans, Turkey and Ukraine). Click a city to see every city reachable by a
-*direct* train/coach/bus, click a pair for the timetable, click a departure for onward
-connections. Fully static: a weekly pipeline turns ~150 public GTFS feeds into JSON files
+*direct* train/coach/bus, click a pair for the timetable, click a departure for the trip's stops and
+the onward connections from any of them. Fully static: a weekly pipeline turns ~150 public GTFS feeds into JSON files
 served from Cloudflare.
 
 ## Architecture
@@ -131,6 +131,20 @@ Pipeline in short:
      In the panel's station list, stations without departures under the mode filter are greyed out (tooltip: which modes
      serve them; `logic/stations.ts`), long lists get a search field, and the timetable's date opens a month calendar with a
      dot on every day the pair's service runs (`serviceDates`). Modes are drawn with one pictogram each (`ui/icons.ts`).
+   - **Trip schedule** (`logic/schedule.ts`, panel view `schedule`, URL `&legs=…&trip=1`): a departure opens the whole run of
+     its vehicle – every stop of the pattern from its first stop (shards hold every pattern with its full stop list and the geo
+     file every station those patterns call at, so no extra data is needed; regional *buses* only keep stops in towns ≥ 1000
+     inhabitants, see `processTripStops`). Stops are drawn on a vertical line in the mode colour from boarding to alighting,
+     grey before and after; a stop shows its departure (first / intermediate stops), its arrival (last stop, alighting stop) or
+     both when it dwells more than 5 minutes (`DWELL_SHOW_MIN`), in the stop's local time with day shifts (+1) and foreign zone names
+     relative to the boarding date. Every stop after boarding (outside the boarding city) opens the onward connections from it
+     (`chooseStop`: the leg's alighting stop becomes that stop) and shows how many there are (3 h window, the vehicle itself not
+     counted), computed lazily when its row scrolls into view (`App.onwardCount`, loads that city's shard). Onward connections
+     start from the arrival *station* only; "All stations of X" (offered once per city, for places with several stations and
+     importance ≥ 0.6, shown once it adds departures; URL `onward=city`, toggle in the connections view) boards anywhere in the
+     city with the walking transfer time (`CityFile.transfers`, at least `minTransfer`, 30 min beyond walking range). Back goes
+     connections → schedule → departures. On the map the ridden part is highlighted as before and the rest of the run (before
+     boarding / after alighting) is drawn thin and faded (`Highlight.context`, layers `hl-ctx*`).
    - `geo/<shard>.json` (~80 KB gzip on average): for each timetable shard, the corridors its patterns
      use (with segment geometry, for the selection highlight) and the stations it references
      (names/positions). Loaded together with the shard on a click. Highlighted lines are sized by the

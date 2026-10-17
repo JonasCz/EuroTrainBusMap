@@ -4,7 +4,7 @@ import { TILE_LAYERS, tileSet, type TileIndex, type UrbanInfo } from "@etbm/shar
 import type * as GeoJSON from "geojson";
 import type { Net } from "../data/net.ts";
 import { sameFilters, type Filters } from "../logic/filters.ts";
-import { focusCityData, highlightData, stationData, type Emphasis } from "./features.ts";
+import { contextData, focusCityData, highlightData, stationData, type Emphasis } from "./features.ts";
 import { CITY_AREA_LAYER, CITY_LAYERS, FOCUS_LAYERS, STATION_LAYERS, STATION_ZOOM, cityFilter, geojsonSources, networkLayers, type LayerState } from "./layers.ts";
 import { URBAN_HIT_LAYERS, URBAN_LAYER_IDS, urbanLayers, urbanSources, urbanTileKeys, type UrbanHit } from "./urban.ts";
 import { urbanPopup } from "../ui/urbanpopup.ts";
@@ -38,6 +38,8 @@ export interface Highlight {
   corridors: Map<number, number>;
   /** corridor id → Cat bit → trips/day of the selected services (line widths); default: the corridors' total traffic */
   traffic?: Map<number, Partial<Record<number, number>>>;
+  /** corridor id → Cat bits of the not-ridden part of a selected vehicle run, drawn faded under the highlight */
+  context?: Map<number, number>;
 }
 
 const EUROPE: [[number, number], [number, number]] = [
@@ -365,6 +367,7 @@ export class MapView {
     const t0 = performance.now();
     const em = h.emphasis;
     const d = highlightData(net.geo, h.corridors, h.traffic);
+    this.setData("hl-ctx", contextData(net.geo, h.context ?? new Map()));
     this.setData("hl-casing", d.casing);
     this.setData("hl", d.lines);
     this.setData("focus", focusCityData(net.cities, em));

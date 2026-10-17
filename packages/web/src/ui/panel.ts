@@ -6,6 +6,7 @@ import type { Connection, OnwardStop } from "../logic/connections.ts";
 import { ALL_CATS, CAT_LABEL, CAT_ORDER, localOn, type Filters } from "../logic/filters.ts";
 import type { Leg, LegInfo } from "../logic/journey.ts";
 import type { Reach } from "../logic/reach.ts";
+import type { ScheduleStop, TripSchedule } from "../logic/schedule.ts";
 import type { Departure } from "../logic/timetable.ts";
 import { fmtDuration, localDate } from "../logic/tz.ts";
 import { h, icon } from "./dom.ts";
@@ -42,7 +43,16 @@ export type View =
       /** origin-local dates with departures (date picker dots); computed on first use */
       serviceDays: () => ReadonlySet<string>;
     }
-  | { kind: "connections"; legs: LegInfo[]; conns: Connection[]; windowMin: number };
+  | {
+      kind: "schedule";
+      legs: LegInfo[];
+      /** the last leg's trip, every stop */
+      sched: TripSchedule;
+      windowMin: number;
+      /** onward departures from a stop (pattern index): from its station, or `whole` from every station of its city; loads lazily */
+      onward: (stop: number, whole: boolean) => Promise<number>;
+    }
+  | { kind: "connections"; legs: LegInfo[]; conns: Connection[]; windowMin: number; wholeCity: boolean };
 
 export interface PanelActions {
   state: { city?: number; station?: string; dest?: number; filters: Filters; legs: Leg[] };
@@ -52,6 +62,8 @@ export interface PanelActions {
   back(): void;
   chooseDeparture(d: Departure): void;
   chooseConnection(c: Connection, stop: OnwardStop, fromCity: number): void;
+  chooseStop(stop: number, wholeCity: boolean): void;
+  showSchedule(leg: number): void;
   shiftDate(days: number): void;
   today(city: number): string;
 }
@@ -242,6 +254,8 @@ export class Panel {
       this.body.setAttribute("aria-busy", "true");
       return;
     }
+    this.viewCleanup?.();
+    this.viewCleanup = null;
     this.body.removeAttribute("aria-busy");
     const content = this.view(v);
     this.body.replaceChildren(...content);
@@ -272,6 +286,8 @@ export class Panel {
         return this.reach(v.city, v.reach, v.station, v.stationDeps);
       case "timetable":
         return this.timetable(v);
+      case "schedule":
+        return this.schedule(v);
       case "connections":
         return this.connections(v);
     }
@@ -315,7 +331,7 @@ export class Panel {
         h(
           "p",
           null,
-          "Direct trains and buses, and connections with changes: tap a city to see every place you can reach without changing, pick a second city for its timetable, then select a departure to see onward connections.",
+          "Direct trains and buses, and connections with changes: tap a city to see every place you can reach without changing, pick a second city for its timetable, then select a departure to see all its stops and the onward connections from each.",
         ),
         h(
           "ul",
@@ -576,7 +592,7 @@ export class Panel {
               {
                 type: "button",
                 class: "tt-row",
-                "aria-label": `${d.route.name} ${d.number ?? ""} departs ${stationName(n, d.depStation)}, arrives ${stationName(n, d.arrStation)}, ${fmtDuration(d.minutes)}. Show connections.`,
+                "aria-label": `${d.route.name} ${d.number ?? ""} departs ${stationName(n, d.depStation)}, arrives ${stationName(n, d.arrStation)}, ${fmtDuration(d.minutes)}. Show its stops and onward connections.`,
                 onclick: () => this.actions.chooseDeparture(d),
               },
               h("span", { class: "tt-times" }, timeEl(n, d.depUtc, d.depStation, { strong: true }), timeEl(n, d.arrUtc, d.arrStation, { refDate: depLocal, refTz: originTz })),
@@ -593,7 +609,7 @@ export class Panel {
         }),
       ),
     );
-    out.push(h("p", { class: "hint" }, "Times are local. Select a departure to see onward connections."));
+    out.push(h("p", { class: "hint" }, "Times are local. Select a departure to see all its stops and the connections from each."));
     queueMicrotask(() => this.body.querySelector(".is-next")?.scrollIntoView({ block: "nearest" }));
     return out;
   }
@@ -656,15 +672,11 @@ export class Panel {
     return wrap;
   }
 
-  private connections(v: Extract<View, { kind: "connections" }>): Node[] {
+  /** Breadcrumbs of a journey: the origin city, then each leg's arrival city (the last one is the current step). */
+  private crumbs(legs: LegInfo[]): HTMLElement {
     const n = this.net;
-    const legs = v.legs;
     const first = legs[0]!;
-    const last = legs[legs.length - 1]!;
-    const here = last.to;
-    const hereTz = cityTz(n, here);
-    const arrDate = localDate(last.arrUtc, hereTz);
-    const crumbs = h(
+    return h(
       "ol",
       { class: "crumbs", "aria-label": "Journey" },
       h("li", null, h("button", { type: "button", class: "crumb", onclick: () => this.actions.set({ legs: [] }) }, n.cities[n.file.stations[first.depStation]!.city]!.name)),
@@ -679,14 +691,19 @@ export class Panel {
         ),
       ),
     );
-    const isThrough = (i: number) => {
-      const p = legs[i - 1];
-      const l = legs[i]!;
-      return !!p && p.arrStation === l.depStation && p.route.name === l.route.name && p.number !== undefined && p.number === l.number;
-    };
-    const changes = legs.filter((_, i) => i > 0 && !isThrough(i)).length;
-    const total = Math.round((last.arrUtc - first.depUtc) / 60000);
-    const legList = h(
+  }
+
+  /** Same vehicle continues from leg i−1 into leg i (stay on board). */
+  private static isThrough(legs: LegInfo[], i: number): boolean {
+    const p = legs[i - 1];
+    const l = legs[i]!;
+    return !!p && p.arrStation === l.depStation && p.route.name === l.route.name && p.number !== undefined && p.number === l.number;
+  }
+
+  /** The legs ridden so far with the transfers between them; a leg opens its trip's schedule. */
+  private legList(legs: LegInfo[]): HTMLElement {
+    const n = this.net;
+    return h(
       "ol",
       { class: "legs" },
       legs.map((l, i) => {
@@ -699,7 +716,7 @@ export class Panel {
             ? h(
                 "div",
                 { class: "leg-xfer" },
-                isThrough(i)
+                Panel.isThrough(legs, i)
                   ? [icon("seat", 14), ` stay on board at ${stationName(n, l.depStation)} (${fmtDuration(xfer)})`]
                   : prev!.arrStation === l.depStation
                     ? `change at ${stationName(n, l.depStation)} · ${fmtDuration(xfer)}`
@@ -707,8 +724,8 @@ export class Panel {
               )
             : null,
           h(
-            "div",
-            { class: "leg" },
+            "button",
+            { type: "button", class: "leg", title: "Show all stops of this trip", onclick: () => this.actions.showSchedule(i) },
             routeTag(l.route, l.number),
             h(
               "span",
@@ -725,18 +742,212 @@ export class Panel {
         );
       }),
     );
+  }
+
+  /** Cleanup of the current view (observers), run before the next view replaces it. */
+  private viewCleanup: (() => void) | null = null;
+
+  /**
+   * The schedule of a trip, drawn as a line with a dot per stop in the mode's colour (grey before boarding and after
+   * alighting). Every stop after boarding opens the onward connections from it (its count arrives lazily, when the row
+   * scrolls into view); stops in a city with several stations also offer the connections from all of them.
+   */
+  private schedule(v: Extract<View, { kind: "schedule" }>): Node[] {
+    const n = this.net;
+    const sc = v.sched;
+    const stops = sc.stops;
+    const board = stops[sc.board]!;
+    const alight = stops[sc.alight]!;
+    const mins = Math.round((alight.arrUtc! - board.depUtc!) / 60000);
+    const tag = [sc.route.name, sc.number].filter(Boolean).join(" ");
+    const cityName = (st: ScheduleStop) => n.cities[st.city]!.name;
+    const title = h("span", { class: "sched-title" }, routeTag(sc.route, sc.number), h("span", { class: "headsign" }, sc.headsign));
+    const out: Node[] = [this.header(title, `${formatDateShort(sc.refDate)} · ${cityName(board)} → ${cityName(alight)} · ${fmtDuration(mins)}`, { back: true })];
+    if (v.legs.length > 1) out.push(this.crumbs(v.legs), this.legList(v.legs.slice(0, -1)));
+    const before = sc.board, after = stops.length - 1 - sc.alight;
+    out.push(
+      h(
+        "p",
+        { class: "sched-meta" },
+        sc.route.agency ? h("span", null, sc.route.agency) : null,
+        h("span", null, `${stops.length} stops`),
+        before ? h("span", null, `from ${stationName(n, stops[0]!.station)}`) : null,
+        after ? h("span", null, `continues to ${stationName(n, stops[stops.length - 1]!.station)}`) : null,
+      ),
+    );
+    const counts: OnwardCount[] = [];
+    const countEl = () => h("span", { class: "sched-count is-loading" }, "…");
+    const row = (st: ScheduleStop) => {
+      const i = st.stop;
+      const last = i === stops.length - 1;
+      const strong = i === sc.board || i === sc.alight;
+      const ref = { refDate: sc.refDate, refTz: sc.refTz };
+      const times =
+        st.show === "both"
+          ? // the zone name (if foreign) once, under the departure
+            [h("span", { class: "sched-arr", title: "arrival" }, timeEl(n, st.arrUtc!, st.station, { refDate: sc.refDate })), timeEl(n, st.depUtc!, st.station, { ...ref, strong })]
+          : [timeEl(n, (st.show === "dep" ? st.depUtc : st.arrUtc)!, st.station, { ...ref, strong })];
+      const name = stationName(n, st.station);
+      const city = cityName(st);
+      const role = i === sc.board ? "board" : i === sc.alight ? "get off" : null;
+      const label = [
+        h("span", { class: "sched-name" }, name),
+        !slugify(name).includes(slugify(city)) ? h("span", { class: "sched-cityname" }, city) : null,
+        role ? h("span", { class: "sched-role" }, role) : null,
+      ];
+      // a larger place with several stations: connections from all of them, offered once per city (and shown
+      // once it is known to add departures)
+      const c = n.cities[st.city]!;
+      const multi = st.onward && st.cityRep && c.stations.length > 1 && c.importance >= WHOLE_CITY_MIN_IMPORTANCE;
+      let body: HTMLElement[];
+      if (st.onward) {
+        const el = countEl();
+        const main = h(
+          "button",
+          { type: "button", class: "sched-main", title: `Connections from ${name} within ${v.windowMin / 60} h of arriving`, onclick: () => this.actions.chooseStop(i, false) },
+          h("span", { class: "sched-label" }, label),
+          el,
+        );
+        body = [main];
+        if (multi) {
+          const wel = countEl();
+          const btn = h(
+            "button",
+            { type: "button", class: "sched-whole", hidden: true, title: `Connections from every station of ${city}, with the walk between stations`, onclick: () => this.actions.chooseStop(i, true) },
+            `All stations of ${city}`,
+            wel,
+          );
+          body.push(btn);
+          counts.push({ stop: i, el, whole: { el: wel, btn } });
+        } else counts.push({ stop: i, el });
+      } else body = [h("div", { class: "sched-main" }, h("span", { class: "sched-label" }, label))];
+      return h(
+        "li",
+        {
+          class: [
+            "sched-stop",
+            `is-${st.part}`,
+            st.rideIn ? "ride-in" : "",
+            st.rideOut ? "ride-out" : "",
+            strong ? "is-end" : "",
+            i === 0 ? "is-first" : "",
+            last ? "is-last" : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
+        },
+        h("span", { class: "sched-time" }, times),
+        h("span", { class: "sched-rail", "aria-hidden": "true" }, h("span", { class: "sched-dot" })),
+        h("div", { class: "sched-body" }, body),
+      );
+    };
+    const list = h("ol", { class: "sched", style: `--mode:var(--cat-${sc.route.cat})`, "aria-label": `Stops of ${tag}` }, stops.map(row));
+    out.push(list, h("p", { class: "hint" }, `Times are local. Tap a stop for the connections from there within ${v.windowMin / 60} h of arriving; numbers count them (the same vehicle not included).`));
+    this.lazyCounts(counts, v.onward);
+    queueMicrotask(() => list.querySelector(".is-end")?.scrollIntoView({ block: "nearest" }));
+    return out;
+  }
+
+  /**
+   * Fill in onward counts for the rows that scroll into view, two at a time; a stop's "all stations" button appears
+   * when the whole city has more departures than the stop's own station.
+   */
+  private lazyCounts(items: OnwardCount[], count: (stop: number, whole: boolean) => Promise<number>): void {
+    if (!items.length) return;
+    const queue: (typeof items)[number][] = [];
+    let running = 0;
+    let stopped = false;
+    const set = (el: HTMLElement, k: number | null) => {
+      el.classList.remove("is-loading");
+      el.classList.toggle("is-zero", k === 0);
+      el.textContent = k === null ? "" : k === 0 ? "none" : String(k);
+      if (k !== null) el.setAttribute("aria-label", `${k} onward connection${k === 1 ? "" : "s"}`);
+    };
+    const pump = () => {
+      while (!stopped && running < 2 && queue.length) {
+        const it = queue.shift()!;
+        running++;
+        const job = async () => {
+          const k = await count(it.stop, false);
+          set(it.el, k);
+          if (!it.whole || stopped) return;
+          const kw = await count(it.stop, true);
+          set(it.whole.el, kw);
+          it.whole.btn.hidden = kw <= k;
+        };
+        void job()
+          .catch(() => set(it.el, null))
+          .finally(() => {
+            running--;
+            // yield between computations so scrolling stays smooth
+            setTimeout(pump, 0);
+          });
+      }
+    };
+    const byEl = new Map(items.map((it) => [it.el, it]));
+    if (typeof IntersectionObserver === "undefined") {
+      queue.push(...items);
+      pump();
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          io.unobserve(e.target);
+          const it = byEl.get(e.target as HTMLElement);
+          if (it) queue.push(it);
+        }
+        // in order along the run
+        queue.sort((a, b) => a.stop - b.stop);
+        pump();
+      },
+      { rootMargin: "150px 0px" },
+    );
+    for (const it of items) io.observe(it.el);
+    this.viewCleanup = () => {
+      stopped = true;
+      io.disconnect();
+    };
+  }
+
+  private connections(v: Extract<View, { kind: "connections" }>): Node[] {
+    const n = this.net;
+    const legs = v.legs;
+    const first = legs[0]!;
+    const last = legs[legs.length - 1]!;
+    const here = last.to;
+    const hereTz = cityTz(n, here);
+    const arrDate = localDate(last.arrUtc, hereTz);
+    const changes = legs.filter((_, i) => i > 0 && !Panel.isThrough(legs, i)).length;
+    const total = Math.round((last.arrUtc - first.depUtc) / 60000);
+    const city = n.cities[here]!;
+    const arrName = stationName(n, last.arrStation);
+    const multi = city.stations.length > 1;
     const out: Node[] = [
       this.header(
-        h("span", null, "Connections from ", n.cities[here]!.name),
+        h("span", null, "Connections from ", multi && !v.wholeCity ? arrName : city.name),
         `${fmtDuration(total)} so far · ${changes === 0 ? "direct" : `${changes} change${changes > 1 ? "s" : ""}`}`,
         { back: true },
       ),
-      crumbs,
-      legList,
-      h("h3", { class: "section" }, `Departures within ${v.windowMin / 60} h of arrival`),
+      this.crumbs(legs),
+      this.legList(legs),
     ];
+    if (multi) {
+      const opt = (label: string, on: boolean, whole: boolean, title: string) =>
+        h("button", { type: "button", class: "scope-opt", "aria-pressed": String(on), title, onclick: on ? null : () => this.actions.set({ wholeCity: whole || undefined }, { replace: true }) }, label);
+      out.push(
+        h(
+          "div",
+          { class: "scope", role: "group", "aria-label": "Departures from" },
+          opt(shortStationName(arrName, city.name), !v.wholeCity, false, `Only departures from ${arrName}`),
+          opt(`All stations of ${city.name}`, v.wholeCity, true, `Departures from every station of ${city.name}, with the walk from ${arrName}`),
+        ),
+      );
+    }
+    out.push(h("h3", { class: "section" }, `Departures within ${v.windowMin / 60} h of arrival`));
     if (!v.conns.length) {
-      out.push(h("p", { class: "pad muted" }, "No onward departures in this window with the selected modes."));
+      out.push(h("p", { class: "pad muted" }, `No onward departures in this window with the selected modes${multi && !v.wholeCity ? ` from ${arrName} – try all stations of ${city.name}` : ""}.`));
       return out;
     }
     out.push(
@@ -787,6 +998,16 @@ export class Panel {
     return out;
   }
 
+}
+
+/** Places from this importance (towns of ~50 000 and up) with several stations offer the onward connections from all their stations. */
+const WHOLE_CITY_MIN_IMPORTANCE = 0.6;
+
+/** A stop's onward count (and the whole city's) in the schedule view. */
+interface OnwardCount {
+  stop: number;
+  el: HTMLElement;
+  whole?: { el: HTMLElement; btn: HTMLElement };
 }
 
 /** Tooltip of a station without departures under the mode filter. */

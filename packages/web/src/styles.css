@@ -963,6 +963,284 @@ button.crumb:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* trip schedule: a line with a dot per stop, in the mode colour while ridden, grey before boarding / after alighting */
+.sched-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+.sched-title .headsign {
+  font-size: 15px;
+}
+.sched-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 0;
+  margin: 0;
+  padding: 0 18px 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.sched-meta span:not(:last-child)::after {
+  content: "·";
+  margin: 0 6px;
+  color: var(--faint);
+}
+.sched {
+  --rail: color-mix(in srgb, var(--faint) 45%, transparent);
+  --dot-y: 17px;
+  list-style: none;
+  margin: 0;
+  padding: 2px 8px 6px;
+}
+.sched-stop {
+  display: grid;
+  grid-template-columns: 54px 20px minmax(0, 1fr);
+  column-gap: 6px;
+  align-items: start;
+}
+.sched-time {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 8px 0 8px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+.sched-time .time {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  column-gap: 1px;
+}
+.sched-time .tzabbr {
+  flex-basis: 100%;
+  text-align: right;
+  margin: -3px 0 0;
+  line-height: 1.2;
+}
+.sched-time .time--strong {
+  font-size: 14px;
+}
+.sched-arr {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.is-ride .sched-time {
+  color: var(--text);
+}
+.sched-rail {
+  position: relative;
+  z-index: 0; /* own stacking context: the dots stay under the sticky view header */
+  align-self: stretch;
+}
+.sched-rail::before,
+.sched-rail::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 4px;
+  margin-left: -2px;
+  background: var(--rail);
+}
+.sched-rail::before {
+  top: 0;
+  height: var(--dot-y);
+}
+.sched-rail::after {
+  top: var(--dot-y);
+  bottom: 0;
+}
+.ride-in .sched-rail::before,
+.ride-out .sched-rail::after {
+  background: var(--mode);
+}
+.is-first .sched-rail::before,
+.is-last .sched-rail::after {
+  display: none;
+}
+.sched-dot {
+  position: absolute;
+  left: 50%;
+  top: var(--dot-y);
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--rail);
+  z-index: 1;
+}
+.is-ride .sched-dot {
+  border-color: var(--mode);
+}
+.is-end .sched-dot,
+.is-first .sched-dot,
+.is-last .sched-dot {
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-width: 3px;
+}
+.is-end .sched-dot {
+  background: var(--mode);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.sched-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 2px 0;
+}
+.sched-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  line-height: 18px;
+}
+button.sched-main {
+  cursor: pointer;
+}
+button.sched-main:hover {
+  background: var(--surface-2);
+}
+.sched-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+}
+.sched-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.is-before .sched-name,
+.is-after .sched-name {
+  color: var(--muted);
+}
+.is-end .sched-name {
+  font-weight: 700;
+}
+.is-ride:not(.is-end) .sched-name {
+  font-weight: 520;
+}
+.sched-cityname {
+  color: var(--faint);
+  font-size: 12px;
+}
+.sched-role {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--mode);
+}
+.sched-count {
+  flex: none;
+  min-width: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  line-height: 18px;
+}
+.sched-count::after {
+  content: " ›";
+  color: var(--faint);
+}
+.sched-count.is-loading {
+  color: var(--faint);
+  font-weight: 400;
+}
+.sched-count.is-zero {
+  background: transparent;
+  color: var(--faint);
+  font-weight: 500;
+}
+.sched-whole {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: -2px 0 4px 8px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.sched-whole[hidden] {
+  display: none;
+}
+.sched-whole:hover {
+  border-color: var(--text);
+  color: var(--text);
+}
+.sched-whole .sched-count {
+  background: transparent;
+  padding: 0 2px;
+}
+button.leg {
+  width: calc(100% + 8px);
+  margin: 0 -4px;
+  padding: 3px 4px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+}
+button.leg:hover {
+  background: var(--surface-3);
+}
+.scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 14px 4px;
+}
+.scope-opt {
+  border: 1px solid var(--line);
+  background: transparent;
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.scope-opt[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface);
+  font-weight: 600;
+  cursor: default;
+}
+.scope-opt[aria-pressed="false"]:hover {
+  border-color: var(--text);
+  color: var(--text);
+}
+
 /* attribution & dialog */
 .attribution {
   position: absolute;

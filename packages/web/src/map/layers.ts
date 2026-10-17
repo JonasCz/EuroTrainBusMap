@@ -164,7 +164,7 @@ function scaled(prop: string, zf: [number, number][], add = 0): Expr {
 
 const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
-export const GEOJSON_SOURCES = ["hl-casing", "hl", "focus", "focus-stations"] as const;
+export const GEOJSON_SOURCES = ["hl-ctx", "hl-casing", "hl", "focus", "focus-stations"] as const;
 
 export function geojsonSources(): Record<string, { type: "geojson"; data: GeoJSON.FeatureCollection; tolerance?: number; buffer?: number; maxzoom?: number }> {
   const out: Record<string, { type: "geojson"; data: GeoJSON.FeatureCollection; tolerance?: number; buffer?: number; maxzoom?: number }> = {};
@@ -290,6 +290,21 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
   }
 
   // ---- highlighted corridors (selection), always above the dimmed network
+  // the rest of a selected vehicle run (before boarding / after alighting): thin, faded, under the ride
+  for (const hop of [0, 1])
+    layers.push({
+      id: hop ? "hl-ctx-hops" : "hl-ctx",
+      type: "line",
+      source: "hl-ctx",
+      filter: ["==", ["get", "hop"], hop],
+      layout: hop ? { "line-cap": "butt" } : lineLayout,
+      paint: {
+        "line-color": catColor(t),
+        "line-width": ["interpolate", ["linear"], ["zoom"], 3, 1.4, 8, 2.4, 12, 3.6],
+        "line-opacity": t.dark ? 0.45 : 0.4,
+        ...(hop ? { "line-dasharray": [2, 2] } : {}),
+      },
+    });
   layers.push({
     id: "hl-cas",
     type: "line",

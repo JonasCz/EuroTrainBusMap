@@ -85,6 +85,31 @@ export function highlightData(geo: GeoStore, hl: Map<number, number>, traffic?: 
   return { lines: { type: "FeatureCollection", features: mergeLines(lines) }, casing: { type: "FeatureCollection", features: mergeLines(casing) } };
 }
 
+/**
+ * Context lines: the parts of a selected vehicle run that are not ridden (before boarding, after
+ * alighting), drawn thin and faded under the highlight. One feature per segment and category.
+ */
+export function contextData(geo: GeoStore, corridors: Map<number, number>): FC {
+  const segCats = new Map<number, number>();
+  for (const [cid, cats] of corridors) {
+    const c = geo.corridors.get(cid);
+    if (!c?.segs?.length || !cats) continue;
+    for (const code of c.segs) {
+      const s = segId(code);
+      segCats.set(s, (segCats.get(s) ?? 0) | cats);
+    }
+  }
+  const lines: Feature[] = [];
+  for (const [sid, cats] of segCats) {
+    const s = geo.segments.get(sid);
+    if (!s || s.coords.length < 2) continue;
+    // one colour per segment: the most prominent category (rail before road)
+    const k = CAT_BITS.find((b) => cats & b)!;
+    lines.push({ type: "Feature", properties: { cat: k, hop: s.hop || !s.snapped ? 1 : 0 }, geometry: { type: "LineString", coordinates: s.coords } });
+  }
+  return { type: "FeatureCollection", features: mergeLines(lines) };
+}
+
 export interface Emphasis {
   /** Cities to emphasise (selection + reachable). */
   focus: Set<number>;
