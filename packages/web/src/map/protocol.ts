@@ -6,6 +6,9 @@
  * request (no 404s for empty sea/land areas).
  */
 import maplibregl from "maplibre-gl";
+import { inflate } from "../data/gz.ts";
+
+export { inflate };
 
 let registered = false;
 let known: Set<string> | null = null;
@@ -51,13 +54,6 @@ const key = (u: string) => {
 };
 
 const TILE_RE = /\/(\d+)\/(\d+)\/(\d+)\.pbf\.gz$/;
-
-export async function inflate(buf: ArrayBuffer): Promise<ArrayBuffer> {
-  const b = new Uint8Array(buf, 0, Math.min(2, buf.byteLength));
-  if (b[0] !== 0x1f || b[1] !== 0x8b) return buf; // already decoded (host sent Content-Encoding)
-  const stream = new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"));
-  return new Response(stream).arrayBuffer();
-}
 
 export function registerGzProtocol(tiles?: Set<string>, modes?: ModeTiles | null): void {
   if (tiles) known = tiles;
