@@ -74,4 +74,3 @@ npx -y wrangler@4 r2 object put $B/basemap/tiles-v2.tar --file work/assets/basem
 npx -y wrangler@4 r2 object put $B/basemap/borders.json --file work/assets/basemap/borders.json --remote
 npx -y wrangler@4 r2 object put $B/manifest.json --file work/assets/manifest.json --content-type application/json --remote   # last
 ```
-(`basemap/land.json` and `basemap/lakes.json` in R2 are obsolete; once the manifest no longer lists them they are not downloaded.)
