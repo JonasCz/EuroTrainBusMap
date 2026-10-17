@@ -15,6 +15,10 @@ export interface AppState {
   filters: Filters;
   /** Journey legs; legs[0] departs from `city`. `from` of later legs is resolved lazily (-1). */
   legs: Leg[];
+  /** Show the schedule (all stops) of the last leg's trip instead of the connections from its end (URL `trip=1`). */
+  schedule?: boolean;
+  /** Onward connections from every station of the last leg's arrival city, not only the arrival station (URL `onward=city`). */
+  wholeCity?: boolean;
 }
 
 export function parseHash(net: Net, hash: string): AppState {
@@ -33,6 +37,8 @@ export function parseHash(net: Net, hash: string): AppState {
     ...(isValidDate(date) ? { date } : {}),
     filters: { cats: f === null ? ALL_CATS : decodeCats(f), ...(local ? {} : { local: false }) },
     legs,
+    ...(legs.length && q.get("trip") === "1" ? { schedule: true } : {}),
+    ...(legs.length && q.get("onward") === "city" ? { wholeCity: true } : {}),
   };
 }
 
@@ -42,7 +48,11 @@ export function toHash(net: Net, s: AppState): string {
   if (s.city !== undefined && s.station) q.push(`station=${s.station}`);
   if (s.city !== undefined && s.dest !== undefined) q.push(`to=${net.slug[s.dest]}`);
   if (s.date && s.city !== undefined) q.push(`date=${s.date}`);
-  if (s.legs.length && s.dest !== undefined) q.push(`legs=${encodeLegs(s.legs)}`);
+  if (s.legs.length && s.dest !== undefined) {
+    q.push(`legs=${encodeLegs(s.legs)}`);
+    if (s.schedule) q.push("trip=1");
+    else if (s.wholeCity) q.push("onward=city");
+  }
   if (s.filters.cats !== ALL_CATS) q.push(`modes=${encodeCats(s.filters.cats) || "none"}`);
   if (s.filters.local === false) q.push("local=0");
   return q.length ? `#${q.join("&")}` : "";

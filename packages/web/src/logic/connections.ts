@@ -15,6 +15,8 @@ export interface Arrival {
   /** Route name + trip number of the arriving vehicle, to detect through services. */
   routeName?: string;
   number?: string;
+  /** Board only at the arrival station (default: any station of the city, with the walking transfer time). */
+  onlyStation?: boolean;
 }
 
 export interface OnwardStop {
@@ -91,6 +93,7 @@ export function connections(cf: CityFile, ctx: NetCtx, f: Filters, arrival: Arri
             const dep = serviceTimeToUtc(svc, start + p.dep[i]!, tz);
             if (dep > limit) continue;
             const station = p.stations[i]!;
+            if (arrival.onlyStation && station !== arrival.station) continue;
             const through =
               station === arrival.station &&
               arrival.number !== undefined &&

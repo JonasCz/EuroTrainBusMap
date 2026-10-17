@@ -23,7 +23,10 @@ export interface LegInfo {
   route: Route;
   number?: string;
   headsign: string;
+  /** hops ridden (board → alight) */
   corridors: number[];
+  /** hops of the vehicle run before boarding and after alighting */
+  outside: number[];
 }
 
 export function resolveLeg(cf: CityFile, ctx: NetCtx, leg: Leg): LegInfo | null {
@@ -47,6 +50,7 @@ export function resolveLeg(cf: CityFile, ctx: NetCtx, leg: Leg): LegInfo | null 
     ...(t[3] !== undefined ? { number: t[3] } : {}),
     headsign: p.headsign,
     corridors: p.corridors.slice(leg.board, leg.alight),
+    outside: [...p.corridors.slice(0, leg.board), ...p.corridors.slice(leg.alight)],
   };
 }
 

@@ -38,3 +38,17 @@ describe("station selection in the URL", () => {
     expect(toHash(net, parseHash(net, "#from=paris"))).toBe("#from=paris");
   });
 });
+
+describe("journey steps in the URL", () => {
+  it("keeps the trip schedule step and the whole-city onward scope", () => {
+    const legs = "legs=4.20261019.1.3";
+    const t = parseHash(net, `#from=paris&to=lyon&${legs}&trip=1`);
+    expect(t.schedule).toBe(true);
+    expect(toHash(net, t)).toBe(`#from=paris&to=lyon&${legs}&trip=1`);
+    const w = parseHash(net, `#from=paris&to=lyon&${legs}&onward=city`);
+    expect(w.wholeCity).toBe(true);
+    expect(w.schedule).toBeUndefined();
+    expect(toHash(net, w)).toBe(`#from=paris&to=lyon&${legs}&onward=city`);
+    expect(parseHash(net, "#from=paris&to=lyon&trip=1").schedule).toBeUndefined(); // no legs, no trip
+  });
+});

@@ -155,6 +155,12 @@ describe("connections", () => {
     expect(c[0]!.wait).toBe(40);
     expect(c[0]!.stops.map((s) => s.city)).toEqual([4]);
   });
+  it("boards only at the arrival station when asked", () => {
+    const arr = { city: 0, station: 1, utc: wallToUtc("2026-10-10", 11 * 60, BER) };
+    expect(connections(alpha, ctx, all, { ...arr, onlyStation: true }).map((x) => x.depStation)).toEqual([]);
+    const hbf = { ...arr, station: 0, onlyStation: true };
+    expect(connections(alpha, ctx, all, hbf).map((x) => fmtTime(x.depUtc, BER))).toEqual(["11:40"]);
+  });
   it("crosses midnight and detects through service", () => {
     const arr = { city: 0, station: 0, utc: wallToUtc("2026-10-09", 23 * 60 + 45, BER), routeName: "ICE", number: "3" };
     const c = connections(alpha, ctx, all, arr);
