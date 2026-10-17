@@ -147,7 +147,8 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
 
 - `core.json` -> `unpackCore` (packages/shared/src/netmap.ts) gives all cities; `geo/<shard>.json` -> `unpackGeo`
   gives stations, corridors (with segment ids, cats, tpd, snapped) and segment polylines for the shard
-  (`City.shard` says which); `shard/<n>.json` has the timetable patterns.
+  (`City.shard` says which); `shard/<n>.json` has the timetable patterns; `sched/<shard / 4>.json` (`scheduleFile`) the full stop
+  lists of runs whose pattern leaves stops out (`Pattern.run` → `ScheduleFile.runs`; small-place bus stops, a town's other stops).
 - `tiles/{z}/{x}/{y}.pbf.gz` are gzipped MVTs: gunzip + `@mapbox/vector-tile` (in `node_modules/.pnpm`); layer `seg`
   properties `l{k}` (LOD level index into LEVELS), `w{k}` (width), `u` (1 = approximate alignment, drawn dashed), `hop`.
 - Test routing on the prebuilt graphs: `deserializeRailGraph(readFileSync(".../rail-graph-v1.bin"))` + `new Router(graph, opts)`

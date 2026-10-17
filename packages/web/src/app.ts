@@ -1,6 +1,6 @@
 /** Application controller: state → data → map highlight + panel. */
 import type { CityFile } from "@etbm/shared";
-import { loadCity } from "./data/load.ts";
+import { loadCity, loadSchedule } from "./data/load.ts";
 import { cityTz, ensureDetail, stationBySlug, stationName, stationSlug, type Net } from "./data/net.ts";
 import { addDays, inHorizon } from "./logic/calendar.ts";
 import { connections, transferMinutes, type Arrival, type Connection, type OnwardStop } from "./logic/connections.ts";
@@ -321,18 +321,22 @@ export class App {
 
     // ---- the schedule of the last leg's trip: every stop, each with its onward connections
     if (s.schedule) {
-      const sched = tripSchedule(lastCf, net.ctx, last.leg);
+      // the full stop list is only needed here: loaded on demand (only when the pattern leaves stops out)
+      const pat = lastCf.patterns[lastCf.trips[last.leg.trip]?.[0] ?? -1];
+      const sf = pat?.run !== undefined ? await loadSchedule(net.ds, last.leg.from) : null;
+      if (stale()) return;
+      const sched = tripSchedule(lastCf, net.ctx, last.leg, sf);
       if (!sched) {
         this.set({ schedule: undefined }, { replace: true });
         return;
       }
-      for (const st of sched.stops) focus.add(st.city);
+      for (const st of sched.stops) if (st.city >= 0) focus.add(st.city);
       await this.map.setHighlight({ emphasis: { focus: this.withCorridorEnds(focus, corridors), active: true, origin, dest: last.to }, corridors, traffic, context });
       if (stale()) return;
       const tag = [last.route.name, last.number].filter(Boolean).join(" ");
       document.title = `${tag} → ${last.headsign} – EuroTrainBusMap`;
       this.panel.show({ kind: "schedule", legs: infos, sched, windowMin: CONNECTION_WINDOW_MIN, onward: (stop, whole) => this.onwardCount(sched, stop, whole) });
-      this.frame([...new Set([origin, ...sched.stops.map((x) => x.city)])], `t${encodeLegs(s.legs)}`);
+      this.frame([...new Set([origin, ...sched.stops.flatMap((x) => (x.city >= 0 ? [x.city] : []))])], `t${encodeLegs(s.legs)}`);
       return;
     }
 

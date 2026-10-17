@@ -60,11 +60,13 @@ Pipeline in short:
    village beside a town therefore keeps its own station: it becomes a synthetic town named after the station
    (Anchamps ≠ Revin, Limerick Junction ≠ Tipperary). Bus-only stops keep the plain catchment rule (nearest place, 5 km
    fallback; one carrying exactly the name of a rail / coach station within 1 km joins that station's place) and only count in places
-   with ≥ 2000 inhabitants. Synthetic towns with a generic name (≥ 4 of them: "Road End", "Hotel", "Mairie") get the nearest place
+   with ≥ 2000 inhabitants as destinations (the trip schedule still lists every stop, see 6 and 9). Synthetic towns with a generic name (≥ 4 of them: "Road End", "Hotel", "Mairie") get the nearest place
    added ("Road End (Strathy)"). Cities never influence the drawing.
 5. **Dedup** – the same train/coach present in several feeds (DE+AT+CH+CZ…) is detected by matching
    (city, time) sequences and kept once, with merged calendars.
-6. **Patterns & trips** – station sequences with offsets, deduplicated; calendars as 60-day bitmasks starting the day before the build (Berlin date), so viewers in earlier timezones stay covered.
+6. **Patterns & trips** – station sequences with offsets, deduplicated (a bus pattern keeps the stops in places with ≥ 2000
+   inhabitants, one main stop per smaller town and the entry / exit stops of a big city; the stops it leaves out are kept with
+   their times as the run's full stop list, `ScheduleRun` in `packages/shared/src/schema.ts`, shown only in the trip schedule); calendars as 60-day bitmasks starting the day before the build (Berlin date), so viewers in earlier timezones stay covered.
    Invalid stop times are repaired (`repairTimes` in `core/patterns.ts`): hops of more than 3 km that take no time or would need more than 450 km/h (rail) / 160 km/h (road), as in a Milan–Paris–Lyon pattern whose Paris and Lyon calls both read 12:00, get times interpolated by distance between the surrounding valid times (extrapolated at a typical speed at the end of a trip); the UI never shows "0 min" between two cities.
 7. **Corridors** – the drawn network connects *stations*: a corridor is an undirected edge between two stations
    that are consecutive stops of a trip, between cities as well as inside one (Tipperary – Limerick Junction,
@@ -87,7 +89,8 @@ Pipeline in short:
    traffic of all corridors on it, so an express A–C no longer draws a second line beside A–B–C.
 9. **Output** (`data/<build>/`): `network.json` (packed, ~10.6 MB raw / ~4.5 MB gzip; the full network for tools – the web app uses the map data below),
    `calendars.json`, `attribution.json`, `basemap/{borders,labels}.json` (Natural Earth 1:10m borders) and `shard/<n>.json` – the per-city
-   timetables, grouped into ~600 shards of spatially neighbouring cities (`City.shard`).
+   timetables, grouped into ~600 shards of spatially neighbouring cities (`City.shard`), and `sched/<n>.json` – the full stop lists of
+   the runs whose pattern leaves stops out (`Pattern.run`), one file per 4 shards (`scheduleFile`), loaded only when a trip's schedule opens.
    `data/manifest.json` points to the current build.
 10. **Map data** (`src/mapdata.ts`, formats in `packages/shared/src/netmap.ts`) – what the web app
    actually loads, so phones never download the whole network:

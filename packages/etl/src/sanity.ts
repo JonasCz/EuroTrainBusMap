@@ -1,4 +1,4 @@
-import type { CalendarsFile, CityFile, NetworkFile } from "@etbm/shared";
+import type { CalendarsFile, CityFile, NetworkFile, ScheduleFile } from "@etbm/shared";
 import { getBit, maskFromBase64, weekday } from "./core/calendar.ts";
 import { isoToEpochDay } from "./core/time.ts";
 
@@ -6,6 +6,8 @@ export interface SanityInput {
   network: NetworkFile;
   calendars: CalendarsFile;
   readCity: (id: number) => CityFile | null;
+  /** The schedule file (sched/) of a city's timetable. */
+  readSchedule?: (id: number) => ScheduleFile | null;
 }
 
 export interface SanityResult {
@@ -91,6 +93,19 @@ export function runSanity(inp: SanityInput): SanityResult {
         else if (!((cr.a === p.stations[k] && cr.b === p.stations[k + 1]) || (cr.b === p.stations[k] && cr.a === p.stations[k + 1]))) errors.push(`city ${id} pattern ${pi} corridor ${c} does not join stops ${k}, ${k + 1}`);
       });
       for (const s of p.stations) if (!n.stations[s]) errors.push(`city ${id} pattern ${pi} bad station ${s}`);
+      // full stop list (schedule file): stops exist, `next` ascending within 0..stations.length
+      if (p.run !== undefined) {
+        const run = inp.readSchedule?.(id)?.runs[p.run];
+        const sf = inp.readSchedule?.(id);
+        const via = run?.via ?? [], at = run?.at ?? [];
+        let ok = !!run && (via.length > 0 || at.length > 0);
+        for (let k = 0; ok && k + 3 < via.length; k += 4) {
+          const nx = via[k]!;
+          ok = !!sf!.stops[via[k + 1]!] && nx >= 0 && nx <= p.stations.length && (k === 0 || nx >= via[k - 4]!);
+        }
+        for (let k = 0; ok && k + 1 < at.length; k += 2) ok = !!sf!.stops[at[k + 1]!] && at[k]! < p.stations.length;
+        if (!ok) errors.push(`city ${id} pattern ${pi} bad schedule run ${p.run}`);
+      }
       if (!p.stations.some((s) => n.stations[s]?.city === id)) errors.push(`city ${id} pattern ${pi} does not call at city`);
     });
     if (cf.patternTz.length !== cf.patterns.length) errors.push(`city ${id} patternTz length`);

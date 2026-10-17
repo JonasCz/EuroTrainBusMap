@@ -40,6 +40,41 @@ describe("processTripStops", () => {
     expect(t.stations).toEqual([5, 3]);
     expect(t.start).toBe(2);
     expect(t.arr).toEqual([0, 18]);
+    // every left-out stop stays in the schedule: before the first pattern stop, and after the last one
+    expect(t.via).toEqual([0, 1, -2, -2, 1, 7, 8, 8, 2, 8, 28, 28]);
+    expect(t.at).toEqual([]);
+  });
+  it("bus: keeps a town's real stops behind its main stop, with their own times", () => {
+    // stations 11 and 12 (city 1) are represented by the town's main stop 10; the vehicle serves 12 first
+    const t = processTripStops(
+      [
+        { station: 10, real: 12, city: 1, arr: 0, dep: 1 },
+        { station: 10, real: 11, city: 1, arr: 4, dep: 5 },
+        { station: 7, city: 9, arr: 10, dep: 10 },
+        { station: 3, city: 2, arr: 20, dep: 20 },
+      ],
+      { ...base, stationWeight: (s) => (s === 11 ? 100 : s), cat: Cat.Bus },
+    )!;
+    expect(t.stations).toEqual([10, 3]);
+    // the main stop stands at its most important real stop (11), with its times
+    expect(t.start).toBe(5);
+    expect(t.at).toEqual([0, 11]);
+    expect(t.via).toEqual([0, 12, -5, -4, 1, 7, 5, 5]);
+  });
+  it("bus: prefers the main stop itself where the vehicle serves it, also in a town with rail", () => {
+    const t = processTripStops(
+      [
+        { station: 3, city: 2, arr: 0, dep: 0 },
+        { station: 10, real: 12, city: 1, arr: 10, dep: 10 },
+        { station: 10, city: 1, arr: 14, dep: 15 },
+        { station: 10, real: 11, city: 1, arr: 20, dep: 20 },
+      ],
+      { ...base, stationWeight: (s) => (s === 11 ? 100 : s), cityHasRail: () => true, cat: Cat.Bus },
+    )!;
+    expect(t.stations).toEqual([3, 10]);
+    expect(t.arr).toEqual([0, 14]);
+    expect(t.at).toEqual([]);
+    expect(t.via).toEqual([1, 12, 10, 10, 2, 11, 20, 20]);
   });
   it("bus: in big cities keeps entry/exit stops only", () => {
     const t = processTripStops(

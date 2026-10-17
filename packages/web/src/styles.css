@@ -1079,6 +1079,28 @@ button.crumb:hover {
 .is-ride .sched-dot {
   border-color: var(--mode);
 }
+/* stops only listed in the schedule (small places, a town's other stops): compact rows, small dots, no connections */
+.sched-stop.is-minor {
+  --dot-y: 13px;
+}
+.is-minor .sched-dot {
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+}
+.is-minor .sched-time {
+  padding: 4px 0;
+  font-size: 12px;
+  line-height: 18px;
+}
+.is-minor .sched-main {
+  min-height: 24px;
+  padding: 3px 8px;
+  font-size: 13px;
+}
+.is-ride.is-minor:not(.is-end) .sched-name {
+  font-weight: 400;
+}
 .is-end .sched-dot,
 .is-first .sched-dot,
 .is-last .sched-dot {

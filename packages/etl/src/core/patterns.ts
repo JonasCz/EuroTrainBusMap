@@ -5,6 +5,8 @@ export interface RawStop {
   city: number;
   arr: number;
   dep: number;
+  /** The station the vehicle really stops at, when `station` stands for it (a town's main bus stop); default `station`. */
+  real?: number;
 }
 
 export interface TripShape {
@@ -13,6 +15,14 @@ export interface TripShape {
   arr: number[]; // offsets from start
   dep: number[];
   start: number;
+  /**
+   * Stops of the run left out of `stations` (bus stops in small places, the other stops in a town), for the
+   * trip's schedule: flat quadruples [next, station, arr, dep] – the stop lies before pattern stop `next`
+   * (`stations.length`: after the last one); arr / dep are offsets from `start` (negative before the first stop).
+   */
+  via: number[];
+  /** Pattern stops served at another station than `stations[k]` (the real stop behind a town's main stop): flat pairs [k, station]. */
+  at: number[];
 }
 
 export interface ProcessOptions {
@@ -93,10 +103,13 @@ export function repairTimes(arr: number[], dep: number[], pos: [number, number][
  *    cities and towns with rail keep only the entry/exit stops of the run,
  *  - collapse consecutive stops at the same station (arr of first, dep of last),
  *  - require ≥ 2 distinct cities.
+ * The stops left out stay in the result as `via` (with their times) so the trip's schedule can list every stop.
  * Returns null if the trip should be dropped.
  */
-export function processTripStops(raw: RawStop[], o: ProcessOptions): TripShape | null {
-  if (raw.length < 2) return null;
+export function processTripStops(input: RawStop[], o: ProcessOptions): TripShape | null {
+  if (input.length < 2) return null;
+  // `i`: index in the input (of the first stop of a same-station run), to rebuild the full stop list
+  const raw = input.map((s, i) => ({ ...s, i }));
   let stops = raw;
   if (o.cat === Cat.Bus) {
     // Buses only serve real towns on the map: stops in places below minPop (incl. synthetic
@@ -104,16 +117,24 @@ export function processTripStops(raw: RawStop[], o: ProcessOptions): TripShape |
     const minPop = o.minBusCityPop ?? 1000;
     stops = stops.filter((s) => o.cityPop(s.city) >= minPop);
     const collapseBelow = o.collapseBusBelowPop ?? 100_000;
-    const out: RawStop[] = [];
+    const out: typeof stops = [];
     for (let i = 0; i < stops.length; ) {
       let j = i;
       while (j + 1 < stops.length && stops[j + 1]!.city === stops[i]!.city) j++;
       const c = stops[i]!.city;
-      if (j > i && o.cityPop(c) < collapseBelow && !o.cityHasRail?.(c)) {
-        // keep the most important station of the run, spanning first arr → last dep
-        let best = i;
-        for (let k = i; k <= j; k++) if (o.stationWeight(stops[k]!.station) > o.stationWeight(stops[best]!.station)) best = k;
-        out.push({ station: stops[best]!.station, city: stops[i]!.city, arr: stops[i]!.arr, dep: stops[j]!.dep });
+      // a small town – or a run whose entry and exit stand for the same station (a town's main bus stop) – keeps one stop
+      const small = o.cityPop(c) < collapseBelow && !o.cityHasRail?.(c);
+      if (j > i && (small || stops[i]!.station === stops[j]!.station)) {
+        // the small town's most important station (elsewhere: the station both ends of the run stand for) ...
+        let top = i;
+        if (small) for (let k = i; k <= j; k++) if (o.stationWeight(stops[k]!.station) > o.stationWeight(stops[top]!.station)) top = k;
+        const station = stops[top]!.station;
+        // ... at the stop where the vehicle serves it itself, else at its most important real stop, with that stop's
+        // own times (the others stay in the schedule as `via`)
+        const w = (k: number) => (stops[k]!.real === undefined ? Infinity : o.stationWeight(stops[k]!.real!));
+        let best = top;
+        for (let k = i; k <= j; k++) if (stops[k]!.station === station && w(k) > w(best)) best = k;
+        out.push(stops[best]!);
       } else {
         // big city / city with rail: keep where the bus enters and leaves the city
         out.push(stops[i]!);
@@ -124,7 +145,7 @@ export function processTripStops(raw: RawStop[], o: ProcessOptions): TripShape |
     stops = out;
   }
   // collapse same station
-  const st: RawStop[] = [];
+  const st: typeof stops = [];
   for (const s of stops) {
     const prev = st[st.length - 1];
     if (prev && prev.station === s.station) prev.dep = Math.max(prev.dep, s.dep);
@@ -149,7 +170,48 @@ export function processTripStops(raw: RawStop[], o: ProcessOptions): TripShape |
     t = d;
   }
   arr[0] = 0;
-  return { stations: st.map((s) => s.station), cities: st.map((s) => s.city), arr, dep, start };
+  const { via, at } = fullStops(input, st.map((s) => s.i), st.map((s) => s.station), arr, dep, start);
+  return { stations: st.map((s) => s.station), cities: st.map((s) => s.city), arr, dep, start, via, at };
+}
+
+/**
+ * The stops of a run that its pattern leaves out (see TripShape.via / at). `kept[k]` is the input index of
+ * pattern stop k (ascending). Consecutive input stops at the same real station count once. Times of left-out
+ * stops are clamped between the surrounding pattern stops (whose times may have been repaired).
+ */
+function fullStops(input: RawStop[], kept: number[], stations: number[], arr: number[], dep: number[], start: number): { via: number[]; at: number[] } {
+  const via: number[] = [], at: number[] = [];
+  const n = kept.length;
+  let next = 0, prevReal = -1, prevVia = -1; // prevVia: offset in `via` of the last left-out stop (to merge repeats)
+  let floor = -Infinity;
+  for (let r = 0; r < input.length; r++) {
+    const s = input[r]!;
+    const real = s.real ?? s.station;
+    if (next < n && kept[next] === r) {
+      if (real !== stations[next]) at.push(next, real);
+      floor = dep[next]!;
+      next++;
+      prevReal = real;
+      prevVia = -1;
+      continue;
+    }
+    if (real === prevReal) {
+      if (prevVia >= 0) via[prevVia + 3] = Math.max(via[prevVia + 3]!, clampT(s.dep - start, floor, next, arr, n));
+      continue;
+    }
+    const a = clampT(s.arr - start, floor, next, arr, n);
+    const d = Math.max(a, clampT(s.dep - start, floor, next, arr, n));
+    prevVia = via.length;
+    via.push(next, real, a, d);
+    floor = d;
+    prevReal = real;
+  }
+  return { via, at };
+}
+
+function clampT(t: number, floor: number, next: number, arr: number[], n: number): number {
+  const hi = next < n ? arr[next]! : Infinity;
+  return Math.min(Math.max(t, floor), Math.max(hi, floor));
 }
 
 /** 53-bit-ish string hash (FNV-1a variant on two 32-bit lanes). */
@@ -172,21 +234,25 @@ export interface PatternRec {
   headsign: string;
   tz: number;
   shapeTrip: number; // trip_key with a shape (or -1)
+  /** Left-out stops and real stops of the run (TripShape.via / at); part of the pattern's identity. */
+  via?: number[];
+  at?: number[];
 }
 
-/** Dedups patterns by (route, stations, offsets, headsign, tz). */
+/** Dedups patterns by (route, stations, offsets, headsign, tz, left-out stops). */
 export class PatternStore {
   readonly patterns: PatternRec[] = [];
   private index = new Map<number, number[]>();
   add(p: PatternRec): number {
-    const k = `${p.route}|${p.tz}|${p.headsign}|${p.stations.join(",")}|${p.arr.join(",")}|${p.dep.join(",")}`;
+    const k = `${p.route}|${p.tz}|${p.headsign}|${p.stations.join(",")}|${p.arr.join(",")}|${p.dep.join(",")}|${(p.via ?? []).join(",")}|${(p.at ?? []).join(",")}`;
     const h = hashKey(k);
     const cands = this.index.get(h);
     if (cands) {
       for (const i of cands) {
         const q = this.patterns[i]!;
         if (
-          q.route === p.route && q.tz === p.tz && q.headsign === p.headsign && eq(q.stations, p.stations) && eq(q.arr, p.arr) && eq(q.dep, p.dep)
+          q.route === p.route && q.tz === p.tz && q.headsign === p.headsign && eq(q.stations, p.stations) && eq(q.arr, p.arr) && eq(q.dep, p.dep) &&
+          eq(q.via ?? [], p.via ?? []) && eq(q.at ?? [], p.at ?? [])
         ) {
           if (q.shapeTrip < 0 && p.shapeTrip >= 0) q.shapeTrip = p.shapeTrip;
           return i;

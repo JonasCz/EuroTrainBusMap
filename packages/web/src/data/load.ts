@@ -19,7 +19,9 @@ import {
   type GeoFile,
   type Manifest,
   type Pos,
+  type ScheduleFile,
   type Station,
+  scheduleFile,
 } from "@etbm/shared";
 
 const BASE = import.meta.env.BASE_URL;
@@ -144,4 +146,15 @@ export function loadCity(ds: DataSet, id: number): Promise<CityFile> {
     if (!cf) throw new Error(`city ${id} missing in shard ${shard}`);
     return cf;
   });
+}
+
+/**
+ * Schedule file (full stop lists of runs, ScheduleFile) of a city's timetable, or null when the build has none for it
+ * (no run of the city leaves stops out) or it cannot be loaded: schedules then list the pattern's stops only.
+ */
+export function loadSchedule(ds: DataSet, id: number): Promise<ScheduleFile | null> {
+  const city = ds.cities[id];
+  if (!city) return Promise.resolve(null);
+  const rel = scheduleFile(city);
+  return cached(`sched:${rel}`, () => getJson<ScheduleFile>(ds.url(rel)).catch(() => null));
 }

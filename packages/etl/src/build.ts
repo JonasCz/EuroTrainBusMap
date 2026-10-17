@@ -17,6 +17,10 @@ import {
   segmentPath,
   aggregateSegments,
   type Pattern,
+  type ScheduleFile,
+  type ScheduleRun,
+  SCHEDULE_GROUP,
+  scheduleFile,
   type Route,
   type Station,
   type Trip,
@@ -484,7 +488,10 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     if (cat === Cat.Bus)
       for (const r of raw) {
         const c = busCanon[r.city]!;
-        if (c >= 0 && stations[r.station]!.cats === Cat.Bus) r.station = c;
+        if (c >= 0 && c !== r.station && stations[r.station]!.cats === Cat.Bus) {
+          r.real = r.station;
+          r.station = c;
+        }
       }
     const shape = processTripStops(raw, { cat, cityPop, stationWeight, cityHasRail, minBusCityPop: cfg.minBusCityPop ?? 1000, stationPos: (s) => [stations[s]!.lon, stations[s]!.lat] });
     if (!shape) {
@@ -506,7 +513,9 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     }
     const utc = rc.tz === "UTC";
     const tz = utc ? cities[shape.cities[0]!]!.tz : rc.tz;
-    const headsign = (tHead[tk] ?? "").trim() || stations[shape.stations[shape.stations.length - 1]!]!.name;
+    // no headsign: the run's real last stop (may be a stop left out of the pattern)
+    const lastRaw = raw[raw.length - 1]!;
+    const headsign = (tHead[tk] ?? "").trim() || stations[lastRaw.real ?? lastRaw.station]!.name;
     const pid = store.add({
       route,
       stations: shape.stations,
@@ -516,6 +525,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       headsign,
       tz: tzId(tz),
       shapeTrip: tShape[tk]! >= 0 ? tk : -1,
+      ...(shape.via.length ? { via: shape.via } : {}),
+      ...(shape.at.length ? { at: shape.at } : {}),
     });
     const base = extraMask.get(tk) ?? svcMask.get(tSvc[tk]!);
     if (!base) return;
@@ -899,6 +910,47 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     shardBytes = 0;
     shardCities = [];
   };
+  // Full stop lists of the runs (Pattern.run) live in schedule files (sched/), one per SCHEDULE_GROUP shards:
+  // only a trip's schedule needs them. Each run and stop is stored once per file.
+  class ScheduleAcc {
+    readonly file: ScheduleFile = { stops: [], runs: [] };
+    private stopIdx = new Map<number, number>();
+    private runIdx = new Map<number, number>();
+    private stop(s: number): number {
+      let i = this.stopIdx.get(s);
+      if (i === undefined) {
+        const st = stations[s]!;
+        this.stopIdx.set(s, (i = this.file.stops.length));
+        this.file.stops.push([st.name, round5(st.lon), round5(st.lat), usedCity[st.city] ?? -1]);
+      }
+      return i;
+    }
+    run(p: number): number {
+      let i = this.runIdx.get(p);
+      if (i === undefined) {
+        const pt = patterns[p]!;
+        const r: ScheduleRun = {};
+        if (pt.via) r.via = pt.via.map((x, k) => (k % 4 === 1 ? this.stop(x) : x));
+        if (pt.at) r.at = pt.at.map((x, k) => (k % 2 === 1 ? this.stop(x) : x));
+        this.runIdx.set(p, (i = this.file.runs.length));
+        this.file.runs.push(r);
+      }
+      return i;
+    }
+  }
+  let schedGroup = 0, schedAcc = new ScheduleAcc(), schedRuns = 0, schedStops = 0, schedFiles = 0, schedBytes = 0;
+  const writeSchedule = async (name: string, acc: ScheduleAcc) => {
+    if (!acc.file.runs.length) return;
+    await mkdir(join(outDir, "sched"), { recursive: true });
+    const json = JSON.stringify(acc.file);
+    await writeFile(join(outDir, "sched", `${name}.json`), json);
+    schedRuns += acc.file.runs.length;
+    schedStops += acc.file.stops.length;
+    schedFiles++;
+    schedBytes += Buffer.byteLength(json);
+    fileCount++;
+    totalBytes += json.length;
+  };
   for (const c of hilbertOrder) {
     const plist = patternsByCity[c]!;
     const localRoute = new Map<number, number>();
@@ -906,6 +958,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const pOut: Pattern[] = [];
     const pTz: number[] = [];
     const tOut: Trip[] = [];
+    const withRun: [local: number, pattern: number][] = []; // patterns with a full stop list (Pattern.run)
     plist.sort((a, b) => a - b);
     for (const p of plist) {
       const pt = patterns[p]!;
@@ -916,14 +969,16 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
         rOut.push(routes[pt.route]!);
       }
       const li = pOut.length;
-      pOut.push({
+      const po: Pattern = {
         route: lr,
         stations: pt.stations.map((s) => usedStation[s]!),
         arr: pt.arr,
         dep: pt.dep,
         corridors: patternCorr[p]!.map((x) => corrNew[x]!),
         headsign: pt.headsign,
-      });
+      };
+      if (pt.via || pt.at) withRun.push([li, p]);
+      pOut.push(po);
       pTz.push(pt.tz);
       for (let k = tStartIdx[p]!; k < tStartIdx[p + 1]!; k++) {
         const t = tOrder[k]!;
@@ -945,23 +1000,40 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       }
     const anyRail = stIds.some((s) => stations[s]!.rail);
     const cf: CityFile = { city: c, routes: rOut, patterns: pOut, patternTz: pTz, trips: tOut, transfers, minTransfer: anyRail ? 5 : 3 };
-    const json = JSON.stringify(cf);
+    let json = JSON.stringify(cf);
     const bytes = Buffer.byteLength(json);
     sizes.push({ city: `${outCities[c]!.name} (${c})`, bytes });
+    const setRuns = (acc: ScheduleAcc) => {
+      for (const [li, p] of withRun) pOut[li]!.run = acc.run(p);
+      if (withRun.length) json = JSON.stringify(cf);
+    };
     if (bytes > CITY_ALONE) {
       // too big for a shard: stand-alone city/<id>.json (City.shard stays undefined)
+      const acc = new ScheduleAcc();
+      setRuns(acc);
       await mkdir(join(outDir, "city"), { recursive: true });
       await writeFile(join(outDir, "city", `${c}.json`), json);
+      await writeSchedule(`c${c}`, acc);
       fileCount++;
       totalBytes += json.length;
       continue;
     }
     if (shardBytes && shardBytes + bytes > SHARD_TARGET) await flushShard();
+    // the shard this city goes into is `nShards`: its schedule file is that of its group of shards
+    const group = Math.floor(nShards / SCHEDULE_GROUP);
+    if (group !== schedGroup) {
+      await writeSchedule(String(schedGroup), schedAcc);
+      schedGroup = group;
+      schedAcc = new ScheduleAcc();
+    }
+    setRuns(schedAcc);
     shardParts.push(`"${c}":${json}`);
     shardCities.push(c);
     shardBytes += bytes;
   }
   await flushShard();
+  await writeSchedule(String(schedGroup), schedAcc);
+  log(`schedules: ${schedRuns} full stop lists, ${schedStops} listed stops in ${schedFiles} files, ${(schedBytes / 1e6).toFixed(1)} MB`);
   outCities.forEach((city, i) => {
     if (shardOf[i]! >= 0) city.shard = shardOf[i]!;
   });
@@ -1086,7 +1158,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const e = (byCountry[outCities[c0]!.country] ??= { cities: 0, trips: 0 });
     e.trips += cnt;
   }
-  const sanity = runSanity({ network, calendars, readCity: (id) => readCityCache(outDir, id, outCities[id]?.shard) });
+  const sanity = runSanity({ network, calendars, readCity: (id) => readCityCache(outDir, id, outCities[id]?.shard), readSchedule: (id) => readScheduleCache(outDir, outCities[id]!) });
   for (const w of sanity.warnings) warn(`sanity: ${w}`);
   for (const e of sanity.errors) warn(`SANITY ERROR: ${e}`);
   timer.end();
@@ -1125,6 +1197,21 @@ function readCityCache(outDir: string, id: number, shard: number | undefined): C
   } catch {
     return null;
   }
+}
+
+let schedCache: { path: string; data: ScheduleFile | null } | null = null;
+function readScheduleCache(outDir: string, city: City): ScheduleFile | null {
+  const path = scheduleFile(city);
+  if (schedCache?.path !== path) {
+    let data: ScheduleFile | null = null;
+    try {
+      data = JSON.parse(readFileSync(join(outDir, path), "utf8")) as ScheduleFile;
+    } catch {
+      /* no schedule file */
+    }
+    schedCache = { path, data };
+  }
+  return schedCache.data;
 }
 
 /** Position on a 2^16×2^16 Hilbert curve over the map bounding box. */

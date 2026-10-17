@@ -212,7 +212,15 @@ export interface Pattern {
   corridors: number[];
   /** Headsign / final destination text. */
   headsign: string;
+  /**
+   * Index of the run's full stop list in the schedule file (ScheduleFile.runs), when `stations` leaves stops out
+   * (buses: stops in places too small to be a destination, the other stops of a town served by its main stop).
+   */
+  run?: number;
 }
+
+/** A stop listed in a schedule (ScheduleFile.stops): name, position and city id (−1: none, not a destination). */
+export type MinorStop = [name: string, lon: number, lat: number, city: number];
 
 /**
  * A concrete trip = pattern + start time + calendar.
@@ -243,6 +251,37 @@ export interface CityFile {
    */
   transfers: [number, number, number][];
   minTransfer: number;
+}
+
+/**
+ * The full stop list of a run (Pattern.run): only needed for a trip's schedule, so it is kept out of the
+ * timetable shards and loaded on demand.
+ *  - via: the stops left out of the pattern, flat quadruples [next, stop, arr, dep] in travel order: the stop
+ *    lies before pattern stop `next` (`stations.length`: after the last one); `stop` indexes ScheduleFile.stops;
+ *    arr / dep are offsets like Pattern.arr / dep (negative before the first pattern stop).
+ *  - at: pattern stops served at another stop than the pattern's station (the real stop behind a town's main
+ *    stop): flat pairs [k, stop].
+ */
+export interface ScheduleRun {
+  via?: number[];
+  at?: number[];
+}
+
+/**
+ * Full stop lists of the runs of SCHEDULE_GROUP consecutive timetable shards (`sched/<shard / SCHEDULE_GROUP>.json`),
+ * or of a stand-alone city file (`sched/c<id>.json`).
+ */
+export interface ScheduleFile {
+  stops: MinorStop[];
+  runs: ScheduleRun[];
+}
+
+/** Timetable shards per schedule file. */
+export const SCHEDULE_GROUP = 4;
+
+/** Path (relative to the build) of the schedule file of a city's timetable. */
+export function scheduleFile(city: { id: number; shard?: number }): string {
+  return city.shard === undefined ? `sched/c${city.id}.json` : `sched/${Math.floor(city.shard / SCHEDULE_GROUP)}.json`;
 }
 
 /** Several neighbouring cities' CityFiles in one file (see City.shard). */

@@ -9,12 +9,16 @@ import { CAT_LABEL } from "../logic/filters.ts";
 /** Time at a station, in that station's city tz; marks day shifts and foreign zones. */
 export function timeEl(net: Net, utc: number, station: number, opts: { refDate?: string; refTz?: string; strong?: boolean } = {}): HTMLElement {
   const city = net.file.stations[station]!.city;
-  const tz = cityTz(net, city);
+  return timeAt(utc, cityTz(net, city), net.cities[city]!.name, opts);
+}
+
+/** A time in zone `tz` (`place` names where that is local time). */
+export function timeAt(utc: number, tz: string, place: string, opts: { refDate?: string; refTz?: string; strong?: boolean } = {}): HTMLElement {
   const shift = opts.refDate ? dayShift(utc, tz, opts.refDate) : 0;
   const foreign = opts.refTz && tzOffsetLabel(utc, tz) !== tzOffsetLabel(utc, opts.refTz);
   return h(
     "span",
-    { class: `time${opts.strong ? " time--strong" : ""}`, title: `${fmtTime(utc, tz)} ${tzAbbr(utc, tz)} (local time ${net.cities[city]!.name})` },
+    { class: `time${opts.strong ? " time--strong" : ""}`, title: `${fmtTime(utc, tz)} ${tzAbbr(utc, tz)} (local time ${place})` },
     h("time", { datetime: new Date(utc).toISOString() }, fmtTime(utc, tz)),
     shift ? h("sup", { class: "dayshift", "aria-label": `${shift > 0 ? "+" : ""}${shift} day` }, `${shift > 0 ? "+" : ""}${shift}`) : null,
     foreign ? h("span", { class: "tzabbr" }, tzAbbr(utc, tz)) : null,

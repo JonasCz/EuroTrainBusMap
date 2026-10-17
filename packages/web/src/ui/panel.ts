@@ -12,7 +12,7 @@ import type { Departure } from "../logic/timetable.ts";
 import { fmtDuration, localDate } from "../logic/tz.ts";
 import { h, icon } from "./dom.ts";
 import { shortStationName } from "../map/features.ts";
-import { routeTag, timeEl } from "./format.ts";
+import { routeTag, timeAt, timeEl } from "./format.ts";
 import { localIcon, modeIcon } from "./icons.ts";
 import { datePicker, focusPicker } from "./datepicker.ts";
 import { depCats, depsWith, type StationDeps } from "../logic/stations.ts";
@@ -1074,7 +1074,8 @@ export class Panel {
     const alight = stops[sc.alight]!;
     const mins = Math.round((alight.arrUtc! - board.depUtc!) / 60000);
     const tag = [sc.route.name, sc.number].filter(Boolean).join(" ");
-    const cityName = (st: ScheduleStop) => n.cities[st.city]!.name;
+    const cityName = (st: ScheduleStop) => n.cities[st.city]?.name ?? "";
+    const stopName = (st: ScheduleStop) => st.minorName ?? stationName(n, st.station);
     const title = h("span", { class: "sched-title" }, routeTag(sc.route, sc.number), h("span", { class: "headsign" }, sc.headsign));
     const out: Node[] = [this.header(title, `${formatDateShort(sc.refDate)} · ${cityName(board)} → ${cityName(alight)} · ${fmtDuration(mins)}`, { back: true })];
     if (v.legs.length > 1) out.push(this.crumbs(v.legs), this.legList(v.legs.slice(0, -1)));
@@ -1085,40 +1086,41 @@ export class Panel {
         { class: "sched-meta" },
         sc.route.agency ? h("span", null, sc.route.agency) : null,
         h("span", null, `${stops.length} stops`),
-        before ? h("span", null, `from ${stationName(n, stops[0]!.station)}`) : null,
-        after ? h("span", null, `continues to ${stationName(n, stops[stops.length - 1]!.station)}`) : null,
+        before ? h("span", null, `from ${stopName(stops[0]!)}`) : null,
+        after ? h("span", null, `continues to ${stopName(stops[stops.length - 1]!)}`) : null,
       ),
     );
     const counts: OnwardCount[] = [];
     const countEl = () => h("span", { class: "sched-count is-loading" }, "…");
-    const row = (st: ScheduleStop) => {
-      const i = st.stop;
+    const row = (st: ScheduleStop, i: number) => {
       const last = i === stops.length - 1;
       const strong = i === sc.board || i === sc.alight;
       const ref = { refDate: sc.refDate, refTz: sc.refTz };
+      const place = n.cities[st.city]?.name ?? stopName(st);
+      const time = (utc: number, o: { refDate?: string; refTz?: string; strong?: boolean }) => timeAt(utc, st.tz, place, o);
       const times =
         st.show === "both"
           ? // the zone name (if foreign) once, under the departure
-            [h("span", { class: "sched-arr", title: "arrival" }, timeEl(n, st.arrUtc!, st.station, { refDate: sc.refDate })), timeEl(n, st.depUtc!, st.station, { ...ref, strong })]
-          : [timeEl(n, (st.show === "dep" ? st.depUtc : st.arrUtc)!, st.station, { ...ref, strong })];
-      const name = stationName(n, st.station);
+            [h("span", { class: "sched-arr", title: "arrival" }, time(st.arrUtc!, { refDate: sc.refDate })), time(st.depUtc!, { ...ref, strong })]
+          : [time((st.show === "dep" ? st.depUtc : st.arrUtc)!, { ...ref, strong })];
+      const name = stopName(st);
       const city = cityName(st);
       const role = i === sc.board ? "board" : i === sc.alight ? "get off" : null;
       const label = [
         h("span", { class: "sched-name" }, name),
-        !slugify(name).includes(slugify(city)) ? h("span", { class: "sched-cityname" }, city) : null,
+        city && !slugify(name).includes(slugify(city)) ? h("span", { class: "sched-cityname" }, city) : null,
         role ? h("span", { class: "sched-role" }, role) : null,
       ];
       // a larger place with several stations: connections from all of them, offered once per city (and shown
       // once it is known to add departures)
-      const c = n.cities[st.city]!;
-      const multi = st.onward && st.cityRep && c.stations.length > 1 && c.importance >= WHOLE_CITY_MIN_IMPORTANCE;
+      const c = n.cities[st.city];
+      const multi = st.onward && st.cityRep && !!c && c.stations.length > 1 && c.importance >= WHOLE_CITY_MIN_IMPORTANCE;
       let body: HTMLElement[];
       if (st.onward) {
         const el = countEl();
         const main = h(
           "button",
-          { type: "button", class: "sched-main", title: `Connections from ${name} within ${v.windowMin / 60} h of arriving`, onclick: () => this.actions.chooseStop(i, false) },
+          { type: "button", class: "sched-main", title: `Connections from ${name} within ${v.windowMin / 60} h of arriving`, onclick: () => this.actions.chooseStop(st.stop, false) },
           h("span", { class: "sched-label" }, label),
           el,
         );
@@ -1127,7 +1129,7 @@ export class Panel {
           const wel = countEl();
           const btn = h(
             "button",
-            { type: "button", class: "sched-whole", hidden: true, title: `Connections from every station of ${city}, with the walk between stations`, onclick: () => this.actions.chooseStop(i, true) },
+            { type: "button", class: "sched-whole", hidden: true, title: `Connections from every station of ${city}, with the walk between stations`, onclick: () => this.actions.chooseStop(st.stop, true) },
             `All stations of ${city}`,
             wel,
           );
@@ -1144,6 +1146,7 @@ export class Panel {
             st.rideIn ? "ride-in" : "",
             st.rideOut ? "ride-out" : "",
             strong ? "is-end" : "",
+            st.stop < 0 ? "is-minor" : "",
             i === 0 ? "is-first" : "",
             last ? "is-last" : "",
           ]

@@ -1,4 +1,4 @@
-import { Cat, type CityFile } from "@etbm/shared";
+import { Cat, type CityFile, type ScheduleFile } from "@etbm/shared";
 import { describe, expect, it } from "vitest";
 import { cityReps, stopPart, stopShow, tripSchedule } from "./schedule.ts";
 import { ctx } from "./testdata.ts";
@@ -61,5 +61,57 @@ describe("trip schedule", () => {
   it("rejects invalid legs", () => {
     expect(tripSchedule(cf, ctx, { from: 0, trip: 0, date: "2026-10-06", board: 3, alight: 1 })).toBeNull();
     expect(tripSchedule(cf, ctx, { from: 0, trip: 5, date: "2026-10-06", board: 1, alight: 3 })).toBeNull();
+  });
+});
+
+// a regional bus Alpha → Beta: a village before Alpha (no city), Alpha served at its stop "Alpha Nord" behind the
+// main stop 0, a village (no city) and a stop of Beta between, a stop of Beta after the pattern's last stop
+const bus: CityFile = {
+  city: 0,
+  routes: [{ name: "Bus 1", agency: "X", cat: Cat.Bus, flags: 0 }],
+  patterns: [{ route: 0, stations: [0, 2], arr: [0, 60], dep: [0, 60], corridors: [30], headsign: "Beta Hamlet", run: 1 }],
+  patternTz: [0],
+  trips: [[0, 600, 0]],
+  transfers: [],
+  minTransfer: 3,
+};
+const sf: ScheduleFile = {
+  stops: [
+    ["Village A", 1, 1, -1],
+    ["Village B", 1, 1, -1],
+    ["Beta Hamlet", 2, 2, 1],
+    ["Alpha Nord", 0, 0, 0],
+    ["Beta West", 2, 2, 1],
+  ],
+  runs: [{ via: [0, 0, 0, 0] }, { via: [0, 0, -10, -10, 1, 1, 20, 22, 1, 4, 50, 50, 2, 2, 70, 70], at: [0, 3] }],
+};
+
+describe("trip schedule with stops only listed (ScheduleRun.via)", () => {
+  const s = tripSchedule(bus, ctx, { from: 0, trip: 0, date: "2026-10-06", board: 0, alight: 1 }, sf)!;
+
+  it("lists every stop of the run in travel order", () => {
+    expect(s.stops.map((x) => x.minorName ?? x.station)).toEqual(["Village A", "Alpha Nord", "Village B", "Beta West", 2, "Beta Hamlet"]);
+    expect(s.stops.map((x) => x.stop)).toEqual([-1, 0, -1, -1, 1, -1]);
+    expect(s.stops.map((x) => x.city)).toEqual([-1, 0, -1, 1, 1, 1]);
+    expect([s.board, s.alight]).toEqual([1, 4]);
+    expect(s.stops[1]!.station).toBe(0); // connections stay at the pattern's station
+  });
+
+  it("gives them their own times and parts, without connections", () => {
+    expect(fmtTime(s.stops[0]!.depUtc!, "Europe/Berlin")).toBe("09:50");
+    expect(fmtTime(s.stops[2]!.arrUtc!, "Europe/Berlin")).toBe("10:20");
+    expect(s.stops[2]!.dwell).toBe(2);
+    expect(s.stops.map((x) => x.part)).toEqual(["before", "ride", "ride", "ride", "ride", "after"]);
+    expect(s.stops.map((x) => x.rideIn)).toEqual([false, false, true, true, true, false]);
+    expect(s.stops.map((x) => x.onward)).toEqual([false, false, false, false, true, false]);
+    expect(s.stops.map((x) => x.cityRep)).toEqual([false, true, false, false, true, false]);
+    expect(s.stops[0]!.tz).toBe("Europe/Berlin"); // no city: the trip's zone
+    expect(s.stops[5]!.tz).toBe("Europe/Prague");
+  });
+
+  it("falls back to the pattern's stops without the schedule file", () => {
+    const p = tripSchedule(bus, ctx, { from: 0, trip: 0, date: "2026-10-06", board: 0, alight: 1 })!;
+    expect(p.stops.map((x) => x.station)).toEqual([0, 2]);
+    expect([p.board, p.alight]).toEqual([0, 1]);
   });
 });
