@@ -1084,7 +1084,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   timer.end();
 
   stats.durationSec = Math.round((Date.now() - ctx.t0) / 1000);
-  const manifest: Manifest = { schema: SCHEMA_VERSION, build, generatedAt: new Date().toISOString(), startDate: args.startDate, days: D, stats, mapdata: md.mapdata, ...(basemapInfo ? { basemap: basemapInfo } : {}), ...(urbanInfo ? { urban: urbanInfo } : {}) };
+  const manifest: Manifest = { schema: SCHEMA_VERSION, build, generatedAt: new Date().toISOString(), startDate: args.startDate, days: D, stats, mapdata: md.mapdata, transfers: md.transfers, ...(basemapInfo ? { basemap: basemapInfo } : {}), ...(urbanInfo ? { urban: urbanInfo } : {}) };
   Object.assign(report, {
     build,
     stats,

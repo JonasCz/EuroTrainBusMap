@@ -58,6 +58,8 @@ export interface Manifest {
    * `<build>/core.json` and the vector tiles listed here instead of network.json.
    */
   mapdata?: { version: number; core: string; tiles: import("./netmap.ts").TileIndex };
+  /** Transfer timetable for connections with changes (see tt.ts): `<build>/<index>` is a TtIndex. */
+  transfers?: { version: number; index: string };
   /** Land / lake vector tiles (shared by all builds); without it the web app falls back to basemap/{land,lakes}.json. */
   basemap?: BasemapInfo;
   /** Local transport (metro / tram / city bus) vector tiles, see urban.ts; absent in builds without the layer. */

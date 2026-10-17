@@ -12,6 +12,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
+import { TransferCollector } from "./transfers.ts";
 import geojsonvt from "geojson-vt";
 import vtpbf from "vt-pbf";
 import {
@@ -41,6 +42,7 @@ import {
   type MapNet,
   type Manifest,
   MAPDATA_VERSION,
+  TT_VERSION,
   type NetworkFile,
   type Segment,
 } from "@etbm/shared";
@@ -60,6 +62,8 @@ export interface MapDataResult {
   bytes: number;
   /** Manifest.mapdata */
   mapdata: NonNullable<Manifest["mapdata"]>;
+  /** Manifest.transfers */
+  transfers: NonNullable<Manifest["transfers"]>;
 }
 
 /**
@@ -198,7 +202,9 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
     }
     return ids;
   };
+  const tt = new TransferCollector();
   const writeGeo = async (rel: string, cfs: CityFile[]) => {
+    for (const cf of cfs) tt.add(cf);
     const json = JSON.stringify(packGeo(net, idx, corridorsOf(cfs), stationsOf(cfs)));
     await write(rel, json);
     geoBytes += json.length;
@@ -220,8 +226,15 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
       await writeGeo(join("geo", `c${f}`), [cf]);
     }
   }
-  log(`mapdata: ${nGeo} geo files, ${(geoBytes / 1e6).toFixed(1)} MB raw; total ${files} files in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
-  return { files, bytes, mapdata: { version: MAPDATA_VERSION, core: "core.json", tiles: core.tiles } };
+  log(`mapdata: ${nGeo} geo files, ${(geoBytes / 1e6).toFixed(1)} MB raw`);
+
+  // ---- transfer timetable (connections with changes)
+  const ttDir = join(buildDir, "tt");
+  if (existsSync(ttDir)) await rm(ttDir, { recursive: true });
+  const t1 = Date.now();
+  await tt.write(network.cities, segments, network.corridors, write, log);
+  log(`mapdata: transfer timetable in ${((Date.now() - t1) / 1000).toFixed(0)} s; total ${files} files in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+  return { files, bytes, mapdata: { version: MAPDATA_VERSION, core: "core.json", tiles: core.tiles }, transfers: { version: TT_VERSION, index: "tt/index.json" } };
 }
 
 /**
@@ -285,6 +298,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const m = JSON.parse(await readFile(mf, "utf8")) as Manifest;
     if (m.build === n.build) {
       m.mapdata = r.mapdata;
+      m.transfers = r.transfers;
       await writeFile(mf, JSON.stringify(m, null, 2));
       console.log("manifest updated");
     }

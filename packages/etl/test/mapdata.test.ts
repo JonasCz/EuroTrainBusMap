@@ -20,7 +20,7 @@ import {
   type MapNet,
   type NetworkFile,
 } from "@etbm/shared";
-import { CAT_BITS, cityMinZoom, levelIndex, mergeLines, packScenario, scenarioDigit, scenarioMask, segmentMinZoom, SCEN_DIGITS, TILE_MAXZOOM, unpackScenario } from "@etbm/shared";
+import { CAT_BITS, cityMinZoom, levelIndex, mergeLines, packScenario, scenarioDigit, scenarioMask, segmentMinZoom, SCEN_DIGITS, TILE_MAXZOOM, unpackScenario, TT_VERSION, type TtIndex } from "@etbm/shared";
 import { forZoom, tileProps, writeMapData } from "../src/mapdata.ts";
 
 const net: NetworkFile = {
@@ -168,7 +168,12 @@ describe("map data (netmap)", () => {
       const geo = unpackGeo(JSON.parse(await readFile(join(dir, "geo", "0.json"), "utf8")));
       expect(geo.corridors.map((c) => c.id)).toEqual([2]);
       expect(geo.stations.map((s) => s.id)).toEqual([0, 1, 3]);
-      expect((await readdir(dir)).sort()).toEqual(["core.json", "geo", "shard", "tiles", "tiles-m"]);
+      expect((await readdir(dir)).sort()).toEqual(["core.json", "geo", "shard", "tiles", "tiles-m", "tt"]);
+      // transfer timetable: index + trunk and region chunks with their line files
+      expect(r.transfers).toEqual({ version: TT_VERSION, index: "tt/index.json" });
+      const tt = JSON.parse(await readFile(join(dir, "tt", "index.json"), "utf8")) as TtIndex;
+      expect(tt.chunks[0]!.file).toBe("tt/0.bin.gz");
+      expect((await readdir(join(dir, "tt"))).length).toBe(1 + 2 * tt.chunks.length);
       // mode-filter tiles up to their max zoom, beyond it the plain tiles serve every filter
       const modes = r.mapdata.tiles.modes!;
       expect(modes.url).toBe("tiles-m/{z}/{x}/{y}.pbf.gz");
