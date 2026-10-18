@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { Cat, Flag } from "@etbm/shared";
-import { classifyRoute, displayName, heuristicRailCat, isHighSpeedService, modeOfRouteType, type ClassifyContext } from "../src/core/classify.ts";
+import {
+  classifyRoute, displayName, heuristicRailCat, isHighSpeedService, isReplacementName, modeOfRouteType, RAIL_LINE_CODE_RE,
+  REPLACEMENT_HEADSIGN_RE, type ClassifyContext,
+} from "../src/core/classify.ts";
 
 const ctx = (over: Partial<ClassifyContext> = {}): ClassifyContext => ({
   keep: ["rail", "coach", "bus"],
@@ -75,11 +78,54 @@ describe("bus & coach", () => {
     expect(classifyRoute(r(3, "800", "", "RVO"), ctx({ country: "DE" }))?.cls).toBe("bus");
   });
   it("treats coach trips on rail routes as buses (SNCF Car TER / car à réservation, Irish Rail BUS)", () => {
-    expect(classifyRoute(r(2, "560D", "CRE", "SNCF VOYAGEURS", "Paris - Cahors"), ctx({ country: "FR" }))).toEqual({ cls: "bus", cat: Cat.Bus, flags: 0 });
+    expect(classifyRoute(r(2, "560D", "CRE", "SNCF VOYAGEURS", "Paris - Cahors"), ctx({ country: "FR" }))).toEqual({ cls: "bus", cat: Cat.Bus, flags: Flag.ReservationOnly });
+    expect(classifyRoute(r(2, "P15", "CTE", "SNCF VOYAGEURS", "Colmar - Metzeral"), ctx({ country: "FR" }))?.flags).toBe(0);
     expect(classifyRoute(r(2, "P15", "CTE", "SNCF VOYAGEURS", "Colmar - Metzeral"), ctx({ country: "FR" }))?.cat).toBe(Cat.Bus);
     expect(classifyRoute(r(2, "rail", "BUS", "Iarnród Éireann / Irish Rail", "Dublin - Limerick"), ctx({ country: "IE" }))?.cat).toBe(Cat.Bus);
     expect(classifyRoute(r(2, "560D", "CRE"), ctx({ keep: ["rail"] }))).toBeNull();
     expect(classifyRoute(r(2, "560A", "IC", "SNCF VOYAGEURS"), ctx({ country: "FR" }))?.cls).toBe("rail");
+  });
+  it("flags reservation-only coaches (SNCF CRE) on rail routes only", () => {
+    const cre = classifyRoute(r(2, "180A", "CRE", "SNCF VOYAGEURS", "Bordeaux - Marseille"), ctx({ country: "FR" }))!;
+    expect(cre.flags & Flag.ReservationOnly).toBeTruthy();
+    expect(cre.flags & Flag.Night).toBe(0);
+    // CRE trips on bus routes (TGV station shuttles "Navettes Lorraine TGV") are sold with the train: no caveat
+    expect(classifyRoute(r(3, "E02", "CRE", "SNCF VOYAGEURS", "Navettes Lorraine TGV - Nancy"), ctx({ country: "FR" }))?.flags).toBe(0);
+  });
+});
+
+describe("rail-replacement buses", () => {
+  it("drops them by route name, description or agency in every country's wording", () => {
+    for (const [short, long, agency] of [
+      ["Snelbus ipv trein", "Snelbus ipv trein Arnhem Centraal <-> Ede-Wageningen", "NS"],
+      ["RE8", "", "DB SEV GmbH"],
+      ["RE14E", "", "Bus SEV, nur Abellio, DB Regio, Go-Ahead"],
+      ["H6", "H6 HÉV-pótlóbusz", "MÁV Személyszállítási Zrt. - Helyközi busz"],
+      ["", "Treinvervangend vervoer", "Arriva"],
+      ["", "Ersättningsbuss Göteborg - Alingsås", "Västtrafik"],
+      ["ZKA", "Kraków - Tarnów", "Polregio"],
+      ["", "Bus de remplacement", "SNCB"],
+      ["B1", "Bahnersatz Visp - Brig", "MGB"],
+    ])
+      expect(classifyRoute(r(3, short, "", agency, long), ctx())).toBeNull();
+    // ŽSR publishes its NAD buses as trains (route_type 106, long name "NAD")
+    expect(classifyRoute(r(106, "Os 14281", "", "Železničná spoločnosť Slovensko, a.s.", "NAD"), ctx({ country: "SK" }))).toBeNull();
+  });
+  it("does not mistake place names for replacement markers", () => {
+    expect(isReplacementName("S2", "Březová nad Svitavou – Blansko – Brno", "České dráhy, a.s.")).toBe(false);
+    expect(isReplacementName("130", "Bystřice nad Pernštejnem-Žďár nad Sázavou", "ZDAR, a.s.")).toBe(false);
+    expect(isReplacementName("N0272", "Celje AP - Planina/Sev.", "Nomago")).toBe(false);
+    expect(classifyRoute(r(106, "S2", "", "České dráhy, a.s.", "Březová nad Svitavou – Blansko – Brno"), ctx({ country: "CZ" }))?.cls).toBe("rail");
+  });
+  it("recognises replacement headsigns, not churches", () => {
+    for (const hs of ["Gera Hbf (SEV)", "Derkum Bahnhof SEV, Weilerswist", "Nykøbing F St. (togbus)", "Hauptbahnhof (EV), Aschaffenburg", "SCHIENENERSATZ Donauwörth"])
+      expect(REPLACEMENT_HEADSIGN_RE.test(hs)).toBe(true);
+    for (const hs of ["Stühlingen Ev. Kirche", "Planina/Sev. - Celje AP", "Sevenum", "Frýdlant nad Ostravicí", "Næstved St."])
+      expect(REPLACEMENT_HEADSIGN_RE.test(hs)).toBe(false);
+  });
+  it("knows train line codes", () => {
+    for (const n of ["RE1", "RB 81X", "S1EV", "MEX17E", "RE 7", "IRE3", "S8"]) expect(RAIL_LINE_CODE_RE.test(n)).toBe(true);
+    for (const n of ["R90", "X85", "P71", "C24+", "SB66", "450", "RE"]) expect(RAIL_LINE_CODE_RE.test(n)).toBe(false);
   });
 });
 

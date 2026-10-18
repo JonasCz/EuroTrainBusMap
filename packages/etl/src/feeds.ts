@@ -28,6 +28,11 @@ export interface FeedOptions {
   dropAgencies?: string;
   /** Regex on agency name: keep only these routes. */
   onlyAgencies?: string;
+  /**
+   * Regex (case-insensitive) on agency name: the bus / coach routes of these agencies are rail-replacement buses
+   * (train operators whose buses only replace their trains, e.g. SJ, Mälartåg) and are dropped; their trains are kept.
+   */
+  replacementBusAgencies?: string;
   /** Minimum straight-line span (km) of a bus route (default from config). */
   minBusKm?: number;
   /** Regex with one capture group applied to trip_id to get the train category when trip_short_name is missing. */

@@ -40,7 +40,15 @@ export type CatBit = (typeof Cat)[keyof typeof Cat];
 export const Flag = {
   /** Night train / overnight service. */
   Night: 2,
+  /**
+   * Booking caveat: a reservation-only service (SNCF "car à réservation", trip category CRE: an Intercités or
+   * TER line run by coach, sold on request) that the usual booking sites may not offer. Shown with a note.
+   */
+  ReservationOnly: 4,
 } as const;
+
+/** Flags that carry a booking caveat (kept on Route.flags, see bookingCaveat in the web app). */
+export const CAVEAT_FLAGS = Flag.ReservationOnly;
 
 export interface Manifest {
   schema: number;

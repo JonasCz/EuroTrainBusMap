@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   Cat,
+  CAVEAT_FLAGS,
   Flag,
   SCHEMA_VERSION,
   type AttributionFile,
@@ -40,7 +41,7 @@ import { isoToEpochDay, tzOffsetMinutes, validTz } from "./core/time.ts";
 import { resolveDuplicates, type DupPair, type DupTrip } from "./core/dedup.ts";
 import { MAX_THROUGH_DWELL, findThroughRuns, type RunPiece } from "./core/through.ts";
 import { PatternStore, localizeStart, processTripStops, type RawStop } from "./core/patterns.ts";
-import { displayName, isHighSpeedService } from "./core/classify.ts";
+import { displayName, isHighSpeedService, RAIL_LINE_CODE_RE } from "./core/classify.ts";
 import type { GeometryRequest } from "./geometry/index.ts";
 import { sliceShape } from "./core/shapes.ts";
 import { buildSegments } from "./core/segments.ts";
@@ -113,6 +114,21 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
             WHERE st.trip_key IN (SELECT trip_key FROM trips WHERE cat IS NULL) GROUP BY st.trip_key) st
     ) x WHERE trips.trip_key = x.trip_key`);
   await db.run(`DELETE FROM trips WHERE cat IS NULL`);
+  // Rail-replacement buses named after the train line: DELFI publishes the SEV buses of a railway as bus routes
+  // "RE1" / "RB 81X" / "S1EV" of the railway's agency (or of its "Nahreisezug"), so a bus route with a train line
+  // code (RAIL_LINE_CODE_RE) whose agency runs trains in the same country (any feed) is dropped like the named ones.
+  {
+    const cands = await db.all<{ rc: number; route_short: string }>(`SELECT rc.rc, rc.route_short FROM rclass rc JOIN feeds f USING (feed)
+      WHERE rc.cls IN ('bus', 'coach') AND rc.agency IN (
+        SELECT r2.agency FROM rclass r2 JOIN feeds f2 USING (feed) WHERE r2.cls = 'rail' AND f2.country = f.country)`);
+    const rcs = cands.filter((r) => RAIL_LINE_CODE_RE.test(r.route_short ?? "")).map((r) => r.rc);
+    if (rcs.length) {
+      const n = await db.scalar(`SELECT count(*) FROM trips WHERE rc IN (${rcs.join(",")})`);
+      await db.run(`DELETE FROM trips WHERE rc IN (${rcs.join(",")})`);
+      stats.replacementBusTrips = n;
+      log(`replacement buses: ${n} trips of ${rcs.length} bus routes named after a train line of their (rail) agency dropped`);
+    }
+  }
 
   // ------------------------------------------------------------------ stations, then cities
   // Stops are merged into stations first (purely spatial, core/stations.ts), then every station is
@@ -551,7 +567,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     }
     const dn = rc.pname ? { name: rc.pname, number: tShort[tk] ?? undefined } : displayName(rc.short, rc.long, tShort[tk] ?? "", rc.agency);
     // Older databases (--reuse-db) may still carry the removed Deutschlandticket bit (1).
-    const flags = tFlags[tk]! & Flag.Night;
+    const flags = tFlags[tk]! & (Flag.Night | CAVEAT_FLAGS);
     const color = rc.color && /^[0-9a-fA-F]{6}$/.test(rc.color) ? rc.color.toUpperCase() : undefined;
     const rkey = `${dn.name}\u0001${rc.agency}\u0001${cat}\u0001${flags}\u0001${color ?? ""}`;
     let route = routeIndex.get(rkey);

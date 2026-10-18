@@ -1,5 +1,5 @@
 /** Side panel (desktop) / bottom sheet (mobile): search, mode chips and content views. */
-import { CYCLE_BUFFER_MIN, CYCLE_MAX_MIN, CYCLE_M_PER_MIN, Cat, WALK_MAX_MIN, changeOf, distanceM, walkDistanceM, walkMinutes, type ChangeBy } from "@etbm/shared";
+import { CAVEAT_FLAGS, CYCLE_BUFFER_MIN, CYCLE_MAX_MIN, CYCLE_M_PER_MIN, Cat, WALK_MAX_MIN, changeOf, distanceM, walkDistanceM, walkMinutes, type ChangeBy } from "@etbm/shared";
 import { cityTz, slugify, stationName, type Net } from "../data/net.ts";
 import { addDays, formatDateShort, lastDate } from "../logic/calendar.ts";
 import type { Connection, OnwardStop } from "../logic/connections.ts";
@@ -13,7 +13,7 @@ import type { Departure } from "../logic/timetable.ts";
 import { fmtDuration, fmtTime, localDate } from "../logic/tz.ts";
 import { h, icon } from "./dom.ts";
 import { shortStationName } from "../map/features.ts";
-import { fmtKm, routeBadge, routeTag, timeAt, timeEl } from "./format.ts";
+import { caveatBadge, caveatNote, fmtKm, routeBadge, routeTag, timeAt, timeEl } from "./format.ts";
 import { localIcon, modeIcon } from "./icons.ts";
 import { datePicker, focusPicker } from "./datepicker.ts";
 import { depCats, depsWith, type StationDeps } from "../logic/stations.ts";
@@ -851,7 +851,9 @@ export class Panel {
             // the route name when every journey of the group rides the same one ("C2"), else the brand ("TER")
             const names = new Set(g.rows.map((r) => r.legs[i]?.info?.route.name));
             const name = names.size === 1 && info ? info.route.name : brand.startsWith("cat") ? (CAT_LABEL[cat] ?? brand) : brand;
-            tags.push(info ? routeTag({ ...info.route, name }) : modeIcon(cat, 16, CAT_LABEL[cat]));
+            // a booking caveat when any journey of the group rides such a service on this leg
+            const caveat = g.rows.reduce((f, r) => f | ((r.legs[i]?.info?.route.flags ?? 0) & CAVEAT_FLAGS), 0);
+            tags.push(info ? routeTag({ ...info.route, name, flags: (info.route.flags & ~CAVEAT_FLAGS) | caveat }) : modeIcon(cat, 16, CAT_LABEL[cat]));
           });
           const k = g.cities.length;
           const dur = g.minMin === g.maxMin ? fmtDuration(g.minMin) : `${fmtDuration(g.minMin)} – ${fmtDuration(g.maxMin)}`;
@@ -1268,6 +1270,8 @@ export class Panel {
         after ? h("span", null, `continues to ${stopName(stops[stops.length - 1]!)}`) : null,
       ),
     );
+    const caveat = caveatNote(sc.route);
+    if (caveat) out.push(caveat);
     const counts: OnwardCount[] = [];
     const row = (_st: ScheduleStop, i: number) => this.schedRow(sc, i, { windowMin: v.windowMin, counts, count: (stop, whole) => v.onward(stop, whole), choose: (stop, whole) => this.actions.chooseStop(stop, whole) });
     const list = h("ol", { class: "sched", style: `--mode:var(--cat-${sc.route.cat})`, "aria-label": `Stops of ${tag}` }, stops.map(row));
@@ -1404,8 +1408,9 @@ export class Panel {
           h(
             "div",
             { class: "jsched-leg-main" },
-            h("span", { class: "sched-title" }, routeBadge(sc.route, sc.number), h("span", { class: "headsign" }, h("span", { class: "muted" }, "towards "), sc.headsign)),
+            h("span", { class: "sched-title" }, routeBadge(sc.route, sc.number), caveatBadge(sc.route), h("span", { class: "headsign" }, h("span", { class: "muted" }, "towards "), sc.headsign)),
             h("span", { class: "jsched-leg-meta" }, [sc.route.agency || null, fmtDuration(mins), stopsBetween(sc)].filter(Boolean).join(" · ")),
+            caveatNote(sc.route),
           ),
         ),
       );

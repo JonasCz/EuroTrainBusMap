@@ -853,8 +853,11 @@
      "url": "https://files.mobilitydatabase.org/mdb-2939/latest.zip"
     }
    ],
-   "notes": "Origin needs Trafiklab API key; Transitous mirror (shapes stripped, 44 MB) or MDB mirror of Sweden 3 (821 MB with shapes, no key needed).",
-   "approxMB": 44
+   "notes": "Origin needs Trafiklab API key; Transitous mirror (shapes stripped, 44 MB) or MDB mirror of Sweden 3 (821 MB with shapes, no key needed). The bus routes of the train operators (named by train number, e.g. SJ 60629 Karlstad - Oslo, Tåg i Bergslagen 68128 Borlänge - Mora on one day) are their rail-replacement buses (ersättningsbussar).",
+   "approxMB": 44,
+   "options": {
+    "replacementBusAgencies": "^(SJ|VR Snabbtåg|Öresundståg|Mälartåg|Vy Tåg|Tåg i Bergslagen|Tågåkeriet i Bergslagen|Snälltåget|Norrtåg|Krösatåg|Krösatågen Öst)$"
+   }
   },
   {
    "id": "fi-fintraffic",

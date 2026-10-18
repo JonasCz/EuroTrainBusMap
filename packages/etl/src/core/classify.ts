@@ -65,8 +65,44 @@ const REG_OPERATORS = /\b(northern|southern|southeastern|thameslink|great northe
  */
 const ROAD_TRIP_PREFIXES = new Set(["bus", "car", "cte", "cre", "autocar", "autobus"]);
 
-/** Rail-replacement / special buses we never want. */
-const REPLACEMENT_RE = /(\bsev\b|schienenersatz|ersatzverkehr|\bev\d*\b|rail replacement|replacement bus|bus replacement|treinvervangend|\bnáhradní|\bnahradna|\bzka\b|zastępcza|bus de substitution|bus sostitutivo|autobus sostitutivo|substitution|ersatzbus|\bsv\s?\d)/i;
+/**
+ * Trip categories of reservation-only services: SNCF's "car à réservation" (CRE) is sold on request and is
+ * often missing from the usual booking sites (e.g. "Car 60003" Paris – Cahors on a holiday weekend while the
+ * Intercités trains of the line run as usual). They are kept, with a booking caveat (Flag.ReservationOnly).
+ */
+const RESERVATION_TRIP_PREFIXES = new Set(["cre"]);
+
+/**
+ * Rail-replacement / special buses we never want, by route name, route description or agency (DELFI "DB SEV GmbH",
+ * "Bus SEV, nur Abellio …"): DE/AT/CH SEV, Schienenersatzverkehr, EV, Bahnersatz; NL "(Snel/Stop)bus ipv trein",
+ * treinvervangend vervoer; DK togbus; NO buss for tog; SE ersättningsbuss / tågersättning; CZ / SK náhradní /
+ * náhradná (autobusová) doprava; PL ZKA (zastępcza komunikacja autobusowa); HU (vonat)pótló busz; IT bus / autobus
+ * sostitutivo; FR / BE bus de substitution / de remplacement; ES autobús sustitutorio / de sustitución.
+ */
+const REPLACEMENT_RE =
+  /(\bsev\b(?!\.)|schienenersatz|ersatzverkehr|bahnersatz|\bev\d*\b|rail replacement|replacement bus|bus replacement|treinvervangend|\bipv\.? trein|in plaats van (de )?trein|\btogbus|buss for tog|ersättningsbuss|tågersättning|\bnáhradní|\bnáhradná|\bnahradna|\bzka\b|zastępcza|pótlóbusz|pótló busz|vonatpótló|bus de substitution|bus de remplacement|car de substitution|car de remplacement|bus sostitutivo|autobus sostitutivo|autobús sustitutorio|de sustitución|substitution|ersatzbus|\bsv\s?\d)/i;
+/** Case-sensitive markers: CZ / SK "NAD" (náhradní autobusová doprava; "nad" is also the Czech "above"), PL "ZKA". */
+const REPLACEMENT_CS_RE = /(^|[\s(/,-])(NAD|ZKA|SEV)($|[\s)/,.-])/;
+
+/** True for route names / descriptions / agency names that mark a rail-replacement bus. */
+export function isReplacementName(...texts: string[]): boolean {
+  return texts.some((t) => !!t && (REPLACEMENT_RE.test(t) || REPLACEMENT_CS_RE.test(t)));
+}
+
+/**
+ * Trip headsigns of rail-replacement buses published under an ordinary line (DELFI "Gera Hbf (SEV)", "Derkum Bahnhof
+ * SEV, Weilerswist", Rejseplanen "Nykøbing F St. (togbus)"). Stricter than the route-name test: headsigns are place
+ * names, so "Ev. Kirche" (evangelische) or a Slovenian "Planina/Sev." must not match.
+ */
+export const REPLACEMENT_HEADSIGN_RE =
+  /(\bSEV\b|\(EV\)|\bSEV-|[Ss]chienenersatz|SCHIENENERSATZ|[Ee]rsatzverkehr|[Bb]ahnersatz|\btogbus\b|\bbuss for tog\b|\bipv trein\b|[Tt]reinvervangend|[Ee]rsättningsbuss|\bNAD\b|\bZKA\b|vonatpótló|pótlóbusz)/;
+
+/**
+ * Line codes of trains (German / Austrian / Swiss style: RE 7, RB81X, S1EV, MEX17E, IRE3): a bus route with such a
+ * name whose agency runs trains in the same country is a rail-replacement bus (DELFI publishes SEV buses as bus
+ * routes "RE1" of the railway's agency, or of "Nahreisezug"). See build.ts (replacement buses).
+ */
+export const RAIL_LINE_CODE_RE = /^(RE|RB|RS|S|MEX|IRE|RBX|HBX|ERB)\s?\d{1,3}[A-Za-z]{0,3}$/;
 
 export function tokenOf(s: string): string {
   const m = /^\s*([A-Za-zÀ-ž][A-Za-zÀ-ž\-]{0,15})/.exec(s);
@@ -103,12 +139,18 @@ export function modeOfRouteType(t: number): ModeClass | null {
 export function classifyRoute(r: RouteInfo, ctx: ClassifyContext): Classification | null {
   let mode = modeOfRouteType(r.routeType);
   if (!mode) return null;
-  if (mode === "rail" && ROAD_TRIP_PREFIXES.has(r.tripPrefix.toLowerCase())) mode = "bus";
+  const prefix = r.tripPrefix.toLowerCase();
+  let roadFlags = 0;
+  if (mode === "rail" && ROAD_TRIP_PREFIXES.has(prefix)) {
+    mode = "bus";
+    if (RESERVATION_TRIP_PREFIXES.has(prefix)) roadFlags |= Flag.ReservationOnly;
+  }
   const allNames = `${r.shortName} ${r.longName} ${r.desc}`;
   const { opts } = ctx;
+  // replacement buses, also when published as a train (ŽSR "Os 14281" with the long name "NAD")
+  if (isReplacementName(r.shortName, r.longName, r.desc, r.agency) || REPLACEMENT_RE.test(r.tripPrefix)) return null;
 
   if (mode !== "rail") {
-    if (REPLACEMENT_RE.test(allNames) || REPLACEMENT_RE.test(r.tripPrefix)) return null;
     const coachByName = ctx.coachRe.test(r.agency) || ctx.coachRe.test(allNames);
     if (mode === "coach") {
       if (r.routeType === 204 || r.routeType === 208 || r.routeType === 209 || opts.coachTypesAsBus) mode = coachByName ? "coach" : "bus";
@@ -118,8 +160,8 @@ export function classifyRoute(r: RouteInfo, ctx: ClassifyContext): Classificatio
   if (opts.allCoach && mode !== "rail") mode = "coach";
   if (!ctx.keep.includes(mode)) return null;
 
-  if (mode === "coach") return { cls: "coach", cat: Cat.Coach, flags: 0 };
-  if (mode === "bus") return { cls: "bus", cat: Cat.Bus, flags: 0 };
+  if (mode === "coach") return { cls: "coach", cat: Cat.Coach, flags: roadFlags };
+  if (mode === "bus") return { cls: "bus", cat: Cat.Bus, flags: roadFlags };
 
   // ---- rail ----
   let flags = 0;

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Db } from "../db.ts";
 import { sqlStr } from "../db.ts";
 import type { FeedsConfig, ResolvedFeed } from "../feeds.ts";
-import { classifyRoute, type ClassifyContext } from "../core/classify.ts";
+import { classifyRoute, REPLACEMENT_HEADSIGN_RE, type ClassifyContext } from "../core/classify.ts";
 import { sqlGtfsTime, isUtcLike, validTz } from "../core/time.ts";
 import { log, warn } from "../util/log.ts";
 import { BBOX } from "../geonames.ts";
@@ -188,6 +188,7 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
   };
   const dropAg = opts.dropAgencies ? new RegExp(opts.dropAgencies, "i") : null;
   const onlyAg = opts.onlyAgencies ? new RegExp(opts.onlyAgencies, "i") : null;
+  const replAg = opts.replacementBusAgencies ? new RegExp(opts.replacementBusAgencies, "i") : null;
   const dedicated = cfg.dedicatedOperators
     .filter((d) => !d.feeds.includes(def.id) && d.feeds.some((f) => ctx.presentFeedIds.has(f)))
     .map((d) => new RegExp(d.pattern, "i"));
@@ -207,6 +208,7 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
       cctx,
     );
     if (!cl) continue;
+    if (cl.cls !== "rail" && replAg && replAg.test(agencyName)) continue;
     let tz = validTz(ag?.tz) ?? defaultTz;
     if (isUtcLike(tz)) tz = "UTC";
     const pname = opts.prefixNames?.[r.prefix] ?? null;
@@ -264,6 +266,8 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
     JOIN rclass rc ON rc.rc = m.rc`);
   // Duplicate trip_ids would explode joins; keep the first.
   await db.run(`DELETE FROM t_kt WHERE trip_key NOT IN (SELECT min(trip_key) FROM t_kt GROUP BY trip_id)`);
+  // Rail-replacement buses under an ordinary bus line, told by the headsign ("Gera Hbf (SEV)", "Odense St. (togbus)").
+  await db.run(`DELETE FROM t_kt WHERE cls IN ('bus', 'coach') AND regexp_matches(coalesce(headsign, ''), ${sqlStr(REPLACEMENT_HEADSIGN_RE.source)})`);
   const nKt = await db.scalar(`SELECT count(*) FROM t_kt`);
   if (!nKt) {
     warn(`feed ${rf.key}: no trips within the horizon`);
@@ -311,7 +315,8 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
       ${c(sp, "stop_id")} AS stop_id, coalesce(${c(sp, "stop_name")}, '') AS name,
       try_cast(${c(sp, "stop_lat")} AS DOUBLE) AS lat, try_cast(${c(sp, "stop_lon")} AS DOUBLE) AS lon,
       ${c(sp, "parent_station")} AS parent_id, ${c(sp, "stop_timezone")} AS tz,
-      coalesce(try_cast(${c(sp, "location_type")} AS INTEGER), 0) AS loc_type
+      coalesce(try_cast(${c(sp, "location_type")} AS INTEGER), 0) AS loc_type,
+      try_cast(${c(sp, "vehicle_type")} AS INTEGER) AS vehicle_type
     FROM ${csv(files["stops.txt"]!)} WHERE ${c(sp, "stop_id")} IS NOT NULL`);
   // Duplicate stop_ids: keep one by content (rowid is not file order: CSV scans run in parallel).
   if ((await db.scalar(`SELECT count(*) - count(DISTINCT stop_id) FROM t_stops_all`)) > 0)
@@ -321,6 +326,20 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
   // Drop stop_times at stops without valid coordinates.
   await db.run(`DELETE FROM t_st WHERE stop_id NOT IN (
       SELECT stop_id FROM t_stops_all WHERE lat BETWEEN ${BBOX.minLat} AND ${BBOX.maxLat} AND lon BETWEEN ${BBOX.minLon} AND ${BBOX.maxLon})`);
+
+  // ---------- rail-replacement buses published as trains ----------
+  // Entur (NO) runs its "buss for tog" under the train's line (route_type 100, e.g. F6 Trondheim – Oslo on a day
+  // of engineering works) but calls only at bus stops: stops.txt `vehicle_type` (extended route type of the stop)
+  // is a bus type at every stop of the trip. Such trips are rail-replacement buses, dropped like the named ones.
+  if (sp.has("vehicle_type")) {
+    const n0 = await db.scalar(`SELECT count(DISTINCT trip_key) FROM t_st`);
+    await db.run(`DELETE FROM t_st WHERE trip_key IN (
+        SELECT st.trip_key FROM t_st st JOIN t_kt kt USING (trip_key) JOIN t_stops_all s USING (stop_id)
+        WHERE kt.cls = 'rail' GROUP BY st.trip_key
+        HAVING bool_and(coalesce(s.vehicle_type = 3 OR s.vehicle_type BETWEEN 200 AND 209 OR s.vehicle_type BETWEEN 700 AND 716, false)))`);
+    const dropped = n0 - (await db.scalar(`SELECT count(DISTINCT trip_key) FROM t_st`));
+    if (dropped) log(`feed ${rf.key}: ${dropped} rail trips calling only at bus stops (rail-replacement buses) dropped`);
+  }
 
   // ---------- bus filter: drop short (urban) bus/coach trips ----------
   const minKm = opts.minBusKm ?? cfg.minBusKm;

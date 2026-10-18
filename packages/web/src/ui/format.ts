@@ -2,9 +2,10 @@ import type { Route } from "@etbm/shared";
 import { cityTz, stationName, type Net } from "../data/net.ts";
 import { dayShift, fmtTime, tzAbbr } from "../logic/tz.ts";
 import { currentTheme } from "../map/theme.ts";
-import { h } from "./dom.ts";
+import { h, icon } from "./dom.ts";
 import { modeIcon } from "./icons.ts";
 import { CAT_LABEL } from "../logic/filters.ts";
+import { bookingCaveat } from "../logic/caveat.ts";
 
 /** Time at a station, in that station's city tz; marks day shifts and foreign zones. */
 export function timeEl(net: Net, utc: number, station: number, opts: { refDate?: string; refTz?: string; strong?: boolean } = {}): HTMLElement {
@@ -50,9 +51,23 @@ export function routeBadge(r: Route, number?: string): HTMLElement {
   return h("span", { class: "badge", style: `--badge-bg:${bg};--badge-fg:${fg}`, title: r.agency }, name);
 }
 
-/** Mode pictogram + coloured pill: "[train] ICE 597" (the pill keeps the operator's colour). */
+/** Mode pictogram + coloured pill: "[train] ICE 597" (the pill keeps the operator's colour), plus a booking caveat badge. */
 export function routeTag(r: Route, number?: string): HTMLElement {
-  return h("span", { class: "route-tag" }, modeIcon(r.cat, 16, CAT_LABEL[r.cat]), routeBadge(r, number));
+  return h("span", { class: "route-tag" }, modeIcon(r.cat, 16, CAT_LABEL[r.cat]), routeBadge(r, number), caveatBadge(r));
+}
+
+/** Small info badge for a service with a booking caveat (logic/caveat.ts); null for ordinary ones. */
+export function caveatBadge(r: Route): HTMLElement | null {
+  const c = bookingCaveat(r);
+  if (!c) return null;
+  return h("span", { class: "caveat", role: "img", title: c.text, "aria-label": `${c.label}: ${c.text}` }, icon("info", 13), h("span", { class: "caveat-label", "aria-hidden": "true" }, c.label));
+}
+
+/** The booking caveat as a sentence (trip schedule, journey legs); null for ordinary services. */
+export function caveatNote(r: Route): HTMLElement | null {
+  const c = bookingCaveat(r);
+  if (!c) return null;
+  return h("p", { class: "caveat-note" }, icon("info", 14), h("span", null, c.text));
 }
 
 export function station(net: Net, id: number): string {
