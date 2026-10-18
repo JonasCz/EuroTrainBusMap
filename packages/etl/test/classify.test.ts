@@ -74,6 +74,13 @@ describe("bus & coach", () => {
     expect(classifyRoute(r(3, "13A", "", "Wiener Linien"), ctx())).toBeNull();
     expect(classifyRoute(r(3, "800", "", "RVO"), ctx({ country: "DE" }))?.cls).toBe("bus");
   });
+  it("treats coach trips on rail routes as buses (SNCF Car TER / car à réservation, Irish Rail BUS)", () => {
+    expect(classifyRoute(r(2, "560D", "CRE", "SNCF VOYAGEURS", "Paris - Cahors"), ctx({ country: "FR" }))).toEqual({ cls: "bus", cat: Cat.Bus, flags: 0 });
+    expect(classifyRoute(r(2, "P15", "CTE", "SNCF VOYAGEURS", "Colmar - Metzeral"), ctx({ country: "FR" }))?.cat).toBe(Cat.Bus);
+    expect(classifyRoute(r(2, "rail", "BUS", "Iarnród Éireann / Irish Rail", "Dublin - Limerick"), ctx({ country: "IE" }))?.cat).toBe(Cat.Bus);
+    expect(classifyRoute(r(2, "560D", "CRE"), ctx({ keep: ["rail"] }))).toBeNull();
+    expect(classifyRoute(r(2, "560A", "IC", "SNCF VOYAGEURS"), ctx({ country: "FR" }))?.cls).toBe("rail");
+  });
 });
 
 describe("displayName", () => {

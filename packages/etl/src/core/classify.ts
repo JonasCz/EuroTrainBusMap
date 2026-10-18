@@ -43,7 +43,7 @@ const LD_CASE_SENSITIVE = new Set(["rj", "RJ", "RJX"]); // regiojet "rj" (CZ) an
 const REG_TOKENS = new Set(
   [
     "re", "rb", "ire", "s", "ter", "r", "rx", "os", "sp", "mex", "rex", "cjx", "regio", "rs", "rer", "tl", "tlx", "er", "rr",
-    "tt", "trn", "cre", "skm", "km", "kd", "lka", "ska", "pr", "reg", "regional", "regionalzug", "regionalexpress", "regionalbahn", "sbahn",
+    "tt", "trn", "skm", "km", "kd", "lka", "ska", "pr", "reg", "regional", "regionalzug", "regionalexpress", "regionalbahn", "sbahn",
     "s-bahn", "sprinter", "stoptrein", "sneltrein", "local", "l", "lt", "trn", "rgt", "slp", "p", "ag", "erx", "brb", "alx",
     "vias", "nwb", "mrb", "rbx", "rt", "rex", "cjx", "atb", "rv", "rf", "rg", "ir-reg", "ter200", "transilien", "train-ter",
     "rgx", "kml", "ks", "osobni", "hex", "fex", "rpx", "cityjet", "pe",
@@ -56,6 +56,14 @@ const NIGHT_RE = /\b(nightjet|night\s*train|nachtzug|sleeper|euronight|intercit[
 /** Operators whose rail services are long distance whatever the route_type. */
 const LD_OPERATORS = /\b(lner|avanti|crosscountry|cross country|grand central|hull trains|lumo|transpennine|caledonian sleeper|eurostar|thalys|ouigo|italo|iryo|westbahn|regiojet|leo express|flixtrain|european sleeper|nightjet|snälltåget|sj\b|vy tog.*fjern|ns international|ic\b|intercity|pkp intercity|db fernverkehr|öbb.*fern|renfe viajeros.*ave|ave\b|trenitalia france|tgv|alstom)\b/i;
 const REG_OPERATORS = /\b(northern|southern|southeastern|thameslink|great northern|c2c|merseyrail|london overground|elizabeth line|island line|scotrail|transport for wales|tfw rail|west midlands|london northwestern|chiltern|greater anglia|south western|gwr|emr|heathrow express|gatwick express|stansted express|s-bahn|regionalverkehr|regio\b|transilien|ter\b|koleje|przewozy regionalne|polregio|skm|elron|pågatåg|øresundståg|go-ahead)\b/i;
+
+/**
+ * Trip categories that are road vehicles even when the route is a rail route (route_type 2): SNCF puts its
+ * TER coaches ("CTE", Car TER) and reservation coaches ("CRE", Car à réservation, e.g. an Intercités line
+ * run by coach during engineering works) on the train lines they serve, Irish Rail numbers its buses on
+ * rail routes "BUS123". Such trips are classified as buses, not as trains.
+ */
+const ROAD_TRIP_PREFIXES = new Set(["bus", "car", "cte", "cre", "autocar", "autobus"]);
 
 /** Rail-replacement / special buses we never want. */
 const REPLACEMENT_RE = /(\bsev\b|schienenersatz|ersatzverkehr|\bev\d*\b|rail replacement|replacement bus|bus replacement|treinvervangend|\bnáhradní|\bnahradna|\bzka\b|zastępcza|bus de substitution|bus sostitutivo|autobus sostitutivo|substitution|ersatzbus|\bsv\s?\d)/i;
@@ -95,6 +103,7 @@ export function modeOfRouteType(t: number): ModeClass | null {
 export function classifyRoute(r: RouteInfo, ctx: ClassifyContext): Classification | null {
   let mode = modeOfRouteType(r.routeType);
   if (!mode) return null;
+  if (mode === "rail" && ROAD_TRIP_PREFIXES.has(r.tripPrefix.toLowerCase())) mode = "bus";
   const allNames = `${r.shortName} ${r.longName} ${r.desc}`;
   const { opts } = ctx;
 

@@ -494,7 +494,8 @@
      "TT": "Tram-train",
      "ICE": "ICE",
      "TRN": "Train",
-     "CRE": "TER"
+     "CTE": "Car TER",
+     "CRE": "Car"
     }
    }
   },
