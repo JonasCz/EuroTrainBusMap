@@ -675,7 +675,13 @@ export class MapView {
       if (!this.isVisible(c.lon, c.lat, padding)) this.map.easeTo({ center: [c.lon, c.lat], padding, duration: 700 });
       return;
     }
-    const cam = this.map.cameraForBounds(b, { padding: pad, maxZoom });
+    // the padding can leave no room (phone with the panel raised to full height): maplibre throws, the view stays
+    let cam: ReturnType<maplibregl.Map["cameraForBounds"]>;
+    try {
+      cam = this.map.cameraForBounds(b, { padding: pad, maxZoom });
+    } catch {
+      return;
+    }
     if (!cam) return;
     const allVisible = ids.every((id) => {
       const c = net.cities[id]!;

@@ -87,6 +87,39 @@ export function applyPatch(state: AppState, patch: Partial<AppState>): AppState 
   return next;
 }
 
+/**
+ * The patch that removes the first or the last leg of the shown journey (at least two legs; `ends`: the arrival city of
+ * every leg). Without its last leg the journey ends where that leg started; without its first one it starts where the
+ * second leg boards (`date`: that departure's local date there, if not today) – the origin city, its date and the
+ * joined parts follow. The destination becomes the city where the journey now ends (the pair whose journeys back
+ * returns to), and the view stays the same: the whole journey (one leg left: that trip's schedule), or the journey so
+ * far opened from the connections. Null when there is nothing to remove.
+ */
+export function removeLegPatch(s: AppState, end: "first" | "last", ends: readonly number[], date?: string): Partial<AppState> | null {
+  const n = s.legs.length;
+  if (n < 2 || ends.length !== n || s.city === undefined || !s.schedule) return null;
+  const first = end === "first";
+  const city = first ? ends[0]! : s.city;
+  const legs = first ? s.legs.slice(1).map((l, i) => (i === 0 ? { ...l, from: city } : l)) : s.legs.slice(0, -1);
+  const left = first ? ends.slice(1) : ends.slice(0, -1);
+  // the journey cannot end where it starts (a destination equal to the origin is dropped): its first change then
+  const dest = left[left.length - 1] !== city ? left[left.length - 1]! : left.find((c) => c !== city);
+  if (dest === undefined) return null;
+  const parts = (s.parts ?? []).map((p) => (first ? p - 1 : p)).filter((p) => p >= 1 && p < legs.length);
+  return {
+    ...(first ? { city, station: undefined, date } : {}),
+    dest,
+    legs,
+    parts: parts.length ? parts : undefined,
+    schedule: true,
+    journey: s.journey && legs.length > 1 ? true : undefined,
+    review: s.review || undefined,
+    // the onward scope belongs to the connections at the end, which removing the first leg keeps
+    wholeCity: s.review && first ? s.wholeCity : undefined,
+    extend: undefined,
+  };
+}
+
 const PREFS_KEY = "etbm.transfers";
 
 /** The viewer's remembered minimum transfer time / maximum wait (defaults when the URL names none). */

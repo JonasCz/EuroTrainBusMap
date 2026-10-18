@@ -15,6 +15,7 @@ import { fmtDuration, fmtTime } from "./logic/tz.ts";
 import { corridorSegs } from "./map/features.ts";
 import type { MapView, TrackFocus, TrackHandler } from "./map/mapview.ts";
 import { h } from "./ui/dom.ts";
+import { routeDisplayName } from "./ui/format.ts";
 import { journeyGroups, routeKey, type JourneyRow, type Panel } from "./ui/panel.ts";
 
 /** A view's tracks: the map handler plus the panel items (data-hl keys) hovered in the list. */
@@ -268,7 +269,7 @@ export function legTracks(c: Ctx, infos: LegInfo[], click: ((leg: number) => voi
       if (!ls.length) return null;
       const tip = ls.flatMap((i) => {
         const l = infos[i]!;
-        return [`${[l.route.name, l.number].filter(Boolean).join(" ")} → ${l.headsign}`, `${fmtTime(l.depUtc, tz(l.depStation))} ${stationName(net, l.depStation)} → ${fmtTime(l.arrUtc, tz(l.arrStation))} ${stationName(net, l.arrStation)}`];
+        return [`${[routeDisplayName(l.route), l.number].filter(Boolean).join(" ")} → ${l.headsign}`, `${fmtTime(l.depUtc, tz(l.depStation))} ${stationName(net, l.depStation)} → ${fmtTime(l.arrUtc, tz(l.arrStation))} ${stationName(net, l.arrStation)}`];
       });
       if (click && clickLabel) tip.push(`Click ${clickLabel}`);
       return legFocus(ls, { tip, clickable: !!click });

@@ -13,7 +13,7 @@ import type { Departure } from "../logic/timetable.ts";
 import { fmtDuration, fmtTime, localDate } from "../logic/tz.ts";
 import { h, icon } from "./dom.ts";
 import { shortStationName } from "../map/features.ts";
-import { caveatBadge, caveatNote, fmtKm, routeBadge, routeTag, timeAt, timeEl } from "./format.ts";
+import { caveatBadge, caveatNote, fmtKm, routeBadge, routeDisplayName, routeTag, timeAt, timeEl } from "./format.ts";
 import { localIcon, modeIcon } from "./icons.ts";
 import { datePicker, focusPicker } from "./datepicker.ts";
 import { depCats, depsWith, type StationDeps } from "../logic/stations.ts";
@@ -74,6 +74,7 @@ export type View =
       windowMin: number;
       /** onward departures from a stop (pattern index): from its station, or `whole` from every station of its city; loads lazily */
       onward: (stop: number, whole: boolean) => Promise<number>;
+      undo?: Undo;
     }
   | {
       kind: "journey";
@@ -85,17 +86,24 @@ export type View =
       windowMin: number;
       /** onward departures from stop `stop` of leg `leg`'s trip (see the schedule view) */
       onward: (leg: number, stop: number, whole: boolean) => Promise<number>;
+      undo?: Undo;
     }
   | {
       kind: "connections";
       legs: LegInfo[];
       /** the useful ones: places the journey does not already cover */
       conns: Connection[];
-      /** departures left out because they only serve places along the journey so far (the same line, back) */
-      hidden: number;
+      /** every departure, also those (and the stops) left out because the journey covers them: shown on request */
+      all: Connection[];
       windowMin: number;
       wholeCity: boolean;
     };
+
+/** A leg just removed from the journey: a notice with a button that brings it back. */
+export interface Undo {
+  text: string;
+  run: () => void;
+}
 
 /** A place reached only with changes. */
 export interface XferDest {
@@ -149,6 +157,8 @@ export interface PanelActions {
   /** An item of the list (`data-hl`: a route option, destination, departure, leg) is hovered (null: none): its tracks on the map. */
   hoverItem(key: string | null): void;
   shiftDate(days: number): void;
+  /** Remove the first or last leg of the shown journey (`label`: the vehicle, for the undo notice). */
+  removeLeg(end: "first" | "last", label: string): void;
   today(city: number): string;
 }
 
@@ -863,7 +873,7 @@ export class Panel {
             type: "button",
             class: "tt-row",
             disabled: !r.route,
-            title: r.route ? `${r.legs.map((l) => (l.info ? [l.info.route.name, l.info.number].filter(Boolean).join(" ") : CAT_LABEL[l.raw.cat])).join(" + ")}: ${cont ? "add it to the journey" : "show the legs and the stops"}` : "This journey could not be matched to the timetable",
+            title: r.route ? `${r.legs.map((l) => (l.info ? [routeDisplayName(l.info.route), l.info.number].filter(Boolean).join(" ") : CAT_LABEL[l.raw.cat])).join(" + ")}: ${cont ? "add it to the journey" : "show the legs and the stops"}` : "This journey could not be matched to the timetable",
             onclick: () => r.route && (cont ? this.actions.chooseExtension(r.route) : this.actions.chooseJourney(r.route)),
           },
           h("span", { class: "tt-times" }, timeEl(n, j.depUtc, depStation, { strong: true }), timeEl(n, j.arrUtc, arrStation, { refDate: localDate(j.depUtc, originTz), refTz: originTz })),
@@ -898,8 +908,8 @@ export class Panel {
             const info = r0.legs[i]?.info;
             const cat = r0.journey.legs[i]!.cat;
             // the route name when every journey of the group rides the same one ("C2"), else the brand ("TER")
-            const names = new Set(g.rows.map((r) => r.legs[i]?.info?.route.name));
-            const name = names.size === 1 && info ? info.route.name : brand.startsWith("cat") ? (CAT_LABEL[cat] ?? brand) : brand;
+            const names = new Set(g.rows.map((r) => r.legs[i]?.info ? routeDisplayName(r.legs[i]!.info!.route) : undefined));
+            const name = names.size === 1 && info ? routeDisplayName(info.route) : brand.startsWith("cat") ? (CAT_LABEL[cat] ?? brand) : brand;
             // a booking caveat when any journey of the group rides such a service on this leg
             const caveat = g.rows.reduce((f, r) => f | ((r.legs[i]?.info?.route.flags ?? 0) & CAVEAT_FLAGS), 0);
             tags.push(info ? routeTag({ ...info.route, name, flags: (info.route.flags & ~CAVEAT_FLAGS) | caveat }) : modeIcon(cat, 16, CAT_LABEL[cat]));
@@ -1134,7 +1144,7 @@ export class Panel {
               {
                 type: "button",
                 class: "tt-row",
-                "aria-label": `${d.route.name} ${d.number ?? ""} departs ${stationName(n, d.depStation)}, arrives ${stationName(n, d.arrStation)}, ${fmtDuration(d.minutes)}. Show its stops and onward connections.`,
+                "aria-label": `${routeDisplayName(d.route)} ${d.number ?? ""} departs ${stationName(n, d.depStation)}, arrives ${stationName(n, d.arrStation)}, ${fmtDuration(d.minutes)}. Show its stops and onward connections.`,
                 onclick: () => this.actions.chooseDeparture(d),
               },
               h("span", { class: "tt-times" }, timeEl(n, d.depUtc, d.depStation, { strong: true }), timeEl(n, d.arrUtc, d.arrStation, { refDate: depLocal, refTz: originTz })),
@@ -1320,11 +1330,12 @@ export class Panel {
     const board = stops[sc.board]!;
     const alight = stops[sc.alight]!;
     const mins = Math.round((alight.arrUtc! - board.depUtc!) / 60000);
-    const tag = [sc.route.name, sc.number].filter(Boolean).join(" ");
+    const tag = [routeDisplayName(sc.route), sc.number].filter(Boolean).join(" ");
     const cityName = (st: ScheduleStop) => n.cities[st.city]?.name ?? "";
     const stopName = (st: ScheduleStop) => st.minorName ?? stationName(n, st.station);
     const title = h("span", { class: "sched-title" }, routeTag(sc.route, sc.number), h("span", { class: "headsign" }, sc.headsign));
     const out: Node[] = [this.header(title, `${formatDateShort(sc.refDate)} · ${cityName(board)} → ${cityName(alight)} · ${fmtDuration(mins)}`, { back: true })];
+    if (v.undo) out.push(undoNote(v.undo));
     if (v.legs.length > 1) out.push(this.crumbs(v.legs), this.legsBox(v.legs.slice(0, -1), () => this.actions.showSchedule(v.legs.length - 2)));
     const before = sc.board, after = stops.length - 1 - sc.alight;
     out.push(
@@ -1447,8 +1458,10 @@ export class Panel {
     const k = js.changeCount;
     const sub = `${formatDateShort(first.refDate)} · ${fmtTime(js.depUtc, b0.tz)} – ${fmtTime(js.arrUtc, al.tz)} · ${fmtDuration(js.minutes)} · ${k ? `${k} change${k === 1 ? "" : "s"}` : "direct"}`;
     const out: Node[] = [this.header(title, sub, { back: true })];
+    if (v.undo) out.push(undoNote(v.undo));
     const counts: OnwardCount[] = [];
     const items: HTMLElement[] = [];
+    const k0 = js.legs.length;
     js.legs.forEach((part, li) => {
       const sc = part.sched;
       const mode = `--mode:var(--cat-${sc.route.cat})`;
@@ -1480,6 +1493,7 @@ export class Panel {
             h("span", { class: "jsched-leg-meta" }, [sc.route.agency || null, fmtDuration(mins), stopsBetween(sc)].filter(Boolean).join(" · ")),
             caveatNote(sc.route),
           ),
+          k0 > 1 && (li === 0 || li === k0 - 1) ? this.removeLegButton(js, li) : null,
         ),
       );
       const fold = (kind: "before" | "after", a: number, b: number) => {
@@ -1517,6 +1531,27 @@ export class Panel {
     return out;
   }
 
+  /**
+   * The × of the first or last leg of a journey: removes that train (bus) – the journey then starts where the next leg
+   * boards, or ends where the previous one is left.
+   */
+  private removeLegButton(js: JourneySchedule, li: number): HTMLElement {
+    const n = this.net;
+    const first = li === 0;
+    const sc = js.legs[li]!.sched;
+    const other = js.legs[first ? 1 : li - 1]!.sched;
+    const at = first ? other.stops[other.board]! : other.stops[other.alight]!;
+    const place = at.minorName ?? stationName(n, at.station);
+    const tag = [routeDisplayName(sc.route), sc.number].filter(Boolean).join(" ");
+    const what = vehicleWord(sc.route.cat);
+    const title = `Remove this ${what} – ${first ? "start" : "end"} the journey at ${place}`;
+    return h(
+      "button",
+      { type: "button", class: "icon-btn jsched-leg-remove", title, "aria-label": `Remove ${tag} – ${first ? "start" : "end"} the journey at ${place}`, onclick: () => this.actions.removeLeg(first ? "first" : "last", tag) },
+      icon("close", 14),
+    );
+  }
+
   /** The change between legs `k` and `k + 1` of a journey (a row of the journey's list). */
   private changeItem(v: Extract<View, { kind: "journey" }>, k: number): HTMLElement {
     const n = this.net;
@@ -1549,7 +1584,7 @@ export class Panel {
     }
     const opts = v.options[k] ?? [];
     if (opts.some((o) => !o.taken)) {
-      const brand = legBrand("", next.route.cat, next.route) || next.route.name;
+      const brand = legBrand("", next.route.cat, next.route) || routeDisplayName(next.route);
       const clickable = k + 1 === v.js.legs.length - 1;
       const tz = cityTz(n, here);
       const ref = localDate(c.arrUtc, tz);
@@ -1561,7 +1596,7 @@ export class Panel {
           opts.map((o) => {
             const t = timeEl(n, o.depUtc, o.depStation, { refDate: ref });
             const label = [t, h("span", { class: "jsched-opt-wait" }, o.taken ? `${fmtDuration(o.wait)}` : `+${fmtDuration(o.wait)}`)];
-            const title = `${[next.route.name, o.number].filter(Boolean).join(" ")} from ${stationName(n, o.depStation)} at ${fmtTime(o.depUtc, tz)}, arrives ${fmtTime(o.arrUtc, cityTz(n, n.file.stations[o.arrStation]?.city ?? here))} at ${stationName(n, o.arrStation)} – ${fmtDuration(o.wait)} after arriving`;
+            const title = `${[routeDisplayName(next.route), o.number].filter(Boolean).join(" ")} from ${stationName(n, o.depStation)} at ${fmtTime(o.depUtc, tz)}, arrives ${fmtTime(o.arrUtc, cityTz(n, n.file.stations[o.arrStation]?.city ?? here))} at ${stationName(n, o.arrStation)} – ${fmtDuration(o.wait)} after arriving`;
             return o.taken
               ? h("span", { class: "jsched-opt is-taken", title: `${title} (this journey)`, "aria-current": "true" }, label)
               : clickable
@@ -1680,63 +1715,87 @@ export class Panel {
       );
     }
     out.push(h("h3", { class: "section" }, `Departures within ${v.windowMin / 60} h of arrival`));
-    const hiddenNote = v.hidden
-      ? `${v.hidden} departure${v.hidden > 1 ? "s" : ""} only serving places along this journey (the same line, or back) ${v.hidden > 1 ? "are" : "is"} not listed.`
-      : "";
-    if (!v.conns.length) {
-      const none = v.hidden ? "No onward departures to other places in this window" : "No onward departures in this window";
-      out.push(h("p", { class: "pad muted" }, `${none} with the selected modes${multi && !v.wholeCity ? ` from ${arrName} – try all stations of ${city.name}` : ""}.${hiddenNote ? ` ${hiddenNote}` : ""}`));
-      return out;
-    }
-    out.push(
-      h(
-        "ol",
-        { class: "conn-list" },
-        v.conns.map((c) => {
-          const transferNote = c.through
-            ? h("span", { class: "tag tag--through" }, icon("seat", 13), " stay on board")
-            : c.depStation !== last.arrStation
-              ? h("span", { class: "walk" }, icon(c.changeBy === "bike" ? "bike" : "walk", 13), ` ${c.transfer} min ${c.changeBy === "bike" ? "cycle" : "walk"} to ${stationName(n, c.depStation)}${walkKm(n, last.arrStation, c.depStation, " · ")}`)
-              : h("span", { class: "muted" }, `same station · min. ${c.transfer} min`);
-          return h(
-            "li",
-            { class: "conn" },
+    // departures (or stops of them) left out because the journey covers those places: listed on request
+    const hidden = v.all.length - v.conns.length;
+    const trimmed = v.conns.filter((c) => !v.all.includes(c)).length;
+    const row = (c: Connection) => {
+      const transferNote = c.through
+        ? h("span", { class: "tag tag--through" }, icon("seat", 13), " stay on board")
+        : c.depStation !== last.arrStation
+          ? h("span", { class: "walk" }, icon(c.changeBy === "bike" ? "bike" : "walk", 13), ` ${c.transfer} min ${c.changeBy === "bike" ? "cycle" : "walk"} to ${stationName(n, c.depStation)}${walkKm(n, last.arrStation, c.depStation, " · ")}`)
+          : h("span", { class: "muted" }, `same station · min. ${c.transfer} min`);
+      return h(
+        "li",
+        { class: "conn" },
+        h(
+          "div",
+          { class: "conn-head" },
+          h("span", { class: "conn-time" }, timeEl(n, c.depUtc, c.depStation, { strong: true, refDate: arrDate }), h("span", { class: "wait" }, `${fmtDuration(c.wait)} wait`)),
+          h(
+            "span",
+            { class: "conn-main" },
+            h("span", { class: "tt-line" }, routeTag(c.route, c.number), h("span", { class: "headsign" }, c.headsign)),
+            h("span", { class: "tt-meta" }, transferNote, c.note ? [h("span", { class: "sep" }, "·"), h("span", { class: "note" }, c.note)] : null),
+          ),
+        ),
+        h(
+          "div",
+          { class: "conn-stops", role: "group", "aria-label": `Stops of ${routeDisplayName(c.route)} ${c.number ?? ""}` },
+          c.stops.map((s) =>
             h(
-              "div",
-              { class: "conn-head" },
-              h("span", { class: "conn-time" }, timeEl(n, c.depUtc, c.depStation, { strong: true, refDate: arrDate }), h("span", { class: "wait" }, `${fmtDuration(c.wait)} wait`)),
-              h(
-                "span",
-                { class: "conn-main" },
-                h("span", { class: "tt-line" }, routeTag(c.route, c.number), h("span", { class: "headsign" }, c.headsign)),
-                h("span", { class: "tt-meta" }, transferNote, c.note ? [h("span", { class: "sep" }, "·"), h("span", { class: "note" }, c.note)] : null),
-              ),
+              "button",
+              {
+                type: "button",
+                class: "stop-chip",
+                title: `Continue to ${n.cities[s.city]!.name} (${stationName(n, s.station)})`,
+                onclick: () => this.actions.chooseConnection(c, s, here),
+              },
+              h("span", { class: "stop-name" }, n.cities[s.city]!.name),
+              timeEl(n, s.arrUtc, s.station, { refDate: arrDate, refTz: hereTz }),
             ),
-            h(
-              "div",
-              { class: "conn-stops", role: "group", "aria-label": `Stops of ${c.route.name} ${c.number ?? ""}` },
-              c.stops.map((s) =>
-                h(
-                  "button",
-                  {
-                    type: "button",
-                    class: "stop-chip",
-                    title: `Continue to ${n.cities[s.city]!.name} (${stationName(n, s.station)})`,
-                    onclick: () => this.actions.chooseConnection(c, s, here),
-                  },
-                  h("span", { class: "stop-name" }, n.cities[s.city]!.name),
-                  timeEl(n, s.arrUtc, s.station, { refDate: arrDate, refTz: hereTz }),
-                ),
-              ),
-            ),
-          );
-        }),
-      ),
-    );
-    if (hiddenNote) out.push(h("p", { class: "pad muted small" }, hiddenNote));
+          ),
+        ),
+      );
+    };
+    const list = h("ol", { class: "conn-list" });
+    const empty = h("p", { class: "pad muted" });
+    let all = false;
+    const note = h("p", { class: "pad muted small conn-hidden" });
+    const render = () => {
+      const conns = all ? v.all : v.conns;
+      list.replaceChildren(...conns.map(row));
+      list.hidden = !conns.length;
+      empty.hidden = !!conns.length;
+      const none = hidden && !all ? "No onward departures to other places in this window" : "No onward departures in this window";
+      empty.textContent = `${none} with the selected modes${multi && !v.wholeCity ? ` from ${arrName} – try all stations of ${city.name}` : ""}.`;
+      if (!hidden && !trimmed) {
+        note.hidden = true;
+        return;
+      }
+      const what = hidden
+        ? `${hidden} departure${hidden > 1 ? "s" : ""} only to places this journey passed, or reaches sooner by staying on board, ${all ? (hidden > 1 ? "are" : "is") + " listed too" : (hidden > 1 ? "are" : "is") + " not listed"}`
+        : `Stops this journey passed, or reaches sooner by staying on board, ${all ? "are listed too" : "are left out"}`;
+      const title = all
+        ? "List only the departures to places the journey does not reach yet"
+        : "Also list the departures and stops along this journey: to stop over, or for a later train the same way";
+      note.replaceChildren(`${what}. `, h("button", { type: "button", class: "link small", "aria-pressed": String(all), title, onclick: () => ((all = !all), render()) }, all ? "Hide them" : "Show them"));
+    };
+    render();
+    // above the list, where it is seen before scrolling through it
+    out.push(note, list, empty);
     return out;
   }
 
+}
+
+/** "train", "coach", "bus": what a route's vehicle is called. */
+function vehicleWord(cat: number): string {
+  return cat === Cat.Coach ? "coach" : cat === Cat.Bus ? "bus" : "train";
+}
+
+/** The notice of a leg just removed, with its undo button. */
+function undoNote(u: Undo): HTMLElement {
+  return h("p", { class: "undo-note", role: "status" }, h("span", null, u.text), h("button", { type: "button", class: "link small", onclick: u.run }, "Undo"));
 }
 
 /** Places from this importance (towns of ~50 000 and up) with several stations offer the onward connections from all their stations. */

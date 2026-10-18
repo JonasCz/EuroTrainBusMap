@@ -1,4 +1,4 @@
-import type { Route } from "@etbm/shared";
+import { Cat, endpointsName, routeBrand, type Route } from "@etbm/shared";
 import { cityTz, stationName, type Net } from "../data/net.ts";
 import { dayShift, fmtTime, tzAbbr } from "../logic/tz.ts";
 import { currentTheme } from "../map/theme.ts";
@@ -43,12 +43,21 @@ export function routeColor(r: Route): string {
   return r.color && /^[0-9a-f]{6}$/i.test(r.color) ? `#${r.color}` : currentTheme().cat[r.cat] ?? "#777";
 }
 
+/**
+ * The name a route is shown with: its own, except a train named only by where it runs
+ * ("Paris-Gare-de-Lyon/Marseille-St-Charles"), which shows its operator's brand ("Frecciarossa").
+ */
+export function routeDisplayName(r: Route): string {
+  return r.cat !== Cat.Bus && r.cat !== Cat.Coach && r.agency && endpointsName(r.name) ? routeBrand(r.name, r.agency, r.cat) : r.name;
+}
+
 /** Coloured pill: "ICE 597" */
 export function routeBadge(r: Route, number?: string): HTMLElement {
   const bg = routeColor(r);
   const fg = luminance(bg) > 0.45 ? "#111" : "#fff";
-  const name = number && !r.name.includes(number) ? `${r.name} ${number}` : r.name;
-  return h("span", { class: "badge", style: `--badge-bg:${bg};--badge-fg:${fg}`, title: r.agency }, name);
+  const label = routeDisplayName(r);
+  const name = number && !label.includes(number) ? `${label} ${number}` : label;
+  return h("span", { class: "badge", style: `--badge-bg:${bg};--badge-fg:${fg}`, title: label !== r.name ? `${r.agency} · ${r.name}` : r.agency }, name);
 }
 
 /** Mode pictogram + coloured pill: "[train] ICE 597" (the pill keeps the operator's colour), plus a booking caveat badge. */

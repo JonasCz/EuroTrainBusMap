@@ -37,11 +37,16 @@ export interface TtIndex {
  * The brand of a route, telling services of one mode apart in connections with changes ("TGV INOUI" vs
  * "Intercités", "TER", "FlixBus"): the words of its name before the first one with a digit ("FlixBus N1138" →
  * "FlixBus", "IC 850 TÓPART" → "IC", "RE 7" → "RE") and before a route description ("ALSA - Irun-Tuy" → "ALSA");
- * a name that is only a line code ("S1", "C2", "7"), or regional rail named by a mission code ("QIWI"), gives the agency.
+ * a name that is only a line code ("S1", "C2", "7"), regional rail named by a mission code ("QIWI"), or a name that only
+ * says where the route runs ("Paris-Gare-de-Lyon/Marseille-St-Charles", "Belfast Great Central - Portrush") gives the
+ * agency (or its brand: Trenitalia's high-speed trains are "Frecciarossa").
  */
 export function routeBrand(name: string, agency = "", cat = 0): string {
   // regional rail named by its mission code (RER / Transilien "QIWI", "KALI"): the agency
   if (cat === 2 && /^[A-Z]{4}$/.test(name.trim())) return agency.trim() || name.trim();
+  // a route named only by where it runs ("Paris-Gare-de-Lyon/Marseille-St-Charles"): the operator's brand
+  const ends = endpointsName(name);
+  if (ends && agency.trim() && !related(ends[0], agency)) return agencyBrand(agency, cat);
   const words = name.trim().split(/\s+/);
   const i = words.findIndex((w) => /\d/.test(w));
   let b = (i >= 0 ? words.slice(0, i) : words).join(" ");
@@ -49,6 +54,34 @@ export function routeBrand(name: string, agency = "", cat = 0): string {
   if (dash >= 2) b = b.slice(0, dash);
   b = b.replace(/[\s:,/–-]+$/, "");
   return b.length >= 2 ? b : agency.trim() || name.trim();
+}
+
+/**
+ * The two parts of a route name that only says where it runs – "A/B" (no spaces around the slash) or "A - B" –
+ * or null: "Paris-Gare-de-Lyon/Milano Centrale", "Belfast Great Central - Portrush", "ALSA - Irun-Tuy" (whose first
+ * part may still be a brand, see routeBrand). Names with digits (line or train numbers) are not.
+ */
+export function endpointsName(name: string): [string, string] | null {
+  const n = name.trim();
+  if (/\d/.test(n)) return null;
+  const m = /^([^/]*[^\s/])\/([^\s/][^/]*)$/.exec(n) ?? /^(.+?)\s+[-–]\s+(.+)$/.exec(n);
+  if (!m) return null;
+  const a = m[1]!.trim(), b = m[2]!.trim();
+  return a.replace(/[^\p{L}]/gu, "").length >= 3 && b.replace(/[^\p{L}]/gu, "").length >= 3 ? [a, b] : null;
+}
+
+/** Whether a name part is (part of) the agency name or the other way round ("ALSA" of "ALSA Grupo"). */
+function related(part: string, agency: string): boolean {
+  const a = part.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim(), b = agency.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return !!a && !!b && (` ${b} `.includes(` ${a} `) || ` ${a} `.includes(` ${b} `));
+}
+
+/** Brands of operators whose services are only named by their ends (Trenitalia France runs only Frecciarossa trains). */
+const AGENCY_BRANDS: { agency: RegExp; cat: number; brand: string }[] = [{ agency: /^trenitalia(\s+france)?$/i, cat: 1, brand: "Frecciarossa" }];
+
+function agencyBrand(agency: string, cat: number): string {
+  const a = agency.trim();
+  return AGENCY_BRANDS.find((x) => x.cat === cat && x.agency.test(a))?.brand ?? a;
 }
 
 export const TT_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-";

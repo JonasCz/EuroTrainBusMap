@@ -184,31 +184,52 @@ export function connections(cf: CityFile, ctx: NetCtx, f: Filters, arrival: Arri
 }
 
 /**
- * The places a journey already covers, which onward connections need not offer: the origin, the cities ridden
- * through on the earlier legs (boarding to alighting) and every city of the current (last) vehicle's run – those
- * before the stop were passed, those after it are reached by staying on board.
+ * What a journey already covers, which onward connections need not offer: the places it `passed` – the origin, the
+ * cities ridden through on every leg (boarding to alighting; the current, last leg up to the stop `at`) – and the
+ * places `ahead` on the current vehicle's run after that stop, each with the vehicle's arrival there (staying on board
+ * gets there then). Stops of a run before boarding or after alighting from an earlier leg are not covered.
  */
-export function journeyCities(origin: number, scheds: readonly TripSchedule[]): Set<number> {
-  const out = new Set<number>([origin]);
+export interface JourneyCover {
+  passed: Set<number>;
+  ahead: Map<number, number>;
+}
+
+/** The cover of the journey of `scheds` (in order) at stop `at` of the last one (default: where it is left). */
+export function journeyCover(origin: number, scheds: readonly TripSchedule[], at?: number): JourneyCover {
+  const passed = new Set<number>([origin]);
+  const ahead = new Map<number, number>();
   scheds.forEach((sc, k) => {
     const last = k === scheds.length - 1;
-    const from = last ? 0 : sc.board, to = last ? sc.stops.length - 1 : sc.alight;
-    for (let i = from; i <= to; i++) {
+    const to = last ? (at ?? sc.alight) : sc.alight;
+    for (let i = sc.board; i <= to; i++) {
       const c = sc.stops[i]!.city;
-      if (c >= 0) out.add(c);
+      if (c >= 0) passed.add(c);
+    }
+    if (!last) return;
+    for (let i = to + 1; i < sc.stops.length; i++) {
+      const st = sc.stops[i]!;
+      if (st.city < 0 || passed.has(st.city) || ahead.has(st.city)) continue;
+      ahead.set(st.city, st.arrUtc ?? st.depUtc ?? Infinity);
     }
   });
-  return out;
+  return { passed, ahead };
+}
+
+/** A key of a cover, for caches. */
+export function coverKey(c: JourneyCover): string {
+  return `${[...c.passed].sort((a, b) => a - b).join(",")}|${[...c.ahead].sort((a, b) => a[0] - b[0]).map(([k, v]) => `${k}@${v}`).join(",")}`;
 }
 
 /**
- * The onward connections that lead somewhere new: stops in `known` (see journeyCities) are left out of each row,
- * and a row with none left (another train along the same line, or back the way one came) is dropped.
+ * The onward connections that lead somewhere new: a stop is left out of a row when the journey passed its city, or
+ * when staying on the current vehicle gets there no later (see journeyCover); a row with no stop left (another train
+ * along the same line, back the way one came, the same vehicle) is dropped. A faster train overtaking the current
+ * one keeps the places it reaches first.
  */
-export function usefulConnections(conns: readonly Connection[], known: ReadonlySet<number>): Connection[] {
+export function usefulConnections(conns: readonly Connection[], cover: JourneyCover): Connection[] {
   const out: Connection[] = [];
   for (const c of conns) {
-    const stops = c.stops.filter((s) => !known.has(s.city));
+    const stops = c.stops.filter((s) => !cover.passed.has(s.city) && !((cover.ahead.get(s.city) ?? Infinity) <= s.arrUtc));
     if (stops.length === c.stops.length) out.push(c);
     else if (stops.length) out.push({ ...c, stops });
   }

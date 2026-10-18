@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { City, Station } from "@etbm/shared";
 import { stationBySlug, stationSlug, type Net } from "../data/net.ts";
-import { applyPatch, parseHash, toHash } from "./state.ts";
+import { applyPatch, parseHash, removeLegPatch, toHash } from "./state.ts";
 
 const city = (id: number, name: string, stations: number[]): City => ({ id, name, country: "FR", lon: 0, lat: 0, population: 1, importance: 0.5, cats: 3, stations, tz: 0 });
 const st = (id: number, c: number, name: string): Station => ({ id, city: c, name, lon: 0, lat: 0, cats: 3 });
@@ -137,5 +137,68 @@ describe("state changes", () => {
     // the same city again, or a station named with it: kept / replaced
     expect(applyPatch(base, { city: 0, dest: undefined, legs: [] }).station).toBe("bercy");
     expect(applyPatch(base, { city: 1, station: "part-dieu" }).station).toBe("part-dieu");
+  });
+});
+
+describe("removing the first or last leg of a journey", () => {
+  // Sainte-Foy (0) → Bordeaux (1) → Marmande (2) → Agen (3)
+  const four = ["sainte-foy", "bordeaux", "marmande", "agen"];
+  const jnet = {
+    cities: four.map((n, i) => city(i, n, [i])),
+    slug: four,
+    bySlug: new Map(four.map((n, i) => [n, i])),
+    file: { stations: four.map((n, i) => st(i, i, n)), timezones: [] },
+  } as unknown as Net;
+  const legs = "legs=1.20261019.2.8,715.20261019.0.8,33.20261019.1.2";
+  const ends = [1, 2, 3];
+  const remove = (hash: string, end: "first" | "last", date?: string) => {
+    const s = parseHash(jnet, hash);
+    const p = removeLegPatch(s, end, ends.slice(0, s.legs.length), date);
+    return p && applyPatch(s, p);
+  };
+
+  it("ends the journey where its last leg started", () => {
+    const s = remove(`#from=sainte-foy&to=agen&date=2026-10-19&${legs}&trip=all`, "last")!;
+    expect(toHash(jnet, s)).toBe("#from=sainte-foy&to=marmande&date=2026-10-19&legs=1.20261019.2.8,715.20261019.0.8&trip=all");
+    // reload restores it
+    expect(toHash(jnet, parseHash(jnet, toHash(jnet, s)))).toBe(toHash(jnet, s));
+  });
+  it("starts the journey where its second leg boards: the origin and its date follow", () => {
+    const s = remove(`#from=sainte-foy&station=gare&to=agen&date=2026-10-19&${legs}&trip=all`, "first", "2026-10-20")!;
+    expect(s.city).toBe(1);
+    expect(s.station).toBeUndefined();
+    expect(s.legs[0]!.from).toBe(1);
+    expect(toHash(jnet, s)).toBe("#from=bordeaux&to=agen&date=2026-10-20&legs=715.20261019.0.8,33.20261019.1.2&trip=all");
+    const r = parseHash(jnet, toHash(jnet, s));
+    expect(r.legs.map((l) => l.trip)).toEqual([715, 33]);
+    expect(r.legs[0]!.from).toBe(1);
+  });
+  it("leaves a single trip's schedule with one leg left", () => {
+    const two = "legs=1.20261019.2.8,715.20261019.0.8";
+    const a = remove(`#from=sainte-foy&to=marmande&${two}&trip=all`, "last")!;
+    expect(toHash(jnet, a)).toBe("#from=sainte-foy&to=bordeaux&legs=1.20261019.2.8&trip=1");
+    const b = remove(`#from=sainte-foy&to=marmande&${two}&trip=all`, "first")!;
+    expect(toHash(jnet, b)).toBe("#from=bordeaux&to=marmande&legs=715.20261019.0.8&trip=1");
+  });
+  it("keeps the journey so far (back to the connections) and its onward scope when the end stays", () => {
+    const h = `#from=sainte-foy&to=bordeaux&${legs}&trip=sofar&onward=city`;
+    expect(toHash(jnet, remove(h, "first")!)).toBe("#from=bordeaux&to=agen&legs=715.20261019.0.8,33.20261019.1.2&trip=sofar&onward=city");
+    expect(toHash(jnet, remove(h, "last")!)).toBe("#from=sainte-foy&to=marmande&legs=1.20261019.2.8,715.20261019.0.8&trip=sofar");
+  });
+  it("shifts or drops the joined parts and the continuation", () => {
+    const h = `#from=sainte-foy&to=agen&${legs}&trip=all&parts=2`;
+    expect(remove(h, "first")!.parts).toEqual([1]);
+    expect(remove(h, "last")!.parts).toBeUndefined();
+    expect(remove(`#from=sainte-foy&to=agen&${legs}&trip=all&parts=1`, "first")!.parts).toBeUndefined();
+  });
+  it("needs two legs and a schedule", () => {
+    expect(remove("#from=sainte-foy&to=bordeaux&legs=1.20261019.2.8&trip=1", "last")).toBeNull();
+    expect(remove(`#from=sainte-foy&to=agen&${legs}`, "last")).toBeNull(); // the connections view
+  });
+  it("never ends the journey where it starts", () => {
+    // Bordeaux → Marmande → Bordeaux → Agen without its first leg would end... at Agen; without the last at Bordeaux = origin
+    const s = parseHash(jnet, `#from=bordeaux&to=agen&legs=1.20261019.0.1,2.20261019.0.1,3.20261019.0.1&trip=all`);
+    const p = removeLegPatch(s, "last", [2, 1, 3])!;
+    expect(applyPatch(s, p).dest).toBe(2);
   });
 });

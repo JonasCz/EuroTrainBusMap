@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Cat, cityChunks, decodeTtChunk, decodeTtLines, routeBrand, type City, type CityFile, type TtIndex } from "@etbm/shared";
+import { Cat, cityChunks, decodeTtChunk, decodeTtLines, endpointsName, routeBrand, type City, type CityFile, type TtIndex } from "@etbm/shared";
 import { gunzipSync } from "node:zlib";
 import { TransferCollector } from "../src/transfers.ts";
 
@@ -67,5 +67,23 @@ describe("routeBrand", () => {
     expect(routeBrand("7", "Stagecoach")).toBe("Stagecoach");
     expect(routeBrand("QIWI", "RER", Cat.Regional)).toBe("RER");
     expect(routeBrand("AVLO", "Renfe", Cat.LongDistance)).toBe("AVLO");
+  });
+  it("gives the operator (or its brand) for a route named only by where it runs", () => {
+    expect(routeBrand("Paris-Gare-de-Lyon/Marseille-St-Charles", "Trenitalia", Cat.LongDistance)).toBe("Frecciarossa");
+    expect(routeBrand("Milano Centrale/Paris-Gare-de-Lyon", "Trenitalia France", Cat.LongDistance)).toBe("Frecciarossa");
+    expect(routeBrand("Belfast Great Central - Portrush", "Translink Northern Ireland Rail", Cat.Regional)).toBe("Translink Northern Ireland Rail");
+    expect(routeBrand("ANKARA GAR - KARS (ANAHAT)", "TCDD Taşımacılık A.Ş.", Cat.LongDistance)).toBe("TCDD Taşımacılık A.Ş.");
+    // a brand before the route description stays; names with numbers are not "where it runs"
+    expect(routeBrand("ALSA - Irun-Tuy", "ALSA", Cat.Coach)).toBe("ALSA");
+    expect(routeBrand("FlixBus N1138", "FlixBus-eu", Cat.Coach)).toBe("FlixBus");
+    expect(routeBrand("NMBS/SNCB", "NMBS/SNCB", Cat.Regional)).toBe("NMBS/SNCB");
+  });
+  it("tells names that only say where a route runs", () => {
+    expect(endpointsName("Paris-Gare-de-Lyon/Milano Centrale")).toEqual(["Paris-Gare-de-Lyon", "Milano Centrale"]);
+    expect(endpointsName("Coleraine - Portrush")).toEqual(["Coleraine", "Portrush"]);
+    expect(endpointsName("Iarnród Éireann / Irish Rail")).toBeNull(); // spaces around the slash: a name
+    expect(endpointsName("IC 850 TÓPART")).toBeNull();
+    expect(endpointsName("TGV INOUI")).toBeNull();
+    expect(endpointsName("A/B")).toBeNull();
   });
 });
