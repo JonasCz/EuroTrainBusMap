@@ -520,6 +520,34 @@
    }
   },
   {
+   "id": "fr-paca-zou-intermetropole",
+   "country": "FR",
+   "name": "ZOU! Intermétropoles Marseille – Toulon – Nice (Transdev Rail Sud)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "fr_zou.gtfs.zip"
+    },
+    {
+     "url": "https://www.data.gouv.fr/api/1/datasets/r/764d6d5b-d04e-4aa7-94b7-f8b2274d2964"
+    }
+   ],
+   "notes": "Regional trains Marseille - Toulon - Nice run by Transdev since 2025; not in the SNCF feed (which only has the SNCF TER pieces Marseille - Toulon, Toulon - Les Arcs, Les Arcs - Nice). route_type 100, route SUD_IV15, trip_short_name = train number. No shapes.",
+   "approxMB": 0.2,
+   "license": "etalab-2.0",
+   "licenseUrl": "https://transport.data.gouv.fr/datasets/zou",
+   "options": {
+    "railCat": "Regional",
+    "prefixNames": {
+     "": "TER"
+    },
+    "agencyName": "Transdev Rail Sud Intermétropole"
+   }
+  },
+  {
    "id": "fr-ara-aggregate",
    "country": "FR",
    "name": "Auvergne-Rhône-Alpes aggregate (OùRA)",

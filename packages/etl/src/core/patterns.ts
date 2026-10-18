@@ -234,6 +234,8 @@ export interface PatternRec {
   headsign: string;
   tz: number;
   shapeTrip: number; // trip_key with a shape (or -1)
+  /** further trips with a shape: the other pieces of a joined through run (each shape covers its piece) */
+  shapeAlt?: number[];
   /** Left-out stops and real stops of the run (TripShape.via / at); part of the pattern's identity. */
   via?: number[];
   at?: number[];
@@ -254,7 +256,10 @@ export class PatternStore {
           q.route === p.route && q.tz === p.tz && q.headsign === p.headsign && eq(q.stations, p.stations) && eq(q.arr, p.arr) && eq(q.dep, p.dep) &&
           eq(q.via ?? [], p.via ?? []) && eq(q.at ?? [], p.at ?? [])
         ) {
-          if (q.shapeTrip < 0 && p.shapeTrip >= 0) q.shapeTrip = p.shapeTrip;
+          if (q.shapeTrip < 0 && p.shapeTrip >= 0) {
+            q.shapeTrip = p.shapeTrip;
+            if (p.shapeAlt) q.shapeAlt = p.shapeAlt;
+          }
           return i;
         }
       }

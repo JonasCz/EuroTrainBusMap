@@ -36,6 +36,8 @@ export interface FeedOptions {
   prefixNames?: Record<string, string>;
   /** trip_headsign holds the train number (SNCF): use it as number, derive headsign from the last stop. */
   headsignIsNumber?: boolean;
+  /** Operator name shown for every route of this feed instead of agency_name (applied at build time). */
+  agencyName?: string;
   /** Priority in cross-feed dedup (higher wins ties). Default 0. */
   priority?: number;
 }

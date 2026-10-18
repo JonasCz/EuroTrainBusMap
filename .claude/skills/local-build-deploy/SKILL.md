@@ -157,7 +157,7 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
 
 ## Status of checks (last run)
 
-`pnpm typecheck` passes (shared, etl, web); `pnpm test` passes (etl 173 tests, web 88 tests, ~10 s each). `wrangler whoami` works with the env token;
+`pnpm typecheck` passes (shared, etl, web); `pnpm test` passes (etl 181 tests, web 95 tests, ~10 s each). `wrangler whoami` works with the env token;
 `wrangler deploy --dry-run` succeeded on the assembled `dist/site` (1781 files). Expected harmless build warnings: a few feeds with
 "no trips within the horizon" (it-regional-bus lombardia/liguria, es-feve, navarra bus, ba-zfbih), stop-names "not found within 1500 m",
 "Berlin is missing station Berlin Ostbahnhof".
@@ -207,6 +207,18 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
 - Style expressions: the fade is an `["interpolate",["linear"],["zoom"], stop, expr(stop)...]` whose stop outputs read the per-feature level (`["at",["get","l1"],["literal",LEVEL_ZOOM]]`), with stops at every level and level - 0.7 (the fade is piecewise linear with kinks only there). Width/offset are laid out at stop z for levels <= z + 0.7 (`byZoom` uses `lvlAt(z + FADE_ZOOM)`), so a category's width is full when its opacity starts to rise. Casing (land colour halo) must fade too, else it erases neighbours before the line shows. Changing LEVELS changes the `l{k}` indices in tiles: MAPDATA_VERSION was bumped to 3, rebuild tiles together with the web app.
 - Screenshots at Playwright: each full-size view takes 30-60 s with SwiftShader; run `shots.cjs`-style loops in the background and poll for the last file; the sticky panel covers the left 400 px of the 1280 px viewport, so centre views a bit west of the area of interest.
 
+- Missing connections in the journey search: first check whether the source feeds have the run at all. Bordeaux → Nice lacked
+  "Intercités → Marseille → TER" because the Marseille – Toulon – Nice regional trains are run by Transdev (feed
+  `fr-paca-zou-intermetropole`, Transitous `fr_zou.gtfs.zip`); the SNCF feed only has SNCF's own TER pieces (Marseille – Toulon,
+  Toulon – Les Arcs, Les Arcs – Nice, each with its own number and block_id), so they are not one train. A quick way to look at a
+  raw feed: unzip it into an empty scratch dir and query the CSVs with `read_csv(..., all_varchar=true)` from a DuckDB `:memory:`
+  instance (`createRequire` on `packages/etl/package.json` to load `@duckdb/node-api` from a scratch `.mts`); the transport.data.gouv.fr
+  catalogue (`https://transport.data.gouv.fr/api/datasets`) and Transitous' `feeds/fr.json` list the other datasets of a region.
+- Through runs (`core/through.ts`, stage "through runs" after dedup): consecutive trips of one feed with the same train number, the
+  next starting at the last station of the previous within 20 min, are joined into one run on their common days (log line
+  `through runs: N candidate pieces, R runs joined from P trips`; full build: 3334 runs from 6757 trips, mostly at-rail, Rejseplanen,
+  CZ, CH, Renfe). A new feed in `feeds.json` forces a full reload; build-time-only options (`agencyName`, the patterns stage) can reuse
+  the DB after patching `cfgLen` / `cfgHash` in `work/db-state.json` (see Gotchas).
 - Transfer timetable (connections with changes): the map-data stage also writes `<build>/tt/` (index + 33 chunks + 33 line
   files, ~13 MB gz, ~40 s of the stage: it re-reads every shard to deduplicate the patterns) and `Manifest.transfers`. Profile the
   search without a browser from a `.mts` script: `decodeTtChunk(gunzipSync(file))` into a `TtStore`, then `new TransferSearch(...)`

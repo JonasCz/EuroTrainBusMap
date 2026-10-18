@@ -38,6 +38,7 @@ import { normalizeStopName, sanitizeName } from "./core/names.ts";
 import { MaskStore, getBit, newMask, popcount, setBit } from "./core/calendar.ts";
 import { isoToEpochDay, tzOffsetMinutes, validTz } from "./core/time.ts";
 import { resolveDuplicates, type DupPair, type DupTrip } from "./core/dedup.ts";
+import { MAX_THROUGH_DWELL, findThroughRuns, type RunPiece } from "./core/through.ts";
 import { PatternStore, localizeStart, processTripStops, type RawStop } from "./core/patterns.ts";
 import { displayName, isHighSpeedService } from "./core/classify.ts";
 import type { GeometryRequest } from "./geometry/index.ts";
@@ -371,10 +372,16 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     }
   });
   const rclass = new Map<number, { cls: string; agency: string; short: string; long: string; color: string | null; tz: string; pname: string | null; routeType: number | null }>();
-  for (const r of await db.all<{ rc: number; cls: string; agency: string; route_short: string; route_long: string; color: string | null; tz: string; pname: string | null; route_type: number | null }>(
-    `SELECT rc, cls, agency, route_short, route_long, color, tz, pname, route_type FROM rclass ORDER BY rc`,
+  // operator name override of a feed (options.agencyName, e.g. "TransDev RAIL_5241" → "Transdev")
+  const agencyOverride = new Map<number, string>();
+  for (const r of await db.all<{ feed: number; key: string }>(`SELECT feed, key FROM feeds ORDER BY feed`)) {
+    const name = ctx.feeds.find((f) => f.key === r.key)?.def.options?.agencyName;
+    if (name) agencyOverride.set(r.feed, name);
+  }
+  for (const r of await db.all<{ rc: number; feed: number; cls: string; agency: string; route_short: string; route_long: string; color: string | null; tz: string; pname: string | null; route_type: number | null }>(
+    `SELECT rc, feed, cls, agency, route_short, route_long, color, tz, pname, route_type FROM rclass ORDER BY rc`,
   ))
-    rclass.set(r.rc, { cls: r.cls, agency: r.agency ?? "", short: r.route_short ?? "", long: r.route_long ?? "", color: r.color, tz: r.tz, pname: r.pname, routeType: r.route_type });
+    rclass.set(r.rc, { cls: r.cls, agency: agencyOverride.get(r.feed) ?? r.agency ?? "", short: r.route_short ?? "", long: r.route_long ?? "", color: r.color, tz: r.tz, pname: r.pname, routeType: r.route_type });
   const feedPriority = new Map<number, number>();
   for (const r of await db.all<{ feed: number; priority: number }>(`SELECT feed, priority FROM feeds ORDER BY feed`)) feedPriority.set(r.feed, r.priority);
 
@@ -440,6 +447,40 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   log(`dedup: ${pairRows.length} candidate pairs, ${dropped.size} trips dropped as cross-feed duplicates, ${shapesAdopted} kept trips took a dropped copy's shape`);
   stats.dedupDropped = dropped.size;
 
+  // ------------------------------------------------------------------ through runs
+  // One train published as consecutive trips with the same number (stay seated at the station where one
+  // ends and the next begins): joined into one run on the days all pieces operate (core/through.ts).
+  const pieceRows = await db.all<{ trip_key: number; stations: number[]; dep: number; arr: number }>(`
+    WITH fl AS (
+      SELECT st.trip_key, t.feed, t.short_name, arg_min(m.station, st.seq) AS fst, arg_max(m.station, st.seq) AS lst,
+        min(st.dep)::INTEGER AS fdep, max(st.arr)::INTEGER AS larr
+      FROM stop_times st JOIN trips t USING (trip_key) JOIN rclass rc USING (rc) JOIN stop_map m USING (stop_key)
+      WHERE rc.cls = 'rail' AND NOT t.has_freq AND coalesce(trim(t.short_name), '') <> ''
+      GROUP BY ALL),
+    cand AS (
+      SELECT a.trip_key AS ta, b.trip_key AS tb FROM fl a JOIN fl b
+        ON a.feed = b.feed AND a.short_name = b.short_name AND b.fst = a.lst AND a.trip_key <> b.trip_key
+          AND b.fdep - a.larr BETWEEN 0 AND ${MAX_THROUGH_DWELL}),
+    keys AS (SELECT ta AS trip_key FROM cand UNION SELECT tb FROM cand)
+    SELECT st.trip_key, list(m.station ORDER BY st.seq) AS stations, min(st.dep)::INTEGER AS dep, max(st.arr)::INTEGER AS arr
+    FROM stop_times st JOIN stop_map m USING (stop_key) WHERE st.trip_key IN (SELECT trip_key FROM keys)
+    GROUP BY st.trip_key ORDER BY st.trip_key`);
+  const pieces: RunPiece[] = [];
+  for (const r of pieceRows) {
+    const k = r.trip_key;
+    const mask = extraMask.get(k) ?? svcMask.get(tSvc[k]!);
+    const rc = rclass.get(tRc[k]!);
+    if (dropped.has(k) || !mask || !rc || !(tCat[k]! & (Cat.LongDistance | Cat.Regional))) continue;
+    pieces.push({ key: k, feed: tFeed[k]!, number: tShort[k] ?? "", tz: rc.tz, stations: [...r.stations], dep: r.dep, arr: r.arr, mask });
+  }
+  const through = findThroughRuns(pieces);
+  /** trip key → [run index, position in the run] */
+  const throughOf = new Map<number, [number, number]>();
+  through.runs.forEach((run, i) => run.keys.forEach((k, j) => throughOf.set(k, [i, j])));
+  log(`through runs: ${pieces.length} candidate pieces, ${through.runs.length} runs joined from ${throughOf.size} trips (${through.rest.size} pieces keep other days as their own run)`);
+  stats.throughRuns = through.runs.length;
+  stats.throughPieces = throughOf.size;
+
   // ------------------------------------------------------------------ patterns
   timer.start("patterns");
   const freq = new Map<number, { s: number; e: number; h: number }[]>();
@@ -484,7 +525,13 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const cityRail = new Uint8Array(cities.length);
   for (const st of stations) if (st.rail) cityRail[st.city] = 1;
   const cityHasRail = (c: number) => cityRail[c] === 1;
-  const finalize = (tk: number, raw: RawStop[]) => {
+  /** A joined through run: its days, the last piece's headsign and the pieces with a feed shape. */
+  interface Joined {
+    mask: Uint8Array;
+    headsign: string | null;
+    shapeTrips: number[];
+  }
+  const finalize = (tk: number, raw: RawStop[], joined?: Joined) => {
     if (dropped.has(tk)) return;
     const rc = rclass.get(tRc[tk]!);
     if (!rc) return;
@@ -520,7 +567,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const tz = utc ? cities[shape.cities[0]!]!.tz : rc.tz;
     // no headsign: the run's real last stop (may be a stop left out of the pattern)
     const lastRaw = raw[raw.length - 1]!;
-    const headsign = (tHead[tk] ?? "").trim() || stations[lastRaw.real ?? lastRaw.station]!.name;
+    const headsign = ((joined ? joined.headsign : tHead[tk]) ?? "").trim() || stations[lastRaw.real ?? lastRaw.station]!.name;
+    const shapeTrips = joined ? joined.shapeTrips : tShape[tk]! >= 0 ? [tk] : [];
     const pid = store.add({
       route,
       stations: shape.stations,
@@ -529,11 +577,12 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       dep: shape.dep,
       headsign,
       tz: tzId(tz),
-      shapeTrip: tShape[tk]! >= 0 ? tk : -1,
+      shapeTrip: shapeTrips[0] ?? -1,
+      ...(shapeTrips.length > 1 ? { shapeAlt: shapeTrips.slice(1) } : {}),
       ...(shape.via.length ? { via: shape.via } : {}),
       ...(shape.at.length ? { at: shape.at } : {}),
     });
-    const base = extraMask.get(tk) ?? svcMask.get(tSvc[tk]!);
+    const base = joined ? joined.mask : (through.rest.get(tk) ?? extraMask.get(tk) ?? svcMask.get(tSvc[tk]!));
     if (!base) return;
     let starts = [shape.start];
     const fr = freq.get(tk);
@@ -571,6 +620,24 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     }
   };
 
+  // pieces of a through run are collected until the run is complete, then finalized as one trip (the first
+  // piece's key); a piece that also runs on days without the others is finalized on those days by itself
+  const runParts: (RawStop[] | undefined)[][] = through.runs.map((r) => new Array(r.keys.length));
+  const runLeft = through.runs.map((r) => r.keys.length);
+  const take = (tk: number, raw: RawStop[]) => {
+    const at = throughOf.get(tk);
+    if (!at) return finalize(tk, raw);
+    const [ri, pos] = at;
+    const run = through.runs[ri]!;
+    runParts[ri]![pos] = raw;
+    if (through.rest.has(tk)) finalize(tk, raw.map((r) => ({ ...r })));
+    if (--runLeft[ri]! > 0) return;
+    const parts = runParts[ri]! as RawStop[][];
+    runParts[ri] = [];
+    const last = run.keys[run.keys.length - 1]!;
+    finalize(run.keys[0]!, parts.flat(), { mask: run.mask, headsign: tHead[last] ?? null, shapeTrips: run.keys.filter((k) => tShape[k]! >= 0) });
+  };
+
   let cur = -1;
   let raw: RawStop[] = [];
   let nRows = 0;
@@ -582,7 +649,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       for (let r = 0; r < n; r++) {
         const tk = k[r] as number;
         if (tk !== cur) {
-          if (cur >= 0) finalize(cur, raw);
+          if (cur >= 0) take(cur, raw);
           cur = tk;
           raw = [];
         }
@@ -592,7 +659,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       if (nRows % 20_000_000 < n) log(`  patterns: ${nRows} stop_times streamed, ${store.patterns.length} patterns, ${tripP.length} trips`);
     },
   );
-  if (cur >= 0) finalize(cur, raw);
+  if (cur >= 0) take(cur, raw);
   const patterns = store.patterns;
   patternDays = Array.from({ length: patterns.length }, (_, i) => patternDays[i] ?? 0);
   log(`${patterns.length} patterns, ${tripP.length} trips, ${masks.masks.length} calendars, ${routes.length} routes, ${droppedTrips} trips dropped (<2 cities)`);
@@ -614,6 +681,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     minHs: number;
     minConv: number;
     shapeTrip: number;
+    /** other pieces of a joined through run with a feed shape (tried when shapeTrip's shape misses the hop) */
+    shapeAlt?: number[];
     shapeW: number;
   }
   const corrIndex = new Map<number, number>();
@@ -649,7 +718,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
           else cr.minConv = Math.min(cr.minConv, dt);
         }
       }
-      if (pt.shapeTrip >= 0 && w > cr.shapeW) [cr.shapeTrip, cr.shapeW] = [pt.shapeTrip, w];
+      if (pt.shapeTrip >= 0 && w > cr.shapeW) [cr.shapeTrip, cr.shapeAlt, cr.shapeW] = [pt.shapeTrip, pt.shapeAlt, w];
     }
     patternCorr.push(list);
   }
@@ -657,7 +726,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
 
   // shapes for representative hops
   const neededShapes = new Map<number, number>(); // shape_key → trip
-  for (const c of corrs) if (c.shapeTrip >= 0) neededShapes.set(tShape[c.shapeTrip]!, c.shapeTrip);
+  for (const c of corrs) for (const t of c.shapeTrip >= 0 ? [c.shapeTrip, ...(c.shapeAlt ?? [])] : []) neededShapes.set(tShape[t]!, t);
   const shapePts = new Map<number, LonLat[]>();
   if (neededShapes.size) {
     await db.run(`DROP TABLE IF EXISTS needshape`);
@@ -680,10 +749,13 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const reqs = corrs.map((c, id) => {
     const A = stations[c.a]!, B = stations[c.b]!;
     const hop: { from: [number, number]; to: [number, number]; shape?: [number, number][] } = { from: [A.lon, A.lat], to: [B.lon, B.lat] };
-    const sp = c.shapeTrip >= 0 ? shapePts.get(tShape[c.shapeTrip]!) : undefined;
-    if (sp) {
-      const sl = sliceShape(sp, hop.from, hop.to);
-      if (sl) hop.shape = sl;
+    for (const t of c.shapeTrip >= 0 ? [c.shapeTrip, ...(c.shapeAlt ?? [])] : []) {
+      const sp = shapePts.get(tShape[t]!);
+      const sl = sp && sliceShape(sp, hop.from, hop.to);
+      if (sl) {
+        hop.shape = sl;
+        break;
+      }
     }
     // rail trains per day: how much this hop tells the router about the track it uses (geometry/guide.ts)
     const tpdLong = Math.round((c.tpd[Cat.LongDistance] ?? 0) * 100) / 100;
