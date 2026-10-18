@@ -176,3 +176,90 @@ async function loadPlacesFromSource(cacheDir: string, ua: string): Promise<Place
   }
   return places;
 }
+
+/** R2 asset key of the villages file: every European GeoNames populated place, whatever its population. */
+export const VILLAGES_ASSET = "geonames/villages-europe.tsv.gz";
+/** Feature codes left out of the villages: city sections (they belong to their town) besides the dropped ones. */
+const VILLAGE_DROP_FCODES = new Set([...DROP_FCODES, "PPLX"]);
+/** At most this many alternate names per village (Latin-script spellings of its name, for matching stop names). */
+const VILLAGE_MAX_ALT = 6;
+
+/**
+ * Villages: every populated place (feature class P) of the European countries, also those below the 1000 inhabitants of
+ * cities1000 (Scarriff, 770; Feakle, 113; Bodyke, 0). They are not places of their own in the city assignment (that
+ * would let every hamlet take the stops of the town next to it); a synthetic town (a stop cluster outside every
+ * place, core/cities.ts matchVillage) whose name is a village's name becomes that village: a named place, so its bus
+ * stop is a destination. Alternate names are kept only in Latin script and only a few, enough to match stop names.
+ * Uses `<assetsDir>/geonames/villages-europe.tsv.gz` when present, otherwise builds it from the per-country dumps of
+ * download.geonames.org (~110 MB) and writes it there.
+ */
+export async function loadVillages(cacheDir: string, ua: string, assetsDir?: string): Promise<Place[]> {
+  if (assetsDir) {
+    const f = join(assetsDir, VILLAGES_ASSET);
+    if (existsSync(f)) {
+      try {
+        const v = parsePlaces(await readFile(f));
+        if (v.length > 100_000) {
+          log(`geonames: ${v.length} villages from asset ${f}`);
+          return v;
+        }
+        warn(`geonames villages asset ${f} looks truncated (${v.length} places), rebuilding from source`);
+      } catch (e) {
+        warn(`geonames villages asset ${f} unreadable: ${(e as Error).message}`);
+      }
+    }
+  }
+  const dir = join(cacheDir, "geonames");
+  await mkdir(dir, { recursive: true });
+  const countries = [...EURO_COUNTRIES].sort();
+  const files = await mapLimit(countries, 4, async (cc) => {
+    const dest = join(dir, `countries_${cc}.zip`);
+    try {
+      await downloadCached(`${BASE}${cc}.zip`, dest, ua, { maxAgeH: 24 * 6 });
+      return dest;
+    } catch (e) {
+      warn(`geonames villages ${cc}: ${(e as Error).message}`);
+      return null;
+    }
+  });
+  const latin = /^[\p{Script=Latin}\p{N}\s'’.\-()]+$/u;
+  const out: Place[] = [];
+  countries.forEach((cc, i) => {
+    const zip = files[i];
+    if (!zip) return;
+    let text: string;
+    try {
+      text = unzipText(zip, `${cc}.txt`);
+    } catch {
+      return;
+    }
+    for (const line of text.split("\n")) {
+      if (!line) continue;
+      const c = line.split("\t");
+      if (c[6] !== "P" || VILLAGE_DROP_FCODES.has(c[7]!)) continue;
+      const lat = Number(c[4]), lon = Number(c[5]);
+      if (lon < BBOX.minLon || lon > BBOX.maxLon || lat < BBOX.minLat || lat > BBOX.maxLat) continue;
+      const name = c[1]!;
+      const alt = [c[2] ?? "", ...(c[3] ? c[3].split(",") : [])].filter((n) => n && n !== name && n.length <= 40 && latin.test(n));
+      out.push({
+        id: Number(c[0]),
+        name,
+        lon,
+        lat,
+        country: c[8] || cc,
+        population: Number(c[14]) || 0,
+        tz: c[17] || "Europe/Berlin",
+        fcode: c[7]!,
+        admin: [c[10] ?? "", c[11] ?? "", c[12] ?? "", c[13] ?? ""],
+        ...(alt.length ? { altNames: [...new Set(alt)].slice(0, VILLAGE_MAX_ALT) } : {}),
+      });
+    }
+  });
+  out.sort((a, b) => a.id - b.id);
+  log(`geonames: ${out.length} villages from the country dumps`);
+  if (assetsDir && out.length > 100_000) {
+    await mkdir(join(assetsDir, "geonames"), { recursive: true });
+    await writeFile(join(assetsDir, VILLAGES_ASSET), serializePlaces(out));
+  }
+  return out;
+}

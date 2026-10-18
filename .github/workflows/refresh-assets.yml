@@ -2,7 +2,7 @@ name: Refresh build assets (R2)
 
 # Rebuilds the slow-changing inputs of the weekly data build and uploads them to the
 # R2 bucket `eurotrainbusmap-assets`:
-#   geonames/places-europe.tsv.gz   basemap/{borders,labels}.json   basemap/tiles-v2.tar (land + lakes vector tiles)
+#   geonames/{places,villages}-europe.tsv.gz   basemap/{borders,labels}.json   basemap/tiles-v2.tar (land + lakes vector tiles)
 #   rail/rail-graph-v1.bin   rail/urbanrail-graph-v1.bin (tram / metro track)   road/road-graph-v1.bin
 #   manifest.json
 # Overture publishes monthly; GeoNames / Natural Earth change rarely.

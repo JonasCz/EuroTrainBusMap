@@ -24,9 +24,9 @@ export interface CandidateInput {
   stopCity: Int32Array;
   stationOf: Int32Array;
   stations: { name: string; lon: number; lat: number; cats: number; rail: boolean; city: number }[];
-  cities: { name: string; country: string; population: number }[];
+  /** synthetic: an unnamed stop cluster (not a GeoNames town or village), whose bus stops are not destinations */
+  cities: { name: string; country: string; population: number; synthetic: boolean }[];
   mapping: StopNamesFile | null;
-  minBusCityPop: number;
 }
 
 export interface StopCandidate {
@@ -87,7 +87,7 @@ export async function writeStopCandidates(path: string, inp: CandidateInput): Pr
     let reason = "";
     if (r.cats & Cat.Coach && INTL_COACH_FEED.test(r.feed_key)) reason = "intl-coach";
     else {
-      if (!(r.cats & Cat.Coach) && city.population < inp.minBusCityPop) continue; // bus stops in small places are not shown
+      if (!(r.cats & Cat.Coach) && city.synthetic) continue; // bus stops outside named places are not shown
       if (!ENGLISH_COUNTRIES.has(city.country) && FOREIGN_NAME_RE.test(r.name)) reason = "foreign-name";
       else if (STATIONISH_RE.test(r.name) && near.some((x) => x.d <= 300 && stations[x.j]!.rail)) reason = "near-rail";
       else continue;

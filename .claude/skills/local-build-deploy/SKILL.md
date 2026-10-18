@@ -301,3 +301,17 @@ data, give the build a new id: rename the directory (e.g. append a letter, `2026
   ≥ 70 % or stayed chords. Feeds without `shapes.txt` (DELFI, GB, CH, SE, parts of FR/IT) depend on the graphs.
 - **Sizes** (see README): 2.4k files / ~11 MB for the layer, largest tile < 100 KB; the site stays far below 20k files.
 - A `DiscIndex` / `isCityBus` change moves which buses count as "city buses" (population ≥ 100 000 discs): bump `EXTRACT_VERSION`, the filter runs at extraction time.
+
+## Villages (bus destinations in small places)
+
+- Bus stops count as destinations in every *named* place: GeoNames towns (cities1000) and villages of any population
+  (`geonames/villages-europe.tsv.gz`, ~21 MB, 870k populated places from the per-country dumps; `loadVillages` builds it from
+  download.geonames.org into `work/assets/` when the asset is missing – about 110 MB of downloads, ~1 min). A synthetic town
+  (stop cluster outside every cities1000 catchment) becomes a village when its name is a village's name within 4 km
+  (`matchVillage`); the rest stay synthetic and their bus stops appear only in trip schedules. Log line
+  `villages: N synthetic towns are GeoNames villages, M more joined …` (full build: 33 777 / 1 705, 19 293 left synthetic).
+- Effect on the full build (20261016-1636 → -1811): cities 41k → 75k, stations 72k → 110k, corridors 124k → 182k, bus trips
+  1.33M → 1.44M, shard 1.27 → 1.55 GB (771 → 933 files, largest still London 11.4 MB), tiles 29 → 41 MB gz (largest 904 KB),
+  core.json 1.8 → 3.2 MB (gz 0.67 → 1.17 MB), out dir 13.3k → 14.1k files, build ~17 min with --reuse-db, peak RSS ~8.5 GB.
+- The villages asset is new: run refresh-assets with `only=geonames` (or upload `work/assets/geonames/villages-europe.tsv.gz`
+  and add it to the R2 `manifest.json`) so the weekly build stops downloading the dumps.

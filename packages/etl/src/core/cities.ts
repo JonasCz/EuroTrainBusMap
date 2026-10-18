@@ -232,6 +232,48 @@ export function adoptStationNames(stations: NamedStation[], placeOf: Int32Array,
   return moved;
 }
 
+/** How far (m) a synthetic town may lie from the village whose name it carries (matchVillage). */
+export const VILLAGE_REACH_M = 4000;
+
+/**
+ * The village (GeoNames populated place of any size, see geonames.ts loadVillages) a synthetic town stands for: the
+ * nearest one within `reachM` whose name (or a Latin-script alternate name) is a whole word sequence of the town's
+ * name ("Scariff" → Scarriff / Scariff, "Tulla West" → Tulla), at least 3 letters long. The proximity alone does not
+ * count: a stop cluster named "School Road" or "Road End" is no place of its own. Returns the village index and the
+ * matching spelling (used as the display name: the operator's spelling when it is one of the village's names), or null.
+ */
+export function matchVillage(
+  name: string,
+  lon: number,
+  lat: number,
+  villages: Place[],
+  idx: GridIndex,
+  reachM = VILLAGE_REACH_M,
+): { village: number; name: string } | null {
+  const nk = foldKey(name);
+  if (nk.length < 5) return null;
+  let best: { village: number; name: string } | null = null, bd = Infinity;
+  for (const j of idx.within(lon, lat, reachM)) {
+    const v = villages[j]!;
+    const d = fastDist(lon, lat, v.lon, v.lat);
+    if (d >= bd) continue;
+    for (const n of [v.name, ...(v.altNames ?? [])]) {
+      const k = foldKey(n);
+      if (k.length < 5 || !nk.includes(k)) continue;
+      best = { village: j, name: n };
+      bd = d;
+      break;
+    }
+  }
+  if (best) {
+    // the operator's spelling when it is one of the village's names ("Scariff" for GeoNames' "Scarriff")
+    const v = villages[best.village]!;
+    const own = [v.name, ...(v.altNames ?? [])].find((n) => foldKey(n) === nk);
+    best.name = own ?? (foldKey(v.name).length >= 5 && nk.includes(foldKey(v.name)) ? v.name : best.name);
+  }
+  return best;
+}
+
 /** Derive a town name from a stop name (for synthetic cities). */
 export function townFromStopName(name: string): string {
   let n = name.trim();

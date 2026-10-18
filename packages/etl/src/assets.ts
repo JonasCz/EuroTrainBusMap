@@ -3,6 +3,7 @@
  * `eurotrainbusmap-assets` (see .github/workflows/refresh-assets.yml):
  *
  *   geonames/places-europe.tsv.gz   pruned GeoNames places with local names
+ *   geonames/villages-europe.tsv.gz every GeoNames populated place (villages below cities1000, to name bus places)
  *   basemap/{borders,labels}.json   Natural Earth 1:10m borders + country labels (GeoJSON)
  *   basemap/tiles-v2.tar            OSM land polygons + NE lakes as gzipped vector tiles (ONE object, unpacked by every build)
  *   rail/rail-graph-v1.bin          rail graph for corridor geometry (Overture → pruned graph)
@@ -18,7 +19,7 @@ import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { RAIL_GRAPH_KEY, ROAD_GRAPH_KEY, URBAN_RAIL_GRAPH_KEY, buildRailAsset, buildRoadAsset, buildUrbanRailAsset } from "./geometry/refresh-rail.ts";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PLACES_ASSET, loadPlaces } from "./geonames.ts";
+import { PLACES_ASSET, VILLAGES_ASSET, loadPlaces, loadVillages } from "./geonames.ts";
 import { loadFeedsConfig } from "./feeds.ts";
 import { BASEMAP_FILES } from "./build.ts";
 import { BASEMAP_TILES_KEY, buildBasemapTiles } from "./basemap/tiles.ts";
@@ -58,6 +59,9 @@ async function main() {
     await rm(join(out, PLACES_ASSET), { force: true });
     const places = await loadPlaces(cacheDir, cfg.userAgent, out);
     log(`assets: ${PLACES_ASSET} (${places.length} places)`);
+    await rm(join(out, VILLAGES_ASSET), { force: true });
+    const villages = await loadVillages(cacheDir, cfg.userAgent, out);
+    log(`assets: ${VILLAGES_ASSET} (${villages.length} villages)`);
   }
 
   if (only.has("basemap")) {

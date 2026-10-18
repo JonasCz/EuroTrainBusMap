@@ -59,16 +59,20 @@ Pipeline in short:
    so Paris and London group all their stations) or carry the place's name ("Aix-en-Provence TGV" at 8 km). A
    village beside a town therefore keeps its own station: it becomes a synthetic town named after the station
    (Anchamps ≠ Revin, Limerick Junction ≠ Tipperary). Bus-only stops keep the plain catchment rule (nearest place, 5 km
-   fallback; one carrying exactly the name of a rail / coach station within 1 km joins that station's place) and only count in places
-   with ≥ 2000 inhabitants as destinations (the trip schedule still lists every stop, see 6 and 9). Synthetic towns with a generic name (≥ 4 of them: "Road End", "Hotel", "Mairie") get the nearest place
+   fallback; one carrying exactly the name of a rail / coach station within 1 km joins that station's place). A synthetic town
+   whose name is the name of a GeoNames populated place of any size within 4 km (`matchVillage`; the villages below cities1000
+   come from the per-country dumps, asset `geonames/villages-europe.tsv.gz`) becomes that *village* ("Scariff" = GeoNames
+   "Scarriff", 770 inhabitants; towns matching the same village are joined). Bus stops count as destinations in every named
+   place – GeoNames towns and villages, whatever their population; stops in the remaining synthetic towns (stop clusters named
+   "School Road", "Road End", a farm) are listed in the trip schedule only (see 6 and 9). Synthetic towns with a generic name (≥ 4 of them: "Road End", "Hotel", "Mairie") get the nearest place
    added ("Road End (Strathy)"). Cities never influence the drawing.
 5. **Dedup** – the same train/coach present in several feeds (DE+AT+CH+CZ…) is detected by matching
    (city, time) sequences and kept once, with merged calendars. The kept trip also takes the boarding / alighting
    restrictions of the dropped copies, and of the copies a feed leaves to a dedicated operator's feed
    (`dedicatedOperators`; kept by the loader as `limit_hints`): the more restrictive copy wins. The Eurostar feed lets
    anyone ride Rotterdam → Amsterdam, NS's copy in nl-openov (no domestic travel) does not.
-6. **Patterns & trips** – station sequences with offsets, deduplicated (a bus pattern keeps the stops in places with ≥ 2000
-   inhabitants, one main stop per smaller town and the entry / exit stops of a big city; the stops it leaves out are kept with
+6. **Patterns & trips** – station sequences with offsets, deduplicated (a bus pattern keeps the stops in named places (towns and
+   villages, `busPlace`), one main stop per smaller town and the entry / exit stops of a big city; the stops it leaves out are kept with
    their times as the run's full stop list, `ScheduleRun` in `packages/shared/src/schema.ts`, shown only in the trip schedule); calendars as 60-day bitmasks starting the day before the build (Berlin date), so viewers in earlier timezones stay covered.
    Boarding / alighting restrictions: GTFS `pickup_type` / `drop_off_type` 1 ("no pickup" / "no drop off") become
    `Pattern.limits` (restricted stops only, `StopLimit` bits). Types 2 / 3 (phone the agency / ask the driver) are

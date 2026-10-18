@@ -44,6 +44,21 @@ describe("processTripStops", () => {
     expect(t.via).toEqual([0, 1, -2, -2, 1, 7, 8, 8, 2, 8, 28, 28]);
     expect(t.at).toEqual([]);
   });
+  it("bus: a village without inhabitants on record is a destination when it is a named place (busPlace)", () => {
+    // Local Link 342 Flagmount – Scariff – Ennis: Flagmount and Scariff are villages (population 0 / 770 in GeoNames),
+    // city 9 an unnamed stop cluster ("Digital Hub")
+    const raw = [
+      { station: 1, city: 4, arr: 0, dep: 0 },
+      { station: 7, city: 9, arr: 16, dep: 16 },
+      { station: 2, city: 5, arr: 30, dep: 30 },
+      { station: 3, city: 2, arr: 90, dep: 90 },
+    ];
+    const t = processTripStops(raw, { ...base, cityPop: (c) => (c === 2 ? 27_923 : 0), busPlace: (c) => c !== 9, cat: Cat.Bus })!;
+    expect(t.stations).toEqual([1, 2, 3]);
+    expect(t.via).toEqual([1, 7, 16, 16]);
+    // without busPlace only places with a population count: the trip reaches one city and is dropped
+    expect(processTripStops(raw, { ...base, cityPop: (c) => (c === 2 ? 27_923 : 0), cat: Cat.Bus })).toBeNull();
+  });
   it("bus: keeps a town's real stops behind its main stop, with their own times", () => {
     // stations 11 and 12 (city 1) are represented by the town's main stop 10; the vehicle serves 12 first
     const t = processTripStops(

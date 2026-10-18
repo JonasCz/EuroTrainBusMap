@@ -76,8 +76,6 @@ export interface FeedsConfig {
   userAgent: string;
   transitousBase: string;
   minBusKm: number;
-  /** Bus stops in places below this population are dropped (city-level map). */
-  minBusCityPop?: number;
   dedicatedOperators: DedicatedOperator[];
   coachOperators: string;
   urbanAgencies: string;

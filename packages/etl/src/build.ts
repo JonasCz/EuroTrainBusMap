@@ -33,8 +33,8 @@ import type { Db } from "./db.ts";
 import type { FeedsConfig, ResolvedFeed } from "./feeds.ts";
 import type { FeedLoadStats } from "./gtfs/load.ts";
 import type { CliArgs } from "./cli.ts";
-import { BBOX, loadPlaces } from "./geonames.ts";
-import { adoptStationNames, assignStations, chooseCityName, foldKey, resolveSatellites, townFromStopName, type Place } from "./core/cities.ts";
+import { BBOX, loadPlaces, loadVillages } from "./geonames.ts";
+import { adoptStationNames, assignStations, chooseCityName, foldKey, matchVillage, resolveSatellites, townFromStopName, type Place } from "./core/cities.ts";
 import { describeStation, mergeStations, walkMinutes, type StopIn } from "./core/stations.ts";
 import { normalizeStopName, sanitizeName } from "./core/names.ts";
 import { MaskStore, getBit, newMask, popcount, setBit } from "./core/calendar.ts";
@@ -285,6 +285,50 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     }
     stationCity[st] = found;
   }
+  // Villages: a synthetic town whose name is the name of a GeoNames populated place below cities1000 (Scariff, Feakle,
+  // Bodyke; geonames.ts loadVillages) becomes that village, a named place: buses take you there (patterns: busPlace).
+  // Towns matching the same village (or a cities1000 place) are joined. The rest (stop clusters named "School Road",
+  // "Road End", a farm or a junction) stay synthetic: their bus stops are listed in the schedules only.
+  {
+    const villages = await loadVillages(ctx.cacheDir, cfg.userAgent, args.assets);
+    const villageIdx = new GridIndex(villages.map((v) => v.lon), villages.map((v) => v.lat), 0.1);
+    const placeById = new Map(places.map((p, i) => [p.id, i]));
+    const cityOfVillage = new Map<number, number>();
+    const cityStations: number[][] = cities.map(() => []);
+    for (const st of live) if (cities[stationCity[st]!]!.synthetic) cityStations[stationCity[st]!]!.push(st);
+    let made = 0, joined = 0;
+    for (let ci = 0; ci < cities.length; ci++) {
+      const c = cities[ci]!;
+      if (!c.synthetic) continue;
+      const sts = cityStations[ci]!.sort((a, b) => stations[b]!.weight - stations[a]!.weight);
+      let m = matchVillage(c.name, c.lon, c.lat, villages, villageIdx);
+      // the town is named after its busiest station; its other stops may carry the village's name
+      for (let k = 1; !m && k < Math.min(sts.length, 6); k++) m = matchVillage(townFromStopName(stations[sts[k]!]!.name), stations[sts[k]!]!.lon, stations[sts[k]!]!.lat, villages, villageIdx);
+      if (!m) continue;
+      const v = villages[m.village]!;
+      let pi = placeById.get(v.id);
+      if (pi !== undefined && places[pi]!.parent !== undefined && places[pi]!.parent! >= 0) pi = places[pi]!.parent!;
+      const target = pi !== undefined ? cityOfPlace.get(pi) : cityOfVillage.get(m.village);
+      if (target !== undefined) {
+        for (const st of sts) stationCity[st] = target;
+        joined++;
+        continue;
+      }
+      if (pi !== undefined) {
+        // a cities1000 place without stations of its own (its stops lie beyond its catchment)
+        const pl = places[pi]!;
+        Object.assign(c, { place: pi, name: pl.name, country: pl.country, population: pl.population, synthetic: false });
+        cityOfPlace.set(pi, ci);
+      } else {
+        Object.assign(c, { name: m.name, country: v.country, population: v.population, synthetic: false });
+        cityOfVillage.set(m.village, ci);
+      }
+      made++;
+    }
+    log(`villages: ${made} synthetic towns are GeoNames villages, ${joined} more joined a village or place of the same name`);
+    stats.villages = made;
+    stats.villagesJoined = joined;
+  }
   // A synthetic town named after a generic stop name ("Road End", "Hotel", "Mairie": at least 4 of them) says nothing:
   // add the nearest place, "Road End (Strathy)".
   {
@@ -311,12 +355,12 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   for (let ci = 0; ci < cities.length; ci++) {
     const c = cities[ci]!;
     if (railNames[ci]!.length) c.stopNames = railNames[ci]!;
-    if (c.synthetic) continue;
+    if (c.place < 0) continue; // synthetic towns and villages keep their name
     const pl = places[c.place]!;
     const cands = [...(pl.altNames ?? []), pl.name];
     c.name = c.stopNames.length ? chooseCityName(cands, c.stopNames) : cands[0]!;
   }
-  log(`${cities.length} cities (${nSynth} synthetic)`);
+  log(`${cities.length} cities (${nSynth} synthetic, ${cities.filter((c) => c.synthetic).length} left after villages)`);
   // final station names (the city name helps "S+U Gesundbrunnen Bhf" → "Berlin Gesundbrunnen")
   const cityNameOf = (st: number) => cities[stationCity[st]!]?.name ?? "";
   stations = describeAll(cityNameOf);
@@ -336,7 +380,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   for (const [st, name] of sn.renames) if (stations[st]!.name) stations[st]!.name = sanitizeName(name);
   const stopCity = Int32Array.from(stationOf, (st) => stationCity[st]!);
   if (args.stopCandidates) {
-    const n = await writeStopCandidates(args.stopCandidates, { stopRows, stopKeys, stopCity, stationOf, stations, cities, mapping: stopNames, minBusCityPop: cfg.minBusCityPop ?? 1000 });
+    const n = await writeStopCandidates(args.stopCandidates, { stopRows, stopKeys, stopCity, stationOf, stations, cities, mapping: stopNames });
     log(`stop candidates: ${n} written to ${args.stopCandidates}`);
     timer.end();
     return;
@@ -665,6 +709,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   let patternDays: number[] = [];
   const stationWeight = (s: number) => stations[s]!.weight;
   const cityPop = (c: number) => cities[c]!.population;
+  /** Named places (GeoNames towns and villages) are bus destinations; unnamed stop clusters are not. */
+  const busPlace = (c: number) => !cities[c]!.synthetic;
   let droppedTrips = 0;
 
   // Bus-only stops in towns below 100k inhabitants are represented by one station per town
@@ -698,7 +744,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
           r.station = c;
         }
       }
-    const shape = processTripStops(raw, { cat, cityPop, stationWeight, cityHasRail, minBusCityPop: cfg.minBusCityPop ?? 1000, stationPos: (s) => [stations[s]!.lon, stations[s]!.lat] });
+    const shape = processTripStops(raw, { cat, cityPop, stationWeight, cityHasRail, busPlace, stationPos: (s) => [stations[s]!.lon, stations[s]!.lat] });
     if (!shape) {
       droppedTrips++;
       return;

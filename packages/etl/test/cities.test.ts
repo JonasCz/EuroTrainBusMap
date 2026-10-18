@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { adoptStationNames, assignStations, chooseCityName, foldKey, placeCore, placeRadius, resolveSatellites, townFromStopName, type Place, type StationPoint } from "../src/core/cities.ts";
+import { GridIndex } from "../src/util/geo.ts";
+import { adoptStationNames, assignStations, chooseCityName, foldKey, matchVillage, placeCore, placeRadius, resolveSatellites, townFromStopName, type Place, type StationPoint } from "../src/core/cities.ts";
 
 const P = (id: number, name: string, lat: number, lon: number, population: number, fcode = "PPL", admin: [string, string, string, string] = ["", "", "", String(id)], country = "DE"): Place => ({
   id, name, lat, lon, population, fcode, admin, country, tz: "Europe/Berlin",
@@ -167,5 +168,32 @@ describe("places asset", () => {
     const back = parsePlaces(serializePlaces(p));
     expect(back[0]).toEqual({ id: 1, name: "Berlin", lat: 52.52437, lon: 13.41053, population: 3426354, fcode: "PPLC", admin: ["16", "00", "11000", "11000000"], country: "DE", tz: "Europe/Berlin", altNames: ["Berlin", "Berlín"] });
     expect(back[1]!.altNames).toBeUndefined();
+  });
+});
+
+describe("matchVillage", () => {
+  // GeoNames: Scarriff (alternate name Scariff, 770), Tuamgraney (0), Tulla (661), Feakle (113)
+  const villages: Place[] = [
+    { ...P(2961574, "Scarriff", 52.90872, -8.53316, 770, "PPL", ["", "", "", ""], "IE"), altNames: ["An Scairbh", "Scariff"] },
+    P(2961000, "Tuamgraney", 52.89722, -8.53861, 0, "PPL", ["", "", "", ""], "IE"),
+    P(2961001, "Tulla", 52.86472, -8.76056, 661, "PPL", ["", "", "", ""], "IE"),
+    P(2961002, "Feakle", 52.92637, -8.64772, 113, "PPL", ["", "", "", ""], "IE"),
+    P(2961003, "Ae", 52.91, -8.531, 0, "PPL", ["", "", "", ""], "IE"),
+  ];
+  const idx = new GridIndex(villages.map((v) => v.lon), villages.map((v) => v.lat), 0.1);
+  const m = (name: string, lon: number, lat: number) => {
+    const r = matchVillage(name, lon, lat, villages, idx);
+    return r ? `${villages[r.village]!.name}:${r.name}` : null;
+  };
+  it("matches a stop cluster to the village whose name it carries, in the operator's spelling", () => {
+    expect(m("Scariff", -8.531182, 52.910934)).toBe("Scarriff:Scariff");
+    expect(m("Tulla West", -8.772, 52.865)).toBe("Tulla:Tulla");
+  });
+  it("needs the name, not just the proximity, and a name of at least 3 letters", () => {
+    expect(m("Drewsborough", -8.535, 52.905)).toBeNull(); // 600 m from Scarriff and Tuamgraney
+    expect(m("Ae Road", -8.531, 52.91)).toBeNull();
+  });
+  it("stays within reach", () => {
+    expect(m("Feakle", -8.53, 52.91)).toBeNull(); // 8 km away
   });
 });

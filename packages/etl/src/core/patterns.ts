@@ -35,8 +35,12 @@ export interface ProcessOptions {
   cityPop: (city: number) => number;
   /** Service weight of a station (to pick the main stop in a town). */
   stationWeight: (station: number) => number;
-  /** Bus: drop stops in places below this population (except first/last). */
-  minBusCityPop?: number;
+  /**
+   * Bus: whether a city is a place a bus takes you to (a GeoNames town or village of any size); stops elsewhere
+   * (unnamed stop clusters: a junction, a school, a farm) are left out of the pattern, termini included.
+   * Default: cities with a population.
+   */
+  busPlace?: (city: number) => boolean;
   /** Bus: collapse consecutive stops in towns below this population to one stop. */
   collapseBusBelowPop?: number;
   /** Bus: whether a city has rail stations (bus runs there keep entry/exit stops only). */
@@ -102,7 +106,7 @@ export function repairTimes(arr: number[], dep: number[], pos: [number, number][
 
 /**
  * Turn a trip's raw stop sequence into the station sequence used in patterns:
- *  - (Bus) drop stops in places below ~1000 inhabitants,
+ *  - (Bus) drop stops outside named places (busPlace),
  *  - (Bus) collapse runs of stops in the same small town to its main stop; in big
  *    cities and towns with rail keep only the entry/exit stops of the run,
  *  - collapse consecutive stops at the same station (arr of first, dep of last),
@@ -119,10 +123,10 @@ export function processTripStops(input: RawStop[], o: ProcessOptions): TripShape
   const raw = input.map((s, i) => ({ ...s, i }));
   let stops = raw;
   if (o.cat === Cat.Bus) {
-    // Buses only serve real towns on the map: stops in places below minPop (incl. synthetic
-    // places without population) are dropped, termini included.
-    const minPop = o.minBusCityPop ?? 1000;
-    stops = stops.filter((s) => o.cityPop(s.city) >= minPop);
+    // Buses serve the named places on the map, villages included; stops outside them (unnamed stop clusters) are
+    // dropped, termini included.
+    const busPlace = o.busPlace ?? ((c: number) => o.cityPop(c) > 0);
+    stops = stops.filter((s) => busPlace(s.city));
     const collapseBelow = o.collapseBusBelowPop ?? 100_000;
     const out: typeof stops = [];
     for (let i = 0; i < stops.length; ) {
