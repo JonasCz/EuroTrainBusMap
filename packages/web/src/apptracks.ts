@@ -10,7 +10,7 @@ import { CAT_LABEL } from "./logic/filters.ts";
 import { legBrand, type JourneyGroup } from "./logic/journeygroups.ts";
 import type { Leg, LegInfo } from "./logic/journey.ts";
 import type { Departure } from "./logic/timetable.ts";
-import { buildTrackIndex, fmtTpd, itemsAt, nameList, summarizeRuns, type TrackIndex, type TrackItem, type TrackRun } from "./logic/tracks.ts";
+import { buildTrackIndex, fmtTpd, itemsAt, legKeys, nameList, summarizeRuns, type TrackIndex, type TrackItem, type TrackRun } from "./logic/tracks.ts";
 import { fmtDuration, fmtTime } from "./logic/tz.ts";
 import { corridorSegs } from "./map/features.ts";
 import type { MapView, TrackFocus, TrackHandler } from "./map/mapview.ts";
@@ -246,8 +246,12 @@ export function pairTracks(c: Ctx, runs: () => TrackRun[], deps: Departure[], ch
 
 // ---------------------------------------------------------------- legs of a journey
 
-/** Schedule / journey / connections views: a track is one of the legs ridden; click as given (or nothing). */
-export function legTracks(c: Ctx, infos: LegInfo[], click: ((leg: number) => void) | null, clickLabel = ""): ViewTracks {
+/**
+ * Schedule / journey / connections views: a track is one of the legs ridden; click as given (or nothing). With
+ * `group` (the panel key of all the legs together: the connections view's legs so far) the panel shows them as one
+ * item, marked for any of them.
+ */
+export function legTracks(c: Ctx, infos: LegInfo[], click: ((leg: number) => void) | null, clickLabel = "", group?: string): ViewTracks {
   const { net, panel } = c;
   const index = lazyIndex(net, () => infos.map((i) => ({ corridors: i.corridors })));
   const tz = (st: number) => net.ctx.cityTz[net.ctx.stationCity[st]!] ?? "UTC";
@@ -260,7 +264,7 @@ export function legTracks(c: Ctx, infos: LegInfo[], click: ((leg: number) => voi
   return {
     hover(seg) {
       const ls = seg === null ? [] : at(seg);
-      panel.markTracks(ls.length ? ls.map((i) => `l:${i}`) : null);
+      panel.markTracks(ls.length ? (group ? [group] : ls.map((i) => `l:${i}`)) : null);
       if (!ls.length) return null;
       const tip = ls.flatMap((i) => {
         const l = infos[i]!;
@@ -274,9 +278,8 @@ export function legTracks(c: Ctx, infos: LegInfo[], click: ((leg: number) => voi
       if (ls.length && click) click(ls[0]!);
     },
     item(key) {
-      if (!key.startsWith("l:")) return null;
-      const i = +key.slice(2);
-      return infos[i] ? legFocus([i]) : null;
+      const ls = legKeys(key, infos.length);
+      return ls ? legFocus(ls) : null;
     },
   };
 }

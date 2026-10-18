@@ -24,6 +24,11 @@ export interface AppState {
    */
   journey?: boolean;
   /**
+   * The schedule (URL `trip=sofar` instead of `trip=1`) is the journey so far, opened from the connections at its end:
+   * back returns to those connections (keeping their scope, `wholeCity`) instead of the previous step.
+   */
+  review?: boolean;
+  /**
    * Continue the journey of `legs` to this city (URL `next=<city>`): the journeys from the last leg's arrival city,
    * leaving after the arrival (transfer time, maximum wait), to append to the legs.
    */
@@ -62,12 +67,18 @@ export function applyPatch(state: AppState, patch: Partial<AppState>): AppState 
   // the trip schedule and the onward scope belong to the last leg: a new leg (or step) resets them unless named
   if ("legs" in patch && !("schedule" in patch)) delete next.schedule;
   if (("legs" in patch || "schedule" in patch) && !("journey" in patch)) delete next.journey;
+  if (("legs" in patch || "schedule" in patch) && !("review" in patch)) delete next.review;
   if (("legs" in patch || "schedule" in patch) && !("wholeCity" in patch)) delete next.wholeCity;
   if (!next.legs.length) {
     delete next.schedule;
     delete next.wholeCity;
   }
-  if (!next.schedule) delete next.journey;
+  if (!next.schedule) {
+    delete next.journey;
+    delete next.review;
+  }
+  // the onward scope is the connections': kept under a schedule only to return to them
+  if (next.schedule && !next.review) delete next.wholeCity;
   // the continuation search and the joined parts belong to the legs: other legs drop them unless named
   if (("legs" in patch || "dest" in patch) && !("extend" in patch)) delete next.extend;
   if ("legs" in patch && !("parts" in patch) && next.parts) next.parts = next.parts.filter((n) => n < next.legs.length);
@@ -142,6 +153,7 @@ export function parseHash(net: Net, hash: string): AppState {
   const legs = city !== undefined && dest !== undefined ? decodeLegs(q.get("legs"), city) : [];
   const extend = legs.length ? cityByRef(net, q.get("next")) : undefined;
   const parts = legs.length ? parseParts(q.get("parts"), legs.length) : [];
+  const trip = q.get("trip");
   return {
     ...(city !== undefined ? { city } : {}),
     ...(station && /^[a-z0-9-]{1,80}$/.test(station) ? { station } : {}),
@@ -149,9 +161,10 @@ export function parseHash(net: Net, hash: string): AppState {
     ...(isValidDate(date) ? { date } : {}),
     filters: { cats: f === null ? ALL_CATS : decodeCats(f), ...(local ? {} : { local: false }) },
     legs,
-    ...(legs.length && (q.get("trip") === "1" || q.get("trip") === "all") ? { schedule: true } : {}),
-    ...(legs.length && q.get("trip") === "all" ? { journey: true } : {}),
-    ...(legs.length && q.get("onward") === "city" ? { wholeCity: true } : {}),
+    ...(legs.length && (trip === "1" || trip === "all" || trip === "sofar") ? { schedule: true } : {}),
+    ...(legs.length && trip === "all" ? { journey: true } : {}),
+    ...(legs.length && trip === "sofar" ? { review: true } : {}),
+    ...(legs.length && q.get("onward") === "city" && (trip === null || trip === "sofar") ? { wholeCity: true } : {}),
     ...(extend !== undefined && extend !== city ? { extend } : {}),
     ...(parts.length ? { parts } : {}),
     xfer: parseSettings(q),
@@ -166,8 +179,8 @@ export function toHash(net: Net, s: AppState): string {
   if (s.date && s.city !== undefined) q.push(`date=${s.date}`);
   if (s.legs.length && s.dest !== undefined) {
     q.push(`legs=${encodeLegs(s.legs)}`);
-    if (s.schedule) q.push(s.journey ? "trip=all" : "trip=1");
-    else if (s.wholeCity) q.push("onward=city");
+    if (s.schedule) q.push(s.journey ? "trip=all" : s.review ? "trip=sofar" : "trip=1");
+    if (s.wholeCity && (!s.schedule || s.review)) q.push("onward=city");
     if (s.parts?.length) q.push(`parts=${s.parts.join(",")}`);
     if (s.extend !== undefined) q.push(`next=${net.slug[s.extend]}`);
   }

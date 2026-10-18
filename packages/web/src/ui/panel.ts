@@ -18,6 +18,7 @@ import { localIcon, modeIcon } from "./icons.ts";
 import { datePicker, focusPicker } from "./datepicker.ts";
 import { depCats, depsWith, type StationDeps } from "../logic/stations.ts";
 import { groupJourneys, legBrand, type JourneyGroup } from "../logic/journeygroups.ts";
+import { legsKey } from "../logic/tracks.ts";
 
 export type View =
   | { kind: "intro" }
@@ -143,6 +144,8 @@ export interface PanelActions {
   chooseExtension(legs: Leg[]): void;
   setTransfers(x: TransferSettings): void;
   showSchedule(leg: number): void;
+  /** The journey so far (connections view): all its legs' stops and changes; back returns to the connections. */
+  reviewJourney(): void;
   /** An item of the list (`data-hl`: a route option, destination, departure, leg) is hovered (null: none): its tracks on the map. */
   hoverItem(key: string | null): void;
   shiftDate(days: number): void;
@@ -1215,11 +1218,11 @@ export class Panel {
   /** Breadcrumbs of a journey: the origin city, then each leg's arrival city (the last one is the current step). */
   private crumbs(legs: LegInfo[]): HTMLElement {
     const n = this.net;
-    const first = legs[0]!;
+    const origin = n.cities[n.file.stations[legs[0]!.depStation]!.city]!.name;
     return h(
       "ol",
       { class: "crumbs", "aria-label": "Journey" },
-      h("li", null, h("button", { type: "button", class: "crumb", onclick: () => this.actions.set({ legs: [] }) }, n.cities[n.file.stations[first.depStation]!.city]!.name)),
+      h("li", null, h("button", { type: "button", class: "crumb", title: `Start over from ${origin}: the departures from there (drops the journey)`, onclick: () => this.actions.set({ legs: [] }) }, origin)),
       legs.map((l, i) =>
         h(
           "li",
@@ -1227,7 +1230,11 @@ export class Panel {
           h("span", { class: "crumb-sep", "aria-hidden": "true" }, icon("next", 14)),
           i === legs.length - 1
             ? h("span", { class: "crumb current", "aria-current": "step" }, n.cities[l.to]!.name)
-            : h("button", { type: "button", class: "crumb", onclick: () => this.actions.set({ legs: this.actions.state.legs.slice(0, i + 1) }) }, n.cities[l.to]!.name),
+            : h(
+                "button",
+                { type: "button", class: "crumb", title: `Back to the connections from ${n.cities[l.to]!.name} (drops the later legs)`, onclick: () => this.actions.set({ legs: this.actions.state.legs.slice(0, i + 1) }) },
+                n.cities[l.to]!.name,
+              ),
         ),
       ),
     );
@@ -1240,21 +1247,34 @@ export class Panel {
     return !!p && p.arrStation === l.depStation && p.route.name === l.route.name && p.number !== undefined && p.number === l.number;
   }
 
-  /** The legs ridden so far with the transfers between them; a leg opens its trip's schedule. */
-  private legList(legs: LegInfo[]): HTMLElement {
+  /**
+   * The legs ridden so far with the transfers between them, as one button: hovering it shows all of them on the map,
+   * a click (or Enter / Space) opens them together (`open`: their stops and changes in one list).
+   */
+  private legsBox(legs: LegInfo[], open: () => void): HTMLElement {
     const n = this.net;
+    const first = legs[0]!, last = legs[legs.length - 1]!;
+    const changes = legs.filter((_, i) => i > 0 && !Panel.isThrough(legs, i)).length;
+    const from = n.cities[n.file.stations[first.depStation]!.city]!.name, to = n.cities[last.to]!.name;
+    const what = legs.length === 1 ? "trip" : "journey";
+    const label = `Open ${what} so far: ${from} → ${to}, ${changes === 0 ? "direct" : `${changes} change${changes > 1 ? "s" : ""}`}`;
     return h(
-      "ol",
-      { class: "legs" },
+      "button",
+      {
+        type: "button",
+        class: "legs",
+        "data-hl": legsKey(legs.length),
+        "aria-label": label,
+        title: legs.length === 1 ? "Show all stops of this trip" : "Show the journey so far: every stop and change in one list",
+        onclick: open,
+      },
       legs.map((l, i) => {
         const prev = legs[i - 1];
         const xfer = prev ? Math.round((l.depUtc - prev.arrUtc) / 60000) : null;
-        return h(
-          "li",
-          { "data-hl": `l:${i}` },
+        return [
           xfer !== null
             ? h(
-                "div",
+                "span",
                 { class: "leg-xfer" },
                 Panel.isThrough(legs, i)
                   ? [icon("seat", 14), ` stay on board at ${stationName(n, l.depStation)} (${fmtDuration(xfer)})`]
@@ -1264,8 +1284,8 @@ export class Panel {
               )
             : null,
           h(
-            "button",
-            { type: "button", class: "leg", title: "Show all stops of this trip", onclick: () => this.actions.showSchedule(i) },
+            "span",
+            { class: "leg" },
             routeTag(l.route, l.number),
             h(
               "span",
@@ -1279,8 +1299,9 @@ export class Panel {
               stationName(n, l.arrStation),
             ),
           ),
-        );
+        ];
       }),
+      h("span", { class: "legs-open", "aria-hidden": "true" }, `View ${what}`, icon("next", 12)),
     );
   }
 
@@ -1304,7 +1325,7 @@ export class Panel {
     const stopName = (st: ScheduleStop) => st.minorName ?? stationName(n, st.station);
     const title = h("span", { class: "sched-title" }, routeTag(sc.route, sc.number), h("span", { class: "headsign" }, sc.headsign));
     const out: Node[] = [this.header(title, `${formatDateShort(sc.refDate)} · ${cityName(board)} → ${cityName(alight)} · ${fmtDuration(mins)}`, { back: true })];
-    if (v.legs.length > 1) out.push(this.crumbs(v.legs), this.legList(v.legs.slice(0, -1)));
+    if (v.legs.length > 1) out.push(this.crumbs(v.legs), this.legsBox(v.legs.slice(0, -1), () => this.actions.showSchedule(v.legs.length - 2)));
     const before = sc.board, after = stops.length - 1 - sc.alight;
     out.push(
       h(
@@ -1644,7 +1665,7 @@ export class Panel {
         { back: true },
       ),
       this.crumbs(legs),
-      this.legList(legs),
+      this.legsBox(legs, () => this.actions.reviewJourney()),
     ];
     if (multi) {
       const opt = (label: string, on: boolean, whole: boolean, title: string) =>

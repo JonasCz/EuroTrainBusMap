@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Cat, type Route } from "@etbm/shared";
-import { buildTrackIndex, fmtTpd, itemsAt, nameList, summarizeRuns, type TrackRun } from "./tracks.ts";
+import { buildTrackIndex, fmtTpd, itemsAt, legKeys, legsKey, nameList, summarizeRuns, type TrackRun } from "./tracks.ts";
 
 // corridors → segments: 1 Bordeaux–Paris (segs 10, 11), 2 Paris–Lyon (20, 21), 3 Lyon–Marseille (30),
 // 4 Bordeaux–Toulouse (40), 5 Toulouse–Marseille (50), 6 Marseille–Nice (60, 61); 7 shares segment 21 with 2
@@ -84,5 +84,17 @@ describe("trips from line widths (default map tooltip)", () => {
     for (const [cat, tpd, snapped] of [[Cat.LongDistance, 18, true], [Cat.Bus, 6, true], [Cat.Coach, 3, false]] as const)
       expect(tpdFromWidth(cat, catWidth(cat, tpd, snapped), snapped)).toBeCloseTo(tpd, 5);
     expect(tpdFromWidth(Cat.Regional, 5)).toBe(Infinity);
+  });
+});
+
+describe("panel keys of legs", () => {
+  it("names the legs so far together and reads one or several legs back", () => {
+    expect(legsKey(1)).toBe("l:0");
+    expect(legsKey(4)).toBe("l:0,1,2,3");
+    expect(legKeys(legsKey(4), 4)).toEqual([0, 1, 2, 3]);
+    expect(legKeys("l:2", 4)).toEqual([2]);
+    expect(legKeys("l:4", 4)).toBeNull(); // no such leg
+    expect(legKeys("g:1,2", 4)).toBeNull();
+    expect(legKeys("l:", 4)).toBeNull();
   });
 });

@@ -10,6 +10,7 @@ import { computeReach, reachRuns } from "./logic/reach.ts";
 import { addTraffic, trafficCats, type CorridorTraffic } from "./logic/context.ts";
 import { nextServiceDates, pairCandidates, pairRuns, pairTraffic, serviceDates, timetable, type Departure } from "./logic/timetable.ts";
 import { journeyTracks, legTracks, pairTracks, reachTracks, type ViewTracks } from "./apptracks.ts";
+import { legsKey } from "./logic/tracks.ts";
 import { stationDepartures } from "./logic/stations.ts";
 import { tripSchedule, type TripSchedule } from "./logic/schedule.ts";
 import { changeOptions, journeySchedule, type ChangeOption } from "./logic/journeyschedule.ts";
@@ -148,10 +149,11 @@ export class App {
     const s = this.state;
     // connections → the schedule of the trip that got there → the previous step (departures list / connections);
     // a journey picked from the journeys list goes back to the list; a continuation (its search, or the joined
-    // journey) goes back to the journey it continues
+    // journey) goes back to the journey it continues; the journey so far opened from the connections goes back to them
     const ends = this.legEnds?.key === encodeLegs(s.legs) ? this.legEnds.to : null;
     const part = s.parts?.[s.parts.length - 1];
     if (s.extend !== undefined) this.set({ extend: undefined });
+    else if (s.review) this.set({ schedule: undefined, wholeCity: s.wholeCity });
     else if (s.legs.length && !s.schedule) this.set({ schedule: true });
     else if (part !== undefined && ends?.[part - 1] !== undefined) {
       this.set({ legs: s.legs.slice(0, part), dest: ends[part - 1], parts: s.parts!.slice(0, -1), schedule: true, journey: part > 1 || undefined });
@@ -429,7 +431,7 @@ export class App {
     for (const c of conns) for (const st of c.stops) focus.add(st.city);
     await this.map.setHighlight({ emphasis: { focus: this.withCorridorEnds(focus, corridors), active: true, origin, dest: last.to }, corridors, traffic, context });
     if (stale()) return;
-    this.useTracks(legTracks(this.trackCtx, infos, (i) => this.showSchedule(i), "for this leg's stops"));
+    this.useTracks(legTracks(this.trackCtx, infos, () => this.reviewJourney(), infos.length > 1 ? "for the journey so far" : "for this trip's stops", legsKey(infos.length)));
     document.title = `Connections from ${s.wholeCity ? net.cities[last.to]!.name : stationName(net, last.arrStation)} – EuroTrainBusMap`;
     this.panel.show({ kind: "connections", legs: infos, conns, hidden, windowMin: CONNECTION_WINDOW_MIN, wholeCity: !!s.wholeCity });
     this.frame(
@@ -716,7 +718,19 @@ export class App {
   chooseOption(leg: number, o: ChangeOption): void {
     const legs = this.state.legs;
     if (leg !== legs.length - 1 || leg < 1) return;
-    this.set({ legs: [...legs.slice(0, leg), { from: -1, trip: o.trip, date: o.serviceDate, board: o.board, alight: o.alight }], schedule: true, journey: this.state.journey });
+    const s = this.state;
+    // reviewing the journey so far: still back to the connections, now from the new arrival
+    const review = s.review ? { review: true, wholeCity: s.wholeCity } : {};
+    this.set({ legs: [...legs.slice(0, leg), { from: -1, trip: o.trip, date: o.serviceDate, board: o.board, alight: o.alight }], schedule: true, journey: s.journey, ...review });
+  }
+
+  /**
+   * The journey so far, from the connections at its end: every leg's stops and changes in one list (one leg: its
+   * trip's schedule); back returns to the connections (with their scope).
+   */
+  reviewJourney(): void {
+    const s = this.state;
+    if (s.legs.length && !s.schedule) this.set({ schedule: true, review: true, wholeCity: s.wholeCity });
   }
 
   /** Show the schedule of leg `i` (dropping the legs after it). */

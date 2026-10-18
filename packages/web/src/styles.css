@@ -651,7 +651,6 @@ h2:focus {
 /* timetable */
 .tt-list,
 .conn-list,
-.legs,
 .crumbs {
   list-style: none;
   margin: 0;
@@ -953,12 +952,41 @@ button.crumb:hover {
   display: inline-flex;
   margin: 0 1px;
 }
-.legs {
+/* the legs so far: one button (hover shows them on the map, a click opens them together) */
+button.legs {
+  display: block;
+  width: calc(100% - 28px);
   margin: 0 14px 6px;
-  padding: 8px 10px;
+  padding: 8px 10px 6px;
+  border: 1px solid transparent;
   border-radius: 12px;
   background: var(--surface-2);
+  color: inherit;
+  font: inherit;
   font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+button.legs:hover,
+.sheet-body button.legs.is-track-hl {
+  background: var(--surface-3);
+  border-color: var(--line);
+}
+button.legs:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.legs-open {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+button.legs:hover .legs-open {
+  color: var(--text);
 }
 .leg {
   display: flex;
@@ -1505,20 +1533,6 @@ button.jsched-opt:hover {
 .jsched-opt-wait {
   color: var(--muted);
   font-weight: 400;
-}
-button.leg {
-  width: calc(100% + 8px);
-  margin: 0 -4px;
-  padding: 3px 4px;
-  border: 0;
-  background: transparent;
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
-  border-radius: 8px;
-}
-button.leg:hover {
-  background: var(--surface-3);
 }
 .scope {
   display: flex;

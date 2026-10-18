@@ -125,3 +125,15 @@ export function fmtTpd(tpd: number): string {
 export function nameList(names: string[], max = 3): string {
   return names.length > max ? `${names.slice(0, max).join(", ")} +${names.length - max}` : names.join(", ");
 }
+
+/** Panel key (`data-hl`) of the first `count` legs of a journey together, the legs so far: "l:0,1,2". */
+export function legsKey(count: number): string {
+  return `l:${Array.from({ length: count }, (_, i) => i).join(",")}`;
+}
+
+/** The legs of a panel key: "l:2" one leg, "l:0,1,2" several together (null: not a key of legs `0 … count−1`). */
+export function legKeys(key: string, count: number): number[] | null {
+  if (!/^l:\d+(,\d+)*$/.test(key)) return null;
+  const ls = key.slice(2).split(",").map(Number);
+  return ls.every((i) => i < count) ? ls : null;
+}

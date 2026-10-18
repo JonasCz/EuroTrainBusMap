@@ -61,6 +61,28 @@ describe("journey steps in the URL", () => {
   });
 });
 
+describe("the journey so far opened from the connections (trip=sofar)", () => {
+  const legs = "legs=4.20261019.1.3,7.20261019.0.2";
+  it("keeps it and the connections' scope in the URL", () => {
+    const t = parseHash(net, `#from=paris&to=lyon&${legs}&trip=sofar&onward=city`);
+    expect([t.schedule, t.review, t.journey, t.wholeCity]).toEqual([true, true, undefined, true]);
+    expect(toHash(net, t)).toBe(`#from=paris&to=lyon&${legs}&trip=sofar&onward=city`);
+    // a plain trip schedule has no onward scope
+    expect(parseHash(net, `#from=paris&to=lyon&${legs}&trip=1&onward=city`).wholeCity).toBeUndefined();
+  });
+  it("opens from the connections and goes back to them with their scope; another step drops it", () => {
+    const conns = parseHash(net, `#from=paris&to=lyon&${legs}&onward=city`);
+    const so = applyPatch(conns, { schedule: true, review: true, wholeCity: conns.wholeCity });
+    expect(toHash(net, so)).toBe(`#from=paris&to=lyon&${legs}&trip=sofar&onward=city`);
+    expect(toHash(net, applyPatch(so, { schedule: undefined, wholeCity: so.wholeCity }))).toBe(`#from=paris&to=lyon&${legs}&onward=city`);
+    // a stop chosen (another alighting point): the connections from there, no review left
+    const stop = applyPatch(so, { legs: conns.legs.slice(0, 1), schedule: undefined });
+    expect([stop.review, stop.wholeCity, stop.schedule]).toEqual([undefined, undefined, undefined]);
+    // the plain schedule (back from the connections) keeps no review
+    expect(applyPatch(conns, { schedule: true }).review).toBeUndefined();
+  });
+});
+
 describe("journeys joined end to end in the URL", () => {
   const legs = "legs=4.20261019.1.3,7.20261019.0.2,9.20261019.0.5";
   it("keeps the continuation target and where the joined journeys end", () => {
