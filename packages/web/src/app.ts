@@ -6,9 +6,10 @@ import { addDays, inHorizon } from "./logic/calendar.ts";
 import { changeIn, connections, journeyCities, transferMinutes, usefulConnections, type Arrival, type Connection, type OnwardStop } from "./logic/connections.ts";
 import { localOn, sameFilters, type Filters } from "./logic/filters.ts";
 import { encodeLegs, resolveLeg, type Leg, type LegInfo } from "./logic/journey.ts";
-import { computeReach } from "./logic/reach.ts";
+import { computeReach, reachRuns } from "./logic/reach.ts";
 import { addTraffic, trafficCats, type CorridorTraffic } from "./logic/context.ts";
-import { nextServiceDates, pairCandidates, pairTraffic, serviceDates, timetable, type Departure } from "./logic/timetable.ts";
+import { nextServiceDates, pairCandidates, pairRuns, pairTraffic, serviceDates, timetable, type Departure } from "./logic/timetable.ts";
+import { journeyTracks, legTracks, pairTracks, reachTracks, type ViewTracks } from "./apptracks.ts";
 import { stationDepartures } from "./logic/stations.ts";
 import { tripSchedule, type TripSchedule } from "./logic/schedule.ts";
 import { changeOptions, journeySchedule, type ChangeOption } from "./logic/journeyschedule.ts";
@@ -82,6 +83,25 @@ export class App {
       else history.pushState(null, "", url || location.pathname);
     }
     void this.render();
+  }
+
+  // ---- hoverable tracks ----------------------------------------------------------
+
+  /** What the highlighted tracks of the shown view stand for (map hover / click, panel hover). */
+  private tracks: ViewTracks | null = null;
+
+  private useTracks(t: ViewTracks | null): void {
+    this.tracks = t;
+    this.map.setTracks(t);
+  }
+
+  /** An item of the panel list is hovered: its tracks on the map. */
+  hoverItem(key: string | null): void {
+    this.map.emphasize(key && this.tracks ? this.tracks.item(key) : null);
+  }
+
+  private get trackCtx() {
+    return { net: this.net, map: this.map, panel: this.panel };
   }
 
   // ---- actions --------------------------------------------------------------
@@ -170,6 +190,8 @@ export class App {
     this.panel.setFilters(s.filters);
     this.panel.changeBy = s.xfer.changeBy ?? "walk";
     const stale = () => tok !== this.token;
+    this.useTracks(null);
+    this.map.closePopup();
     const empty: Highlight = { emphasis: { focus: new Set(), active: false }, corridors: new Map() };
 
     if (s.city === undefined) {
@@ -226,6 +248,10 @@ export class App {
       if (stale()) return;
       const emphasis = { focus, active: true, origin, ...(originStation !== undefined ? { originStation } : {}) };
       await this.map.setHighlight({ emphasis: { ...emphasis, ...(cached ? { levels: cached.levels } : {}) }, corridors: reach.corridors, traffic: reach.traffic, ...(cached?.lines ? { xferJson: cached.lines } : {}) });
+      if (stale()) return;
+      let runs: ReturnType<typeof reachRuns> | null = null;
+      const filters = s.filters;
+      this.useTracks(reachTracks(this.trackCtx, () => (runs ??= reachRuns(cf, net.ctx, filters, originStation)), (city) => this.set({ dest: city, legs: [] })));
       // frame the origin and its most important destinations (not every bus stop)
       const top = [...reach.dests.keys()].sort((a, b) => net.cities[b]!.importance - net.cities[a]!.importance).slice(0, 25);
       // a station picked at station zoom keeps the view (the panel lists its destinations); a city fits its destinations
@@ -284,6 +310,10 @@ export class App {
         corridors,
         traffic,
       });
+      if (stale()) return;
+      let runs: ReturnType<typeof pairRuns> | null = null;
+      const filters = s.filters;
+      this.useTracks(pairTracks(this.trackCtx, () => (runs ??= pairRuns(cf, net.ctx, filters, dest, originStation, cands)), deps, (d) => this.chooseDeparture(d)));
       const fromName = originStation !== undefined ? stationName(net, originStation) : originName;
       document.title = `${fromName} → ${net.cities[dest]!.name} – EuroTrainBusMap`;
       this.panel.show({
@@ -367,6 +397,7 @@ export class App {
       for (const st of sched.stops) if (st.city >= 0) focus.add(st.city);
       await this.map.setHighlight({ emphasis: { focus: this.withCorridorEnds(focus, corridors), active: true, origin, dest: last.to }, corridors, traffic, context });
       if (stale()) return;
+      this.useTracks(legTracks(this.trackCtx, infos, infos.length > 1 ? (i) => this.showSchedule(i) : null, "for this leg's stops"));
       const tag = [last.route.name, last.number].filter(Boolean).join(" ");
       document.title = `${tag} → ${last.headsign} – EuroTrainBusMap`;
       const known = journeyCities(origin, [sched]);
@@ -398,6 +429,7 @@ export class App {
     for (const c of conns) for (const st of c.stops) focus.add(st.city);
     await this.map.setHighlight({ emphasis: { focus: this.withCorridorEnds(focus, corridors), active: true, origin, dest: last.to }, corridors, traffic, context });
     if (stale()) return;
+    this.useTracks(legTracks(this.trackCtx, infos, (i) => this.showSchedule(i), "for this leg's stops"));
     document.title = `Connections from ${s.wholeCity ? net.cities[last.to]!.name : stationName(net, last.arrStation)} – EuroTrainBusMap`;
     this.panel.show({ kind: "connections", legs: infos, conns, hidden, windowMin: CONNECTION_WINDOW_MIN, wholeCity: !!s.wholeCity });
     this.frame(
@@ -463,6 +495,7 @@ export class App {
     }
     await this.map.setHighlight({ emphasis: { focus: this.withCorridorEnds(focus, corridors), active: true, origin, dest: infos[infos.length - 1]!.to }, corridors, traffic, context, walks });
     if (stale()) return;
+    this.useTracks(legTracks(this.trackCtx, infos, (i) => this.panel.markTracks([`l:${i}`]), "to find it in the list"));
     document.title = `${net.cities[origin]!.name} → ${net.cities[infos[infos.length - 1]!.to]!.name} – EuroTrainBusMap`;
     this.panel.show({
       kind: "journey",
@@ -545,6 +578,7 @@ export class App {
     const corridors = trafficCats(traffic);
     this.panel.show({ ...base, status: "done", rows });
     await this.map.setHighlight({ emphasis: { ...emphasis, focus: this.withCorridorEnds(new Set([origin, dest]), corridors) }, corridors, traffic });
+    if (!stale()) this.useTracks(journeyTracks(this.trackCtx, rows, (route) => this.chooseJourney(route), false));
   }
 
   /**
@@ -616,6 +650,7 @@ export class App {
     for (const [c, t] of more) for (const [cat, v] of Object.entries(t)) addTraffic(traffic, [c], +cat, v ?? 0);
     const corridors = trafficCats(traffic);
     await this.map.setHighlight({ emphasis: { ...emphasis, focus: this.withCorridorEnds(focus, corridors) }, corridors, traffic, context });
+    if (!stale()) this.useTracks(journeyTracks(this.trackCtx, rows, (route) => this.chooseExtension(route), true));
   }
 
   private async journeyRow(j: Journey, fileOf: (city: number) => Promise<CityFile | null>, traffic: CorridorTraffic): Promise<JourneyRow> {
@@ -634,7 +669,7 @@ export class App {
       if (!info) ok = false;
       const corr = info ? info.corridors : this.transfers.legCorridors(jl);
       addTraffic(traffic, corr, jl.cat, 1);
-      legs.push({ raw: jl, ...(info ? { info } : {}), ...(change ? { walk: change.min, by: change.by } : {}) });
+      legs.push({ raw: jl, ...(info ? { info } : {}), ...(change ? { walk: change.min, by: change.by } : {}), corridors: [...corr] });
     }
     return { journey: j, legs, ...(ok ? { route: legs.map((l) => l.info!.leg) } : {}) };
   }

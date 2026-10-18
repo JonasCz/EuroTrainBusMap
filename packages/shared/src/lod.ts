@@ -77,6 +77,13 @@ export function catWidth(cat: number, tpd: number, snapped = true): number {
   return w * (cat === Cat.Bus ? 0.6 : 1) * (snapped ? 1 : 0.65);
 }
 
+/** Trips/day behind a line width (inverse of catWidth, approximate: widths are rounded); Infinity at the widest. */
+export function tpdFromWidth(cat: number, w: number, snapped = true): number {
+  const base = w / ((cat === Cat.Bus ? 0.6 : 1) * (snapped ? 1 : 0.65));
+  if (base >= 4.99) return Infinity;
+  return Math.max(0, Math.exp((base - 0.8) / 0.75) - 1);
+}
+
 export function haversineKm(a: [number, number], b: [number, number]): number {
   const r = Math.PI / 180;
   const h = Math.sin(((b[1] - a[1]) * r) / 2) ** 2 + Math.cos(a[1] * r) * Math.cos(b[1] * r) * Math.sin(((b[0] - a[0]) * r) / 2) ** 2;

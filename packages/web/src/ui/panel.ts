@@ -122,7 +122,7 @@ export interface XferView {
 export interface JourneyRow {
   journey: Journey;
   /** `walk`: minutes walked (or cycled, `by` "bike") between the two stations of the change before this leg */
-  legs: { raw: JourneyLeg; info?: LegInfo; walk?: number; by?: ChangeBy }[];
+  legs: { raw: JourneyLeg; info?: LegInfo; walk?: number; by?: ChangeBy; /** corridors ridden (map tracks) */ corridors?: number[] }[];
   route?: Leg[];
 }
 
@@ -143,6 +143,8 @@ export interface PanelActions {
   chooseExtension(legs: Leg[]): void;
   setTransfers(x: TransferSettings): void;
   showSchedule(leg: number): void;
+  /** An item of the list (`data-hl`: a route option, destination, departure, leg) is hovered (null: none): its tracks on the map. */
+  hoverItem(key: string | null): void;
   shiftDate(days: number): void;
   today(city: number): string;
 }
@@ -176,6 +178,7 @@ export class Panel {
     root.querySelector(".sheet-handle")!.addEventListener("click", () => this.setMode(this.mode === "peek" ? "half" : this.mode === "half" ? "full" : "peek"));
     this.buildChips();
     this.bindSearch();
+    this.bindTrackHover();
     this.setMode("peek");
   }
 
@@ -194,6 +197,49 @@ export class Panel {
   sheetHeight(): number {
     const vh = innerHeight;
     return Math.min(this.mode === "peek" ? 150 : this.mode === "half" ? vh * 0.48 : vh * 0.86, vh * 0.88);
+  }
+
+  // ---- tracks on the map ----------------------------------------------------------
+
+  private hoverKey: string | null = null;
+  private scrollTimer = 0;
+
+  /** Hovering an item with `data-hl` (mouse only) shows its tracks on the map. */
+  private bindTrackHover(): void {
+    const set = (key: string | null) => {
+      if (key === this.hoverKey) return;
+      this.hoverKey = key;
+      this.actions?.hoverItem(key);
+    };
+    this.body.addEventListener("pointerover", (e) => {
+      if (e.pointerType !== "mouse") return;
+      set((e.target as Element).closest<HTMLElement>("[data-hl]")?.dataset.hl ?? null);
+    });
+    this.body.addEventListener("pointerleave", () => set(null));
+  }
+
+  /**
+   * Mark the items whose tracks are hovered on the map (`keys`: their data-hl; null: none). With `scroll`, the
+   * first one is scrolled into view when it is outside the list (after a short pause, so passing over tracks
+   * does not jump the list around).
+   */
+  markTracks(keys: readonly string[] | null, scroll = true): void {
+    clearTimeout(this.scrollTimer);
+    for (const el of this.body.querySelectorAll(".is-track-hl")) el.classList.remove("is-track-hl");
+    this.body.classList.toggle("has-track-hl", !!keys?.length);
+    if (!keys?.length) return;
+    const want = new Set(keys);
+    const els = [...this.body.querySelectorAll<HTMLElement>("[data-hl]")].filter((el) => want.has(el.dataset.hl!));
+    for (const el of els) el.classList.add("is-track-hl");
+    // options not rendered yet (behind "more options"): the button is marked
+    if (els.length < want.size) this.body.querySelector(".jr-more")?.classList.add("is-track-hl");
+    const first = els[0];
+    // the bottom sheet lowered (phones): the list stays where it is
+    if (!scroll || !first || (this.mode === "peek" && matchMedia("(max-width: 719px)").matches)) return;
+    this.scrollTimer = window.setTimeout(() => {
+      const b = this.body.getBoundingClientRect(), r = first.getBoundingClientRect();
+      if (r.top < b.top || r.top > b.bottom - 40) first.scrollIntoView({ block: r.height > b.height * 0.6 ? "start" : "nearest", behavior: "smooth" });
+    }, 220);
   }
 
   // ---- chips ------------------------------------------------------------------
@@ -502,7 +548,7 @@ export class Panel {
       const dc = n.cities[d.city]!;
       return h(
         "li",
-        { "data-q": slugify(dc.name) },
+        { "data-q": slugify(dc.name), ...(d.via === undefined ? { "data-hl": `c:${d.city}` } : {}) },
         h(
           "button",
           { type: "button", class: `dest${d.via !== undefined ? " dest--xfer" : ""}`, onclick: () => this.actions.set({ dest: d.city, legs: [] }) },
@@ -776,7 +822,7 @@ export class Panel {
       return out;
     }
     const nowUtc = Date.now();
-    const groups = groupJourneys(v.rows, (r) => r.journey, (r) => r.legs.map((l) => (l.info ? { route: l.info.route } : {})), n.ctx.stationCity);
+    const groups = journeyGroups(v.rows, n);
     const cityName = (c: number) => n.cities[c]?.name ?? "";
     const row = (r: JourneyRow, g: JourneyGroup<JourneyRow>) => {
       const j = r.journey;
@@ -807,7 +853,7 @@ export class Panel {
       const sameEnds = g.rows.every((o) => o.journey.legs[0]!.stations[o.journey.legs[0]!.board] === depStation && o.journey.legs[o.journey.legs.length - 1]!.stations[o.journey.legs[o.journey.legs.length - 1]!.alight] === arrStation);
       return h(
         "li",
-        { class: j.depUtc < nowUtc ? "past" : "" },
+        { class: j.depUtc < nowUtc ? "past" : "", "data-hl": `j:${v.rows.indexOf(r)}` },
         h(
           "button",
           {
@@ -860,7 +906,7 @@ export class Panel {
           const sum = [dur, k ? `${k} change${k === 1 ? "" : "s"}` : "direct", g.rows.length > 1 ? `${g.rows.length} a day` : "once a day"].join(" · ");
           return h(
             "li",
-            { class: "jr-group" },
+            { class: "jr-group", "data-hl": `g:${g.key}` },
             h("div", { class: "jr-head" }, h("span", { class: "tt-line jr-legs" }, tags), h("span", { class: "jr-sum" }, sum)),
             h("ol", { class: "tt-list jr-list" }, g.rows.map((r) => row(r, g))),
           );
@@ -1079,7 +1125,7 @@ export class Panel {
           const depLocal = localDate(d.depUtc, originTz);
           return h(
             "li",
-            { class: `${past ? "past" : ""}${isNext ? " is-next" : ""}` },
+            { class: `${past ? "past" : ""}${isNext ? " is-next" : ""}`, "data-hl": routeKey(d.route) },
             h(
               "button",
               {
@@ -1205,7 +1251,7 @@ export class Panel {
         const xfer = prev ? Math.round((l.depUtc - prev.arrUtc) / 60000) : null;
         return h(
           "li",
-          null,
+          { "data-hl": `l:${i}` },
           xfer !== null
             ? h(
                 "div",
@@ -1394,6 +1440,7 @@ export class Panel {
           order: li * 10000,
         });
         el.setAttribute("style", mode);
+        el.dataset.hl = `l:${li}`;
         return el;
       };
       if (li > 0) items.push(this.changeItem(v, li - 1));
@@ -1403,7 +1450,7 @@ export class Panel {
       items.push(
         h(
           "li",
-          { class: "jsched-leg", style: mode },
+          { class: "jsched-leg", style: mode, "data-hl": `l:${li}` },
           h("span", { class: "jsched-leg-icon", "aria-hidden": "true" }, modeIcon(sc.route.cat, 16)),
           h(
             "div",
@@ -1684,6 +1731,16 @@ interface OnwardCount {
 }
 
 /** Stops ridden past between boarding and getting off: "non-stop", "1 stop", "6 stops" (stops only listed included). */
+/** Route options of a journeys list (as shown, see groupJourneys). */
+export function journeyGroups(rows: JourneyRow[], n: Net): JourneyGroup<JourneyRow>[] {
+  return groupJourneys(rows, (r) => r.journey, (r) => r.legs.map((l) => (l.info ? { route: l.info.route } : {})), n.ctx.stationCity);
+}
+
+/** `data-hl` of the departures of a route (timetable view). */
+export function routeKey(r: { cat: number; name: string }): string {
+  return `rt:${r.cat}:${r.name}`;
+}
+
 function stopsBetween(sc: TripSchedule): string {
   const k = sc.alight - sc.board - 1;
   return k <= 0 ? "non-stop" : `${k} stop${k === 1 ? "" : "s"}`;

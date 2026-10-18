@@ -164,7 +164,25 @@ function scaled(prop: string, zf: [number, number][], add = 0): Expr {
 
 const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
-export const GEOJSON_SOURCES = ["hl-xfer", "hl-ctx", "hl-casing", "hl", "hl-walk", "focus", "focus-stations"] as const;
+export const GEOJSON_SOURCES = ["hl-xfer", "hl-ctx", "hl-casing", "hl", "hl-em-casing", "hl-em", "hl-hit", "hl-walk", "focus", "focus-stations"] as const;
+
+/** Invisible, wide lines of the highlighted segments (one feature per segment, property `s`): hover / tap targets. */
+export const TRACK_HIT_LAYER = "hl-hit";
+
+/**
+ * Paint of the highlight layers while tracks are emphasised (hovered: the rest of the selection faded under
+ * them) or not: [layer, property, value].
+ */
+export function hlDimPaint(t: Theme, on: boolean): [string, string, number][] {
+  return [
+    ["hl", "line-opacity", on ? 0.28 : 1],
+    ["hl-hops", "line-opacity", on ? 0.25 : 0.75],
+    ["hl-cas", "line-opacity", on ? 0.5 : 1],
+    ["hl-ctx", "line-opacity", on ? 0.12 : t.dark ? 0.45 : 0.4],
+    ["hl-ctx-hops", "line-opacity", on ? 0.12 : t.dark ? 0.45 : 0.4],
+    ["hl-xfer", "line-opacity", on ? 0.1 : 1],
+  ];
+}
 
 /** Opacity of the lines reached with one / two changes (light, dark theme). */
 export const XFER_OPACITY: Record<number, [number, number]> = { 2: [0.5, 0.45], 3: [0.26, 0.24] };
@@ -342,6 +360,38 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
     filter: ["==", ["get", "hop"], 1],
     layout: { "line-cap": "round" },
     paint: { "line-color": catColor(t), "line-width": ["interpolate", ["linear"], ["zoom"], 3, 1.2, 10, 2.2], "line-dasharray": [2, 2], "line-opacity": 0.75 },
+  });
+  // emphasised tracks (hovered route options / services): drawn over the faded selection
+  layers.push({
+    id: "hl-em-cas",
+    type: "line",
+    source: "hl-em-casing",
+    layout: lineLayout,
+    paint: { "line-color": t.land, "line-width": scaled("t", ZF_HL, 3.4) },
+  });
+  layers.push({
+    id: "hl-em",
+    type: "line",
+    source: "hl-em",
+    filter: ["==", ["get", "hop"], 0],
+    layout: { ...lineLayout, "line-sort-key": ["get", "k"] },
+    paint: { "line-color": catColor(t), "line-width": scaled("w", ZF_HL, 0.6), "line-offset": scaled("o", ZF_HL) },
+  });
+  layers.push({
+    id: "hl-em-hops",
+    type: "line",
+    source: "hl-em",
+    filter: ["==", ["get", "hop"], 1],
+    layout: { "line-cap": "round" },
+    paint: { "line-color": catColor(t), "line-width": ["interpolate", ["linear"], ["zoom"], 3, 1.8, 10, 3], "line-dasharray": [2, 2] },
+  });
+  // hover / tap targets of the highlighted tracks: invisible, wider than the lines
+  layers.push({
+    id: TRACK_HIT_LAYER,
+    type: "line",
+    source: "hl-hit",
+    layout: { "line-join": "round", "line-cap": "round" },
+    paint: { "line-color": "#000", "line-opacity": 0, "line-width": 12 },
   });
   // walks between two stations at a change of a journey: dotted, in the text colour
   layers.push({

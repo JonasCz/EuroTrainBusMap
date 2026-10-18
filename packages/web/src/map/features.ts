@@ -200,3 +200,26 @@ export function stationData(cities: City[], stations: (Station | undefined)[], o
   }
   return { type: "FeatureCollection", features };
 }
+
+/** Hover / tap targets: one feature per segment of the highlighted corridors, `s` = segment id (not merged). */
+export function trackHitData(geo: GeoStore, corridors: Iterable<number>): FC {
+  const seen = new Set<number>();
+  const features: Feature[] = [];
+  for (const cid of corridors) {
+    const c = geo.corridors.get(cid);
+    if (!c?.segs?.length) continue;
+    for (const code of c.segs) {
+      const s = segId(code);
+      if (seen.has(s)) continue;
+      seen.add(s);
+      const g = geo.segments.get(s);
+      if (g && g.coords.length >= 2) features.push({ type: "Feature", properties: { s }, geometry: { type: "LineString", coordinates: g.coords } });
+    }
+  }
+  return { type: "FeatureCollection", features };
+}
+
+/** Segment ids a corridor is drawn on (empty when its geometry is not loaded). */
+export function corridorSegs(geo: GeoStore, corridor: number): number[] {
+  return (geo.corridors.get(corridor)?.segs ?? []).map(segId);
+}

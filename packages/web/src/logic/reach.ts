@@ -5,6 +5,7 @@
 import type { CityFile } from "@etbm/shared";
 import { addTraffic, patternTpd, prepare, stopAt, trafficCats, type CorridorTraffic, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
+import type { TrackRun } from "./tracks.ts";
 
 export interface ReachDest {
   city: number;
@@ -68,4 +69,40 @@ export function computeReach(cf: CityFile, ctx: NetCtx, f: Filters, originStatio
     if (used.size) addTraffic(traffic, used, route.cat, patternTpd(cf, ctx, pi));
   });
   return { origin: cf.city, dests, corridors: trafficCats(traffic), traffic };
+}
+
+/**
+ * The services behind a reach, one run per pattern and boarding stop: the corridors ridden from the origin and
+ * the places served (hoverable tracks, see tracks.ts). Same rules as computeReach.
+ */
+export function reachRuns(cf: CityFile, ctx: NetCtx, f: Filters, originStation?: number): TrackRun[] {
+  const prep = prepare(cf, ctx);
+  const runs: TrackRun[] = [];
+  cf.patterns.forEach((p, pi) => {
+    const route = cf.routes[p.route];
+    if (!route || !routeAllowed(route, f)) return;
+    if (!prep.tripsByPattern[pi]!.some((ti) => ctx.cal.anyDay[cf.trips[ti]![2]])) return;
+    const segs = prep.segments[pi]!;
+    let tpd = -1;
+    segs.forEach((sa, si) => {
+      if (sa.city !== cf.city || si === segs.length - 1) return;
+      let first = sa.first;
+      if (originStation !== undefined) {
+        first = stopAt(p, sa, originStation);
+        if (first < 0) return;
+      }
+      const dests: TrackRun["dests"] = [];
+      for (let sj = si + 1; sj < segs.length; sj++) {
+        const sb = segs[sj]!;
+        if (sb.city === cf.city) break;
+        dests.push({ city: sb.city, hops: sb.first - first });
+      }
+      if (!dests.length) return;
+      if (tpd < 0) tpd = patternTpd(cf, ctx, pi);
+      const corridors: number[] = [];
+      for (let k = first; k < first + dests[dests.length - 1]!.hops; k++) corridors.push(p.corridors[k] ?? -1);
+      runs.push({ route, tpd, corridors, dests });
+    });
+  });
+  return runs;
 }

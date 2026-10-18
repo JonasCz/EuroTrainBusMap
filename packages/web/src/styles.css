@@ -2006,3 +2006,70 @@ dialog::backdrop {
   cursor: default;
   opacity: 0.75;
 }
+
+/* ---- tracks hovered on the map: the route options / places / departures / legs riding them */
+.sheet-body [data-hl] {
+  transition: background-color 0.15s, opacity 0.15s;
+}
+.sheet-body .is-track-hl {
+  background: color-mix(in srgb, var(--focus) 9%, transparent);
+  box-shadow: inset 3px 0 0 var(--focus);
+  border-radius: 6px;
+}
+.sheet-body.has-track-hl .jr-group:not(.is-track-hl),
+.sheet-body.has-track-hl .tt-list:not(.jr-list) > li[data-hl]:not(.is-track-hl) {
+  opacity: 0.5;
+}
+.map-tooltip--multi {
+  white-space: normal;
+  max-width: 290px;
+  font-weight: 500;
+  padding: 6px 9px;
+  line-height: 1.35;
+}
+.map-tooltip .tip-title {
+  font-weight: 650;
+}
+.map-tooltip .tip-hint {
+  opacity: 0.7;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.trk-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  max-height: min(46vh, 380px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.trk-card .urb-title {
+  margin-bottom: 4px;
+}
+.trk-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 6px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.trk-opt:hover,
+.trk-opt:focus-visible {
+  background: color-mix(in srgb, var(--focus) 10%, transparent);
+}
+.trk-opt-name {
+  font-weight: 600;
+}
+.trk-opt-sum {
+  color: var(--muted);
+  font-size: 11.5px;
+}

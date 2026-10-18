@@ -4,8 +4,11 @@ import { TILE_LAYERS, tileSet, type TileIndex, type UrbanInfo } from "@etbm/shar
 import type * as GeoJSON from "geojson";
 import type { Net } from "../data/net.ts";
 import { sameFilters, type Filters } from "../logic/filters.ts";
-import { contextData, focusCityData, highlightData, stationData, xferData, type Emphasis } from "./features.ts";
-import { CITY_AREA_LAYER, CITY_LAYERS, FOCUS_LAYERS, STATION_LAYERS, STATION_ZOOM, cityFilter, geojsonSources, networkLayers, type LayerState } from "./layers.ts";
+import { contextData, focusCityData, highlightData, stationData, trackHitData, xferData, type Emphasis } from "./features.ts";
+import { CITY_AREA_LAYER, CITY_LAYERS, FOCUS_LAYERS, STATION_LAYERS, STATION_ZOOM, TRACK_HIT_LAYER, cityFilter, geojsonSources, hlDimPaint, networkLayers, type LayerState } from "./layers.ts";
+import { CAT_BITS, tpdFromWidth } from "@etbm/shared";
+import { CAT_LABEL } from "../logic/filters.ts";
+import { fmtTpd } from "../logic/tracks.ts";
 import { URBAN_HIT_LAYERS, URBAN_LAYER_IDS, urbanLayers, urbanSources, urbanTileKeys, type UrbanHit } from "./urban.ts";
 import { urbanPopup } from "../ui/urbanpopup.ts";
 import { ALL_CATS, DEFAULT_FILTERS, localOn } from "../logic/filters.ts";
@@ -48,6 +51,27 @@ export interface Highlight {
   walks?: [number, number][][];
 }
 
+/** Tracks emphasised on the map (hovered on the map or in the panel): their corridors over the faded selection. */
+export interface TrackFocus {
+  /** identity: the same key keeps what is drawn */
+  key: string;
+  corridors: Map<number, number>;
+  /** trips/day per corridor and category (line widths) */
+  traffic?: Map<number, Partial<Record<number, number>>>;
+  /** tooltip lines (map hover); the first one bold */
+  tip?: string[];
+  /** a click / second tap does something (pointer cursor) */
+  clickable?: boolean;
+}
+
+/** What the highlighted tracks of the current view mean: set by the app per view. */
+export interface TrackHandler {
+  /** The pointer is over segment `seg` (null: it left the tracks); what to emphasise, null for nothing. */
+  hover(seg: number | null): TrackFocus | null;
+  /** Segment `seg` was clicked (or tapped a second time) at `at`. */
+  click(seg: number, at: [number, number]): void;
+}
+
 const EUROPE: [[number, number], [number, number]] = [
   [-9.5, 36.5],
   [35, 59],
@@ -56,6 +80,9 @@ const EUROPE_MOBILE: [[number, number], [number, number]] = [
   [-5, 41],
   [24, 56.5],
 ];
+
+/** Distance (px) a label hit counts as (dots: the distance to their centre). */
+const LABEL_HIT = 8;
 
 const perf = (label: string, t0: number) => {
   if (import.meta.env.DEV || (window as { __etbmPerf?: boolean }).__etbmPerf) console.debug(`[perf] ${label} ${Math.round(performance.now() - t0)} ms`);
@@ -72,6 +99,15 @@ export class MapView {
   private layerIds: string[] = [];
   private hasUrban = false;
   private popup: maplibregl.Popup | null = null;
+  private tracks: TrackHandler | null = null;
+  /** key of the emphasised tracks ("" = none) */
+  private emKey = "";
+  /** segment under the pointer (map hover) */
+  private trackSeg: number | null = null;
+  /** the last press was a touch (taps: first highlights, second opens) */
+  private touch = false;
+  private hoverFrame = 0;
+  private hoverPoint: maplibregl.Point | null = null;
   private resolveNetPaint: () => void = () => undefined;
   /** URL template of the network tiles for the filters (every mode on, or a mode filter). */
   private netUrl: (f: Filters) => string;
@@ -159,12 +195,23 @@ export class MapView {
       }
     };
     this.map.on("sourcedata", onData);
+    const canvas = this.map.getCanvas();
+    canvas.addEventListener("pointerdown", (e) => (this.touch = e.pointerType === "touch"), { passive: true });
+    canvas.addEventListener("pointermove", (e) => {
+      if (e.pointerType === "mouse") this.touch = false;
+    }, { passive: true });
     this.map.on("click", (e) => {
       const hit = this.hitAt(e.point);
       if (hit) this.closePopup();
+      if (hit) this.leaveTracks();
       if (hit?.kind === "station") cb.onStation(hit.id, hit.city, hit.name);
       else if (hit) cb.onCity(hit.id);
-      else {
+      else if (this.trackClick(e.point, e.lngLat)) return;
+      else if (this.touch && this.emKey) {
+        // a tap beside the tracks first drops their emphasis (the selection stays)
+        this.leaveTracks(true);
+        this.closePopup();
+      } else {
         const u = this.urbanAt(e.point);
         if (u) this.showUrban(u, e.lngLat);
         else {
@@ -174,10 +221,23 @@ export class MapView {
       }
     });
     this.map.on("mousemove", (e) => {
-      // touch: a tap emulates a mousemove; ignore the ones that are part of a pan / pinch
-      if (!this.map.isMoving()) this.hover(e.point);
+      // touch: a tap emulates a mousemove; ignore the ones that are part of a pan / pinch; and the pointer over a popup
+      if (this.map.isMoving() || e.originalEvent.target !== canvas) return;
+      // a tap that emphasised tracks keeps its tooltip (the emulated mousemove comes with the tap)
+      if (this.touch && this.emKey) return;
+      // one hover update per frame
+      this.hoverPoint = e.point;
+      if (!this.hoverFrame)
+        this.hoverFrame = requestAnimationFrame(() => {
+          this.hoverFrame = 0;
+          if (this.hoverPoint && !(this.touch && this.emKey)) this.hover(this.hoverPoint);
+        });
     });
-    this.map.on("mouseout", () => this.clearHover());
+    this.map.on("mouseout", () => {
+      this.hoverPoint = null;
+      this.clearHover();
+      if (!this.touch) this.leaveTracks();
+    });
     // the hover tooltip is anchored to a screen point: close it whenever the map moves, and on
     // any press elsewhere (on touch screens it would otherwise stay put after a tap)
     for (const ev of ["movestart", "zoomstart", "dragstart", "touchstart"] as const) this.map.on(ev, () => this.clearHover());
@@ -251,7 +311,14 @@ export class MapView {
     return isStation(f) ? { kind: "station", id: props.id as number, city: props.city as number, name: String(props.name ?? "") } : { kind: "city", id: props.id as number };
   }
 
+  /** City / station under a point; a label (not the dot) right beside a highlighted track yields to the track. */
   private featureAt(p: maplibregl.Point): MapGeoJSONFeature | null {
+    const f = this.featureDist(p);
+    if (f && f.d >= LABEL_HIT && this.tracks && this.trackAt(p, 4) !== null) return null;
+    return f?.f ?? null;
+  }
+
+  private featureDist(p: maplibregl.Point): { f: MapGeoJSONFeature; d: number } | null {
     const r = 10;
     const feats = this.map.queryRenderedFeatures(
       [
@@ -264,7 +331,7 @@ export class MapView {
     let bestD = Infinity;
     for (const f of feats) {
       const g = f.geometry;
-      let d = r * 0.8; // label hit
+      let d = LABEL_HIT; // label hit
       if (g.type === "Point" && f.layer.type === "circle") {
         const sp = this.map.project(g.coordinates as [number, number]);
         d = Math.hypot(sp.x - p.x, sp.y - p.y) - (f.source === "focus" ? 2 : 0);
@@ -274,7 +341,7 @@ export class MapView {
         best = f;
       }
     }
-    return best;
+    return best ? { f: best, d: bestD } : null;
   }
 
   // ---- local transport ------------------------------------------------------------
@@ -317,6 +384,9 @@ export class MapView {
 
   private hover(p: maplibregl.Point): void {
     const f = this.featureAt(p);
+    // tracks: taps are handled on click (first tap highlights, second opens)
+    if (!f && !this.touch && this.trackHover(p)) return;
+    if (!this.touch) this.leaveTracks();
     if (!f) {
       const u = this.urbanAt(p);
       if (u) {
@@ -332,14 +402,177 @@ export class MapView {
     const isCity = f && !isStation(f) && f.id !== undefined;
     this.setHover(isCity ? { source: f.source, ...(f.sourceLayer ? { sourceLayer: f.sourceLayer } : {}), id: f.id as number } : null);
     this.map.getCanvas().style.cursor = f ? "pointer" : "";
-    if (f) {
-      this.tooltip.textContent = String(props.name ?? "");
-      this.tooltip.style.transform = `translate(${p.x + 14}px, ${p.y - 10}px)`;
-      this.tooltip.hidden = false;
-    } else this.tooltip.hidden = true;
+    if (f) this.showTip([String(props.name ?? "")], p);
+    else if (!this.netTip(p)) this.tooltip.hidden = true;
   }
 
-  /** Hide the tooltip and the hover highlight. */
+  private showTip(lines: string[], p: maplibregl.Point): void {
+    const multi = lines.length > 1;
+    this.tooltip.classList.toggle("map-tooltip--multi", multi);
+    this.tooltip.replaceChildren(...lines.map((l, i) => {
+      const d = document.createElement(multi ? "div" : "span");
+      if (multi && i === 0) d.className = "tip-title";
+      else if (multi && i === lines.length - 1 && l.startsWith("Click")) d.className = "tip-hint";
+      d.textContent = l;
+      return d;
+    }));
+    this.tooltip.hidden = false;
+    // keep it on screen: left of the pointer near the right edge, above it near the bottom
+    const c = this.map.getCanvas();
+    const w = this.tooltip.offsetWidth, hh = this.tooltip.offsetHeight;
+    const x = p.x + 14 + w > c.clientWidth - 8 ? Math.max(4, p.x - 14 - w) : p.x + 14;
+    const y = p.y - 10 + hh > c.clientHeight - 8 ? Math.max(4, p.y - 10 - hh) : p.y - 10;
+    this.tooltip.style.transform = `translate(${x}px, ${y}px)`;
+  }
+
+  // ---- tracks -------------------------------------------------------------------
+
+  /** Set what the highlighted tracks of the current view do (null: not hoverable). */
+  setTracks(h: TrackHandler | null): void {
+    if (h === this.tracks) return;
+    this.leaveTracks(true);
+    this.tracks = h;
+  }
+
+  /** The highlighted segment nearest to a screen point (within `r` px), or null. */
+  trackAt(p: maplibregl.Point, r = 7): number | null {
+    if (!this.tracks || !this.map.getLayer(TRACK_HIT_LAYER)) return null;
+    const feats = this.map.queryRenderedFeatures([[p.x - r, p.y - r], [p.x + r, p.y + r]], { layers: [TRACK_HIT_LAYER] });
+    let best: number | null = null;
+    let bestD = Infinity;
+    for (const f of feats) {
+      const s = (f.properties as { s?: number }).s;
+      if (s === undefined) continue;
+      const g = f.geometry;
+      const lines = g.type === "LineString" ? [g.coordinates] : g.type === "MultiLineString" ? g.coordinates : [];
+      for (const line of lines) {
+        let prev: maplibregl.Point | null = null;
+        for (const c of line) {
+          const q = this.map.project(c as [number, number]);
+          if (prev) {
+            const d = distToSegment(p, prev, q);
+            if (d < bestD) {
+              bestD = d;
+              best = s;
+            }
+          }
+          prev = q;
+        }
+      }
+    }
+    return bestD <= r * 1.5 ? best : null;
+  }
+
+  /** Map hover over the tracks: emphasis, tooltip, cursor. False when the pointer is not over a hoverable track. */
+  private trackHover(p: maplibregl.Point): boolean {
+    const seg = this.trackAt(p);
+    if (seg === null) return false;
+    const f = seg === this.trackSeg && this.emKey ? null : this.tracks!.hover(seg);
+    if (seg !== this.trackSeg || !this.emKey) {
+      this.trackSeg = seg;
+      if (!f) {
+        this.emphasize(null);
+        return false;
+      }
+      this.emphasize(f);
+      this.trackTip = f.tip ?? [];
+      this.trackClickable = !!f.clickable;
+    }
+    this.setHover(null);
+    this.map.getCanvas().style.cursor = this.trackClickable ? "pointer" : "";
+    // no tooltip over an open card (it lists the options already)
+    if (this.trackTip.length && !this.popup) this.showTip(this.trackTip, p);
+    else this.tooltip.hidden = true;
+    return true;
+  }
+  private trackTip: string[] = [];
+  private trackClickable = false;
+
+  /** A click on the tracks; true when handled. Touch: the first tap highlights (like a hover), the next one opens. */
+  private trackClick(p: maplibregl.Point, at: maplibregl.LngLat): boolean {
+    const seg = this.trackAt(p, this.touch ? 14 : 7);
+    if (seg === null || !this.tracks) return false;
+    if (this.touch) {
+      const f = this.tracks.hover(seg);
+      if (!f) return false;
+      if (f.key !== this.emKey) {
+        this.closePopup();
+        this.trackSeg = seg;
+        this.emphasize(f);
+        this.trackTip = f.tip ?? [];
+        this.trackClickable = !!f.clickable;
+        if (this.trackTip.length) this.showTip(this.trackTip.map((l) => l.replace(/^Click/, "Tap again")), p);
+        return true;
+      }
+      this.tooltip.hidden = true;
+    } else if (!this.emKey) return false;
+    this.tooltip.hidden = true;
+    this.tracks.click(seg, [at.lng, at.lat]);
+    return true;
+  }
+
+  /** The pointer left the tracks: no emphasis (unless it comes from the panel: nothing hovered on the map). */
+  private leaveTracks(force = false): void {
+    if (this.trackSeg === null && !(force && this.emKey)) return;
+    this.trackSeg = null;
+    this.tracks?.hover(null);
+    this.emphasize(null);
+  }
+
+  /**
+   * Emphasise some of the highlighted tracks (a route option hovered on the map or in the panel): drawn over the
+   * rest of the selection, which fades. Null: back to the plain selection.
+   */
+  emphasize(f: TrackFocus | null): void {
+    const key = f?.key ?? "";
+    if (key === this.emKey) return;
+    const was = !!this.emKey;
+    this.emKey = key;
+    const net = this.net;
+    if (!this.map.getLayer("hl-em") || !net) return;
+    if (f) {
+      const d = highlightData(net.geo, f.corridors, f.traffic);
+      this.setData("hl-em-casing", d.casing);
+      this.setData("hl-em", d.lines);
+    } else {
+      const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+      this.setData("hl-em-casing", empty);
+      this.setData("hl-em", empty);
+    }
+    if (was !== !!f) for (const [id, k, v] of hlDimPaint(this.theme, !!f)) if (this.map.getLayer(id)) this.map.setPaintProperty(id, k, v);
+  }
+
+  /** A small card on the map (e.g. the route options of a track to pick from). */
+  showCard(el: HTMLElement, at: [number, number]): void {
+    this.closePopup();
+    this.popup = new maplibregl.Popup({ closeButton: true, closeOnClick: false, maxWidth: "300px", className: "urb-popup trk-popup", offset: 8 }).setLngLat(at).setDOMContent(el).addTo(this.map);
+    this.popup.on("close", () => (this.popup = null));
+  }
+
+  /**
+   * Default map (no selection), zoomed in: the modes and trips/day of the line under the pointer, from the tile
+   * properties (no brands: those would need the timetable shards).
+   */
+  private netTip(p: maplibregl.Point): boolean {
+    if (this.state.dimmed || this.map.getZoom() < 6) return false;
+    const layers = this.layerIds.filter((id) => id.startsWith("net-") && id !== "net-cas" && this.map.getLayer(id));
+    const r = 3;
+    const feats = this.map.queryRenderedFeatures([[p.x - r, p.y - r], [p.x + r, p.y + r]], { layers });
+    const f = feats[0];
+    if (!f) return false;
+    const props = f.properties as Record<string, number>;
+    const cats = CAT_BITS.filter((k) => props[`w${k}`] !== undefined && this.state.filters.cats & k);
+    if (!cats.length) return false;
+    // trips/day per mode from the line widths (the tiles carry no counts or route names)
+    const lines = cats.map((k) => {
+      const t = tpdFromWidth(k, props[`w${k}`]!, props.u !== 1);
+      return `${CAT_LABEL[k] ?? ""} · ${t === Infinity ? "very busy" : `about ${fmtTpd(t)}`}`;
+    });
+    this.showTip(lines.length > 1 ? ["Lines here", ...lines] : lines, p);
+    return true;
+  }
+
+  /** Hide the tooltip and the hover highlight (a track emphasis stays: see leaveTracks). */
   private clearHover(): void {
     this.tooltip.hidden = true;
     this.setHover(null);
@@ -394,6 +627,7 @@ export class MapView {
     this.setData("hl-ctx", contextData(net.geo, h.context ?? new Map()));
     this.setData("hl-casing", d.casing);
     this.setData("hl", d.lines);
+    this.setData("hl-hit", trackHitData(net.geo, h.corridors.keys()));
     this.setData("hl-walk", { type: "FeatureCollection", features: (h.walks ?? []).map((coordinates) => ({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates } })) });
     this.setData("focus", focusCityData(net.cities, em));
     const sel = new Set([em.origin, em.dest].filter((x): x is number => x !== undefined));
@@ -462,6 +696,13 @@ export class MapView {
     const c = this.net?.cities[id];
     if (c) this.map.flyTo({ center: [c.lon, c.lat], zoom: zoom ?? Math.max(this.map.getZoom(), 6) });
   }
+}
+
+function distToSegment(p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2)) : 0;
+  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
 }
 
 function isStation(f: MapGeoJSONFeature): boolean {

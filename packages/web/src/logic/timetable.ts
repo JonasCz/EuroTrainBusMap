@@ -7,6 +7,7 @@ import { ServiceDays, mergeRows, serviceKey } from "./merge.ts";
 import { addTraffic, bestStop, patternTpd, prepare, stopAt, trafficCats, type CorridorTraffic, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
 import { localDate, serviceTimeToUtc } from "./tz.ts";
+import type { TrackRun } from "./tracks.ts";
 
 export interface StopTime {
   stop: number;
@@ -205,3 +206,14 @@ export function nextServiceDates(cf: CityFile, ctx: NetCtx, f: Filters, dest: nu
 }
 
 export { inHorizon };
+
+/** The services of a pair as hoverable tracks (see tracks.ts): one run per pattern, ending at `dest`. */
+export function pairRuns(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, originStation?: number, cands = pairCandidates(cf, ctx, f, dest, originStation)): TrackRun[] {
+  const prep = prepare(cf, ctx);
+  const runs: TrackRun[] = [];
+  for (const c of cands) {
+    if (!prep.tripsByPattern[c.pattern]!.some((ti) => ctx.cal.anyDay[cf.trips[ti]![2]])) continue;
+    runs.push({ route: cf.routes[cf.patterns[c.pattern]!.route]!, tpd: patternTpd(cf, ctx, c.pattern), corridors: c.span, dests: [{ city: dest, hops: c.span.length }] });
+  }
+  return runs;
+}
