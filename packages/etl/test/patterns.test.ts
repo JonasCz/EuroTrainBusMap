@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Cat } from "@etbm/shared";
+import { Cat, StopLimit } from "@etbm/shared";
 import { PatternStore, localizeStart, processTripStops, repairTimes } from "../src/core/patterns.ts";
 import { resolveDuplicates, type DupTrip } from "../src/core/dedup.ts";
 import { sliceShape } from "../src/core/shapes.ts";
@@ -198,5 +198,65 @@ describe("repairTimes (zero-duration hops between distant stations)", () => {
       { ...base, cat: Cat.LongDistance, stationPos },
     )!;
     expect(t.arr[3]! - t.dep[2]!).toBeGreaterThan(30);
+  });
+});
+
+describe("stop restrictions (pickup / drop-off type 1)", () => {
+  const { NoBoarding: NB, NoAlighting: NA } = StopLimit;
+  it("keeps the restrictions of pattern stops, not the meaningless ones at the ends", () => {
+    const t = processTripStops(
+      [
+        { station: 1, city: 1, arr: 0, dep: 0, pd: NA }, // first stop: no drop off (meaningless)
+        { station: 2, city: 2, arr: 60, dep: 62, pd: NB },
+        { station: 3, city: 3, arr: 120, dep: 122, pd: NA },
+        { station: 4, city: 4, arr: 180, dep: 180, pd: NB }, // last stop: no pickup (meaningless)
+      ],
+      { ...base, cat: Cat.LongDistance },
+    )!;
+    expect(t.limits).toEqual([1, NB, 2, NA]);
+    expect(processTripStops([{ station: 1, city: 1, arr: 0, dep: 0, pd: NA }, { station: 2, city: 2, arr: 9, dep: 9, pd: NB }], { ...base, cat: Cat.Regional })!.limits).toEqual([]);
+  });
+  it("a stop standing for several allows what one of them allows (through-run joint, small town)", () => {
+    // a through run joined at station 2: the first piece ends there (no pickup), the second starts there (no drop off)
+    const t = processTripStops(
+      [
+        { station: 1, city: 1, arr: 0, dep: 0 },
+        { station: 2, city: 2, arr: 60, dep: 60, pd: NB },
+        { station: 2, city: 2, arr: 65, dep: 65, pd: NA },
+        { station: 3, city: 3, arr: 120, dep: 120 },
+      ],
+      { ...base, cat: Cat.Regional },
+    )!;
+    expect(t.stations).toEqual([1, 2, 3]);
+    expect(t.limits).toEqual([]);
+    // bus: two stops in a small town, one drop-off only, the other both: the town's stop allows both
+    const b = processTripStops(
+      [
+        { station: 1, city: 1, arr: 0, dep: 0 },
+        { station: 5, city: 2, arr: 20, dep: 20, pd: NB },
+        { station: 6, city: 2, arr: 22, dep: 22 },
+        { station: 7, city: 3, arr: 40, dep: 40 },
+      ],
+      { ...base, cat: Cat.Bus, cityPop: () => 5000 },
+    )!;
+    expect(b.stations).toEqual([1, 6, 7]);
+    expect(b.limits).toEqual([]);
+    const both = processTripStops(
+      [
+        { station: 1, city: 1, arr: 0, dep: 0 },
+        { station: 5, city: 2, arr: 20, dep: 20, pd: NB },
+        { station: 6, city: 2, arr: 22, dep: 22, pd: NB },
+        { station: 7, city: 3, arr: 40, dep: 40 },
+      ],
+      { ...base, cat: Cat.Bus, cityPop: () => 5000 },
+    )!;
+    expect(both.limits).toEqual([1, NB]);
+  });
+  it("patterns that differ only in restrictions stay apart", () => {
+    const s = new PatternStore();
+    const p = { route: 0, stations: [1, 2, 3], cities: [1, 2, 3], arr: [0, 10, 20], dep: [0, 11, 20], headsign: "x", tz: 0, shapeTrip: -1 };
+    expect(s.add({ ...p })).toBe(0);
+    expect(s.add({ ...p, limits: [1, NB] })).toBe(1);
+    expect(s.add({ ...p, limits: [1, NB] })).toBe(1);
   });
 });

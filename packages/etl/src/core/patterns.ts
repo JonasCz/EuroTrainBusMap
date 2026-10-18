@@ -1,4 +1,4 @@
-import { Cat } from "@etbm/shared";
+import { Cat, StopLimit } from "@etbm/shared";
 
 export interface RawStop {
   station: number;
@@ -7,6 +7,8 @@ export interface RawStop {
   dep: number;
   /** The station the vehicle really stops at, when `station` stands for it (a town's main bus stop); default `station`. */
   real?: number;
+  /** Boarding / alighting restrictions at this stop (StopLimit bits; GTFS pickup_type / drop_off_type 1). */
+  pd?: number;
 }
 
 export interface TripShape {
@@ -23,6 +25,8 @@ export interface TripShape {
   via: number[];
   /** Pattern stops served at another station than `stations[k]` (the real stop behind a town's main stop): flat pairs [k, station]. */
   at: number[];
+  /** Restricted pattern stops (Pattern.limits): flat pairs [k, StopLimit bits]. */
+  limits: number[];
 }
 
 export interface ProcessOptions {
@@ -103,6 +107,9 @@ export function repairTimes(arr: number[], dep: number[], pos: [number, number][
  *    cities and towns with rail keep only the entry/exit stops of the run,
  *  - collapse consecutive stops at the same station (arr of first, dep of last),
  *  - require ≥ 2 distinct cities.
+ * Boarding / alighting restrictions (RawStop.pd): a stop standing for several (a town's main stop, one station
+ * called twice, the joint of a through run) allows boarding / alighting when one of them does; the first stop's
+ * alighting and the last stop's boarding restriction say nothing and are dropped.
  * The stops left out stay in the result as `via` (with their times) so the trip's schedule can list every stop.
  * Returns null if the trip should be dropped.
  */
@@ -134,7 +141,9 @@ export function processTripStops(input: RawStop[], o: ProcessOptions): TripShape
         const w = (k: number) => (stops[k]!.real === undefined ? Infinity : o.stationWeight(stops[k]!.real!));
         let best = top;
         for (let k = i; k <= j; k++) if (stops[k]!.station === station && w(k) > w(best)) best = k;
-        out.push(stops[best]!);
+        let pd = stops[best]!.pd ?? 0;
+        for (let k = i; k <= j && pd; k++) pd &= stops[k]!.pd ?? 0;
+        out.push(pd === (stops[best]!.pd ?? 0) ? stops[best]! : { ...stops[best]!, pd });
       } else {
         // big city / city with rail: keep where the bus enters and leaves the city
         out.push(stops[i]!);
@@ -148,8 +157,10 @@ export function processTripStops(input: RawStop[], o: ProcessOptions): TripShape
   const st: typeof stops = [];
   for (const s of stops) {
     const prev = st[st.length - 1];
-    if (prev && prev.station === s.station) prev.dep = Math.max(prev.dep, s.dep);
-    else st.push({ ...s });
+    if (prev && prev.station === s.station) {
+      prev.dep = Math.max(prev.dep, s.dep);
+      prev.pd = (prev.pd ?? 0) & (s.pd ?? 0);
+    } else st.push({ ...s });
   }
   if (st.length < 2) return null;
   const distinct = new Set(st.map((s) => s.city));
@@ -171,7 +182,14 @@ export function processTripStops(input: RawStop[], o: ProcessOptions): TripShape
   }
   arr[0] = 0;
   const { via, at } = fullStops(input, st.map((s) => s.i), st.map((s) => s.station), arr, dep, start);
-  return { stations: st.map((s) => s.station), cities: st.map((s) => s.city), arr, dep, start, via, at };
+  const limits: number[] = [];
+  st.forEach((s, k) => {
+    let b = s.pd ?? 0;
+    if (k === 0) b &= ~StopLimit.NoAlighting;
+    if (k === st.length - 1) b &= ~StopLimit.NoBoarding;
+    if (b) limits.push(k, b);
+  });
+  return { stations: st.map((s) => s.station), cities: st.map((s) => s.city), arr, dep, start, via, at, limits };
 }
 
 /**
@@ -239,14 +257,16 @@ export interface PatternRec {
   /** Left-out stops and real stops of the run (TripShape.via / at); part of the pattern's identity. */
   via?: number[];
   at?: number[];
+  /** Restricted stops (TripShape.limits); part of the pattern's identity. */
+  limits?: number[];
 }
 
-/** Dedups patterns by (route, stations, offsets, headsign, tz, left-out stops). */
+/** Dedups patterns by (route, stations, offsets, headsign, tz, left-out stops, restrictions). */
 export class PatternStore {
   readonly patterns: PatternRec[] = [];
   private index = new Map<number, number[]>();
   add(p: PatternRec): number {
-    const k = `${p.route}|${p.tz}|${p.headsign}|${p.stations.join(",")}|${p.arr.join(",")}|${p.dep.join(",")}|${(p.via ?? []).join(",")}|${(p.at ?? []).join(",")}`;
+    const k = `${p.route}|${p.tz}|${p.headsign}|${p.stations.join(",")}|${p.arr.join(",")}|${p.dep.join(",")}|${(p.via ?? []).join(",")}|${(p.at ?? []).join(",")}|${(p.limits ?? []).join(",")}`;
     const h = hashKey(k);
     const cands = this.index.get(h);
     if (cands) {
@@ -254,7 +274,7 @@ export class PatternStore {
         const q = this.patterns[i]!;
         if (
           q.route === p.route && q.tz === p.tz && q.headsign === p.headsign && eq(q.stations, p.stations) && eq(q.arr, p.arr) && eq(q.dep, p.dep) &&
-          eq(q.via ?? [], p.via ?? []) && eq(q.at ?? [], p.at ?? [])
+          eq(q.via ?? [], p.via ?? []) && eq(q.at ?? [], p.at ?? []) && eq(q.limits ?? [], p.limits ?? [])
         ) {
           if (q.shapeTrip < 0 && p.shapeTrip >= 0) {
             q.shapeTrip = p.shapeTrip;

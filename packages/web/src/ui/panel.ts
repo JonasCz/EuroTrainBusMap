@@ -1,5 +1,5 @@
 /** Side panel (desktop) / bottom sheet (mobile): search, mode chips and content views. */
-import { CAVEAT_FLAGS, CYCLE_BUFFER_MIN, CYCLE_MAX_MIN, CYCLE_M_PER_MIN, Cat, WALK_MAX_MIN, changeOf, distanceM, walkDistanceM, walkMinutes, type ChangeBy } from "@etbm/shared";
+import { CAVEAT_FLAGS, CYCLE_BUFFER_MIN, CYCLE_MAX_MIN, CYCLE_M_PER_MIN, Cat, StopLimit, WALK_MAX_MIN, changeOf, distanceM, walkDistanceM, walkMinutes, type ChangeBy } from "@etbm/shared";
 import { cityTz, slugify, stationName, type Net } from "../data/net.ts";
 import { addDays, formatDateShort, lastDate } from "../logic/calendar.ts";
 import type { Connection, OnwardStop } from "../logic/connections.ts";
@@ -1392,6 +1392,7 @@ export class Panel {
       h("span", { class: "sched-name" }, name),
       city && !slugify(name).includes(slugify(city)) ? h("span", { class: "sched-cityname" }, city) : null,
       role ? h("span", { class: "sched-role" }, role) : null,
+      st.limit ? limitBadge(st.limit) : null,
     ];
     // a larger place with several stations: connections from all of them, offered once per city (and shown
     // once it is known to add departures)
@@ -1796,6 +1797,21 @@ function vehicleWord(cat: number): string {
 /** The notice of a leg just removed, with its undo button. */
 function undoNote(u: Undo): HTMLElement {
   return h("p", { class: "undo-note", role: "status" }, h("span", null, u.text), h("button", { type: "button", class: "link small", onclick: u.run }, "Undo"));
+}
+
+/**
+ * Label of a stop where passengers may not board or not get off (GTFS pickup / drop-off type 1; ScheduleStop.limit):
+ * "drop-off only" with an arrow down, "boarding only" with an arrow up.
+ */
+export function limitBadge(bits: number): HTMLElement {
+  const noBoard = (bits & StopLimit.NoBoarding) !== 0, noAlight = (bits & StopLimit.NoAlighting) !== 0;
+  const [mark, text, title] =
+    noBoard && noAlight
+      ? ["×", "no boarding or getting off", "The vehicle stops here, but passengers can neither get on nor get off"]
+      : noBoard
+        ? ["↓", "drop-off only", "Only for getting off: passengers cannot board here"]
+        : ["↑", "boarding only", "Only for getting on: passengers cannot get off here"];
+  return h("span", { class: "sched-limit", title, "aria-label": title }, h("span", { class: "sched-limit-mark", "aria-hidden": "true" }, mark), text);
 }
 
 /** Places from this importance (towns of ~50 000 and up) with several stations offer the onward connections from all their stations. */

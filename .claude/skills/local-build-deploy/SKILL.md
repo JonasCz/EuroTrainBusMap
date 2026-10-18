@@ -157,7 +157,7 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
 
 ## Status of checks (last run)
 
-`pnpm typecheck` passes (shared, etl, web); `pnpm test` passes (etl 181 tests, web 95 tests, ~10 s each). `wrangler whoami` works with the env token;
+`pnpm typecheck` passes (shared, etl, web); `pnpm test` passes (etl 195 tests, web 147 tests, ~10 s each). `wrangler whoami` works with the env token;
 `wrangler deploy --dry-run` succeeded on the assembled `dist/site` (1781 files). Expected harmless build warnings: a few feeds with
 "no trips within the horizon" (it-regional-bus lombardia/liguria, es-feve, navarra bus, ba-zfbih), stop-names "not found within 1500 m",
 "Berlin is missing station Berlin Ostbahnhof".
@@ -173,6 +173,9 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
   (SwiftShader makes each view take ~25 s). Do not `pkill -f` / `pgrep -f` a pattern that also appears in your own
   command line (it kills or matches the calling shell).
 
+- `--reuse-db` also reloads when `LOAD_VERSION` (`packages/etl/src/gtfs/load.ts`, part of the db-state key) changed, i.e.
+  after a change to what the loader stores (v2: stop_times `pd`, pickup / drop-off restrictions). Add `--max-age-h 100000`
+  so the reload uses the cached feed zips instead of downloading them again (~17 min load on 4 cores).
 - `node --import tsx ...` fails ("Cannot find package 'tsx'") outside `packages/etl`.
 - The workflow's cleanup step (`rm -rf work/etl.duckdb ...`) defeat `--reuse-db`; skip it locally.
 - Measured full build (147 feeds, 0 failed): download+load 742 s, cities 35 s, stations 99 s, calendars 13 s, dedup 26 s, patterns 87 s,

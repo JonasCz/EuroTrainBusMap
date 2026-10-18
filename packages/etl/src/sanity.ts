@@ -107,6 +107,13 @@ export function runSanity(inp: SanityInput): SanityResult {
         if (!ok) errors.push(`city ${id} pattern ${pi} bad schedule run ${p.run}`);
       }
       if (!p.stations.some((s) => n.stations[s]?.city === id)) errors.push(`city ${id} pattern ${pi} does not call at city`);
+      // restricted stops: [stop, bits] pairs, stops ascending within the pattern, bits 1..3
+      if (p.limits) {
+        let ok = p.limits.length > 0 && p.limits.length % 2 === 0;
+        for (let k = 0; ok && k + 1 < p.limits.length; k += 2)
+          ok = p.limits[k]! >= 0 && p.limits[k]! < p.stations.length && (k === 0 || p.limits[k]! > p.limits[k - 2]!) && p.limits[k + 1]! >= 1 && p.limits[k + 1]! <= 3;
+        if (!ok) errors.push(`city ${id} pattern ${pi} bad stop restrictions ${JSON.stringify(p.limits)}`);
+      }
     });
     if (cf.patternTz.length !== cf.patterns.length) errors.push(`city ${id} patternTz length`);
     for (const t of cf.trips) {

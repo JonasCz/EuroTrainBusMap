@@ -1,10 +1,10 @@
 /**
  * Onward connections from a city after arriving there at a given instant.
  */
-import { changeOf, type ChangeBy, type CityFile, type Route } from "@etbm/shared";
+import { canBoard, changeOf, type ChangeBy, type CityFile, type Route } from "@etbm/shared";
 import { addDays, runsOnDate } from "./calendar.ts";
 import { ServiceDays, mergeRows, serviceKey } from "./merge.ts";
-import { bestStop, prepare, type NetCtx } from "./context.ts";
+import { bestAlight, prepare, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
 import { localDate, serviceTimeToUtc } from "./tz.ts";
 import type { TripSchedule } from "./schedule.ts";
@@ -124,6 +124,8 @@ export function connections(cf: CityFile, ctx: NetCtx, f: Filters, arrival: Arri
               arrival.routeName === route.name &&
               dep >= arrival.utc &&
               dep - arrival.utc <= 120 * 60000;
+            // a stop where the vehicle takes no passengers (drop-off only) can only be stayed on board at
+            if (!through && !canBoard(p, i)) continue;
             const transfer = through ? 0 : transferMinutes(cf, arrival.station, station, arrival.changeBy);
             if (dep < arrival.utc + transfer * 60000) continue;
             if (!chosen || (through && !chosen.through) || (!chosen.through && transfer < chosen.transfer) || (transfer === chosen.transfer && dep < chosen.dep)) {
@@ -135,7 +137,8 @@ export function connections(cf: CityFile, ctx: NetCtx, f: Filters, arrival: Arri
           for (let sj = si + 1; sj < segs.length; sj++) {
             const s = segs[sj]!;
             if (s.city === cf.city) break;
-            const i = bestStop(p, s, ctx);
+            const i = bestAlight(p, s, ctx);
+            if (i < 0) continue; // passes through: no getting off there
             stops.push({
               stop: i,
               city: s.city,

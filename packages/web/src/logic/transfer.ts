@@ -18,7 +18,7 @@
  * The search is resumable round by round, so the caller can load the chunks of the cities where the next
  * round changes (`boardCities`) before running it.
  */
-import { Grow, changeMinutes, type ChangeBy, type TtChunk } from "@etbm/shared";
+import { Grow, StopLimit, changeMinutes, type ChangeBy, type TtChunk } from "@etbm/shared";
 import { addDays, dayNumber, runsOnDay, type CalIndex } from "./calendar.ts";
 import { serviceTimeToUtc, wallToUtc } from "./tz.ts";
 
@@ -96,7 +96,7 @@ export class TtStore {
     return { c: this.chunks[this.refChunk.a[r]!]!, p: this.refP.a[r]!, tripBase: this.refTripBase.a[r]! };
   }
 
-  /** Boarding entries (pattern ref, stop index; never a pattern's last stop) per station. */
+  /** Boarding entries (pattern ref, stop index; never a pattern's last stop nor a stop without boarding) per station. */
   boardings(): { start: Int32Array; ref: Int32Array; stop: Int32Array } {
     if (this.board) return this.board;
     const n = this.nStations;
@@ -106,7 +106,7 @@ export class TtStore {
       const c = this.chunks[this.refChunk.a[r]!]!, p = this.refP.a[r]!;
       for (let k = c.pStop[p]!; k < c.pStop[p + 1]! - 1; k++) {
         const s = c.stStation[k]!;
-        if (s >= 0 && s < n) count[s + 1]!++;
+        if (s >= 0 && s < n && !(c.stLimit[k]! & StopLimit.NoBoarding)) count[s + 1]!++;
       }
     }
     for (let s = 0; s < n; s++) count[s + 1]! += count[s]!;
@@ -117,7 +117,7 @@ export class TtStore {
       const k0 = c.pStop[p]!;
       for (let k = k0; k < c.pStop[p + 1]! - 1; k++) {
         const s = c.stStation[k]!;
-        if (s < 0 || s >= n) continue;
+        if (s < 0 || s >= n || c.stLimit[k]! & StopLimit.NoBoarding) continue;
         const at = count[s]!++;
         ref[at] = r;
         stop[at] = k - k0;
@@ -166,6 +166,8 @@ export interface JourneyLeg {
   stations: number[];
   arr: number[];
   dep: number[];
+  /** restricted stops as in Pattern.limits (flat pairs [stop index, StopLimit bits]) */
+  limits?: number[];
   cat: number;
   /** brand of the service (routeBrand, e.g. "TGV INOUI", "TER"; "" without brands in the data) */
   brand: string;
@@ -519,6 +521,8 @@ export class TransferSearch {
             cur = b;
           }
         }
+        // the vehicle passes a stop without alighting: no arrival there
+        if (c.stLimit[k0 + j]! & StopLimit.NoAlighting) continue;
         const sb = c.stStation[k0 + j]!;
         const city = sc[sb]!;
         if (city === P.origin || city < 0) continue;
@@ -845,6 +849,7 @@ export class TransferSearch {
               aB[a] = b;
             }
           }
+          if (c.stLimit[k0 + j]! & StopLimit.NoAlighting) continue;
           const sb = c.stStation[k0 + j]!;
           if (!ok(r, cityOf(sb))) continue;
           const time = base + c.stArr[k0 + j]!;
@@ -950,6 +955,7 @@ export class TransferSearch {
       stations: Array.from(c.stStation.subarray(k0, k1)),
       arr: Array.from(c.stArr.subarray(k0, k1)),
       dep: Array.from(c.stDep.subarray(k0, k1)),
+      limits: limitPairs(c.stLimit, k0, k1),
       cat: c.pCat[p]!,
       brand: this.net.brands?.[c.pBrand[p]!] ?? "",
       start: c.trStart[t]!,
@@ -1103,4 +1109,11 @@ function upperBound(a: Int32Array, x: number): number {
     else hi = m;
   }
   return lo;
+}
+
+/** Restricted stops k0 … k1 − 1 of a chunk as Pattern.limits pairs. */
+function limitPairs(lim: Uint8Array, k0: number, k1: number): number[] {
+  const out: number[] = [];
+  for (let k = k0; k < k1; k++) if (lim[k]) out.push(k - k0, lim[k]!);
+  return out;
 }

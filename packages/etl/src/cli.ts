@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Db } from "./db.ts";
 import { downloadWithFallback, fetchText, mapLimit } from "./download.ts";
 import { loadFeedsConfig, resolveFeeds, type ResolvedFeed, type Tier } from "./feeds.ts";
-import { initSchema, loadFeed, type FeedLoadStats } from "./gtfs/load.ts";
+import { LOAD_VERSION, initSchema, loadFeed, type FeedLoadStats } from "./gtfs/load.ts";
 import { runBuild } from "./build.ts";
 import { todayIn } from "./core/time.ts";
 import { StageTimer, log, warn } from "./util/log.ts";
@@ -101,7 +101,7 @@ async function main() {
   const failed: string[] = [];
   const stateFile = join(args.work, "db-state.json");
   const cfgText = await readFile(join(here, "..", "feeds.json"), "utf8");
-  const stateKey = JSON.stringify({ feeds: feeds.map((f) => f.key), start: args.startDate, days: args.days, tiers: args.tiers, cfgLen: cfgText.length, cfgHash: cfgText.split("").reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7) });
+  const stateKey = JSON.stringify({ feeds: feeds.map((f) => f.key), start: args.startDate, days: args.days, tiers: args.tiers, load: LOAD_VERSION, cfgLen: cfgText.length, cfgHash: cfgText.split("").reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7) });
   let reuse = false;
   if (args.reuseDb && existsSync(dbPath) && existsSync(stateFile)) {
     const st = JSON.parse(await readFile(stateFile, "utf8"));

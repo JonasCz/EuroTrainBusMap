@@ -4,7 +4,7 @@
  * regional chunks (regional rail + bus by area) – for the web app's search of connections with changes.
  */
 import { gzipSync } from "node:zlib";
-import { Cat, TT_ALPHABET, TT_VERSION, encodeTtChunk, routeBrand, encodeTtLines, segId, type City, type CityFile, type Segment, type TtIndex, type TtLinesIn, type TtPatternIn } from "@etbm/shared";
+import { Cat, canBoard, TT_ALPHABET, TT_VERSION, encodeTtChunk, routeBrand, encodeTtLines, segId, type City, type CityFile, type Segment, type TtIndex, type TtLinesIn, type TtPatternIn } from "@etbm/shared";
 import { simplifyLine } from "./util/geo.ts";
 
 /** Geometry tolerance of the lines drawn for connections with changes (thin, faded lines). */
@@ -35,10 +35,11 @@ export class TransferCollector {
       const bn = route && cat !== Cat.Bus ? routeBrand(route.name, route.agency, cat) : "";
       let brand = this.brands.get(bn);
       if (brand === undefined) this.brands.set(bn, (brand = this.brands.size));
-      const key = `${cat}|${tz}|${brand}|${p.stations.join(",")}|${p.arr.join(",")}|${p.dep.join(",")}`;
+      const key = `${cat}|${tz}|${brand}|${p.stations.join(",")}|${p.arr.join(",")}|${p.dep.join(",")}|${(p.limits ?? []).join(",")}`;
       let e = this.byKey.get(key);
       if (!e) {
         e = { id: this.list.length, cat, tz, brand, stations: p.stations, arr: p.arr, dep: p.dep, trips: [], corridors: p.corridors, tripKeys: new Set() };
+        if (p.limits) e.limits = p.limits;
         this.byKey.set(key, e);
         this.list.push(e);
       }
@@ -171,10 +172,11 @@ export class TransferCollector {
   }
 }
 
-/** Cities where a pattern can be boarded (every stop but the last). */
+/** Cities where a pattern can be boarded (every stop but the last, unless boarding is not allowed there). */
 function boardingCities(p: TtPatternIn, stationCity: Map<number, number>): Set<number> {
   const out = new Set<number>();
   for (let i = 0; i < p.stations.length - 1; i++) {
+    if (!canBoard(p, i)) continue;
     const c = stationCity.get(p.stations[i]!);
     if (c !== undefined) out.add(c);
   }

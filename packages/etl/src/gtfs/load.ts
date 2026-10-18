@@ -8,7 +8,11 @@ import type { FeedsConfig, ResolvedFeed } from "../feeds.ts";
 import { classifyRoute, REPLACEMENT_HEADSIGN_RE, type ClassifyContext } from "../core/classify.ts";
 import { sqlGtfsTime, isUtcLike, validTz } from "../core/time.ts";
 import { log, warn } from "../util/log.ts";
+import { StopLimit } from "@etbm/shared";
 import { BBOX } from "../geonames.ts";
+
+/** Version of what the loader stores: part of the --reuse-db key, so a database loaded by an older loader is reloaded. */
+export const LOAD_VERSION = 3;
 
 export interface LoadContext {
   db: Db;
@@ -41,12 +45,14 @@ export async function initSchema(db: Db): Promise<void> {
       route_short VARCHAR, route_long VARCHAR, color VARCHAR, tz VARCHAR, route_type INTEGER, route_id VARCHAR, pname VARCHAR);
     CREATE TABLE IF NOT EXISTS trips(trip_key INTEGER, feed INTEGER, rc INTEGER, service_key INTEGER, headsign VARCHAR,
       short_name VARCHAR, shape_key INTEGER, has_freq BOOLEAN);
-    CREATE TABLE IF NOT EXISTS stop_times(trip_key INTEGER, seq INTEGER, stop_key INTEGER, arr SMALLINT, dep SMALLINT, dist FLOAT);
+    CREATE TABLE IF NOT EXISTS stop_times(trip_key INTEGER, seq INTEGER, stop_key INTEGER, arr SMALLINT, dep SMALLINT, dist FLOAT, pd UTINYINT);
     CREATE TABLE IF NOT EXISTS stops(stop_key INTEGER, feed INTEGER, stop_id VARCHAR, name VARCHAR, lat DOUBLE, lon DOUBLE,
       parent_key INTEGER, tz VARCHAR, loc_type INTEGER);
     CREATE TABLE IF NOT EXISTS service_days(service_key INTEGER, day SMALLINT);
     CREATE TABLE IF NOT EXISTS frequencies(trip_key INTEGER, start_min SMALLINT, end_min SMALLINT, headway_s INTEGER);
     CREATE TABLE IF NOT EXISTS shapes(shape_key INTEGER, seq INTEGER, lat DOUBLE, lon DOUBLE, dist DOUBLE);
+    CREATE TABLE IF NOT EXISTS limit_hints(htrip INTEGER, feed INTEGER, num VARCHAR, tz VARCHAR, rn INTEGER, n INTEGER, lat DOUBLE, lon DOUBLE,
+      arr SMALLINT, dep SMALLINT, pd UTINYINT);
   `);
 }
 
@@ -196,13 +202,21 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
   const rcRows: unknown[][] = [];
   const mapRows: unknown[][] = [];
   const rcIndex = new Map<string, number>();
+  /** (route, trip prefix, tz) of the routes left to a dedicated operator's feed */
+  const shadowRows: unknown[][] = [];
   for (const r of combos) {
     if (r.route_type == null) continue;
     const ag = agencyById.get(r.agency_id) ?? onlyAgency ?? agencies[0];
     const agencyName = ag?.name ?? "";
     if (dropAg && dropAg.test(agencyName)) continue;
     if (onlyAg && !onlyAg.test(agencyName)) continue;
-    if (dedicated.some((re) => re.test(agencyName) || re.test(r.short) || re.test(r.long))) continue;
+    if (dedicated.some((re) => re.test(agencyName) || re.test(r.short) || re.test(r.long))) {
+      // left to the operator's own feed, but this copy's boarding / alighting restrictions are kept (limit_hints)
+      let tz = validTz(ag?.tz) ?? defaultTz;
+      if (isUtcLike(tz)) tz = "UTC";
+      shadowRows.push([r.route_id, r.prefix, tz]);
+      continue;
+    }
     const cl = classifyRoute(
       { routeType: r.route_type, agency: agencyName, shortName: r.short, longName: r.long, desc: r.desc, tripPrefix: r.prefix },
       cctx,
@@ -279,9 +293,14 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
   const stPath = extract(zipPath, find("stop_times.txt")!, dir);
   const sc = await columns(db, stPath);
   const distExpr = sc.has("shape_dist_traveled") ? `try_cast(${c(sc, "shape_dist_traveled")} AS FLOAT)` : "NULL::FLOAT";
+  // Boarding / alighting restrictions (StopLimit bits): only type 1 ("no pickup" / "no drop off") counts. Types 2 / 3
+  // (phone the agency / ask the driver) are ordinary stops that need a reservation or a request: the Austrian PTA feeds
+  // mark ordinary trains and buses that way, German heritage lines their request stops.
+  const pdExpr = `(CASE WHEN ${c(sc, "pickup_type", "NULL")} = '1' THEN ${StopLimit.NoBoarding} ELSE 0 END
+      | CASE WHEN ${c(sc, "drop_off_type", "NULL")} = '1' THEN ${StopLimit.NoAlighting} ELSE 0 END)::UTINYINT`;
   await db.run(`DROP TABLE IF EXISTS t_st; CREATE TEMP TABLE t_st AS
     SELECT kt.trip_key, try_cast(${c(sc, "stop_sequence")} AS INTEGER) AS seq, ${c(sc, "stop_id")} AS stop_id,
-      ${sqlGtfsTime(c(sc, "arrival_time"))} AS arr, ${sqlGtfsTime(c(sc, "departure_time"))} AS dep, ${distExpr} AS dist
+      ${sqlGtfsTime(c(sc, "arrival_time"))} AS arr, ${sqlGtfsTime(c(sc, "departure_time"))} AS dep, ${distExpr} AS dist, ${pdExpr} AS pd
     FROM ${csv(stPath)} st JOIN t_kt kt ON kt.trip_id = ${c(sc, "trip_id", "NULL::VARCHAR", "st")}`);
   await rm(stPath, { force: true });
   await db.run(`DELETE FROM t_st WHERE seq IS NULL OR stop_id IS NULL`);
@@ -303,7 +322,7 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
       SELECT trip_key, seq, stop_id,
         coalesce(arr, CASE WHEN nr > pr THEN (pt + (nt - pt) * (rn - pr) / (nr - pr))::INTEGER END) AS arr,
         coalesce(dep, CASE WHEN nr > pr THEN (pt + (nt - pt) * (rn - pr) / (nr - pr))::INTEGER END) AS dep,
-        dist
+        dist, pd
       FROM b`);
     // Trips that still have untimed stops (no timed bounds) are dropped.
     await db.run(`DELETE FROM t_st WHERE trip_key IN (SELECT trip_key FROM t_st WHERE arr IS NULL OR dep IS NULL)`);
@@ -326,6 +345,12 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
   // Drop stop_times at stops without valid coordinates.
   await db.run(`DELETE FROM t_st WHERE stop_id NOT IN (
       SELECT stop_id FROM t_stops_all WHERE lat BETWEEN ${BBOX.minLat} AND ${BBOX.maxLat} AND lon BETWEEN ${BBOX.minLon} AND ${BBOX.maxLon})`);
+
+  // ---------- restrictions of copies left to a dedicated operator's feed ----------
+  // NS publishes the Eurostar with "no boarding" at Rotterdam / Schiphol towards Amsterdam (no domestic travel), the
+  // Eurostar feed does not; the trains come from the Eurostar feed (dedicatedOperators), so the copies' stops with
+  // their restrictions are kept as hints, matched onto the operator's trips after dedup (build.ts).
+  if (shadowRows.length) await loadLimitHints(ctx, feedIdx, rf.key, zipPath, find("stop_times.txt")!, dir, shadowRows);
 
   // ---------- rail-replacement buses published as trains ----------
   // Entur (NO) runs its "buss for tog" under the train's line (route_type 100, e.g. F6 Trondheim – Oslo on a day
@@ -388,7 +413,7 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
   // ---------- insert into global tables ----------
   await db.run(`INSERT INTO trips SELECT kt.trip_key, ${feedIdx}, kt.rc, kt.service_key, kt.headsign, kt.short_name, sk.shape_key, false
     FROM t_kt kt LEFT JOIN t_shapekeys sk USING (shape_id) WHERE kt.trip_key IN (SELECT DISTINCT trip_key FROM t_st)`);
-  await db.run(`INSERT INTO stop_times SELECT st.trip_key, st.seq, k.stop_key, st.arr, st.dep, st.dist
+  await db.run(`INSERT INTO stop_times SELECT st.trip_key, st.seq, k.stop_key, st.arr, st.dep, st.dist, st.pd
     FROM t_st st JOIN t_stopkeys k USING (stop_id)`);
   await db.run(`INSERT INTO service_days SELECT s.service_key, d.day FROM t_svcdays d JOIN t_svc s USING (service_id)
     WHERE s.service_key IN (SELECT DISTINCT service_key FROM t_kt)`);
@@ -418,6 +443,54 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
       `-${stats.droppedShortBus} short bus trips, ${JSON.stringify(stats.byCat)} in ${stats.seconds}s`,
   );
   return stats;
+}
+
+
+/**
+ * Stops of the trips of routes left to a dedicated operator's feed (`shadow`: route_id, trip prefix, tz) that carry
+ * a boarding / alighting restriction at an intermediate stop, into limit_hints (all stops of such a trip, with
+ * position and times; matched onto the operator's trips in build.ts). Needs t_trips and t_stops_all.
+ */
+async function loadLimitHints(ctx: LoadContext, feedIdx: number, key: string, zipPath: string, stEntry: string, dir: string, shadow: unknown[][]): Promise<void> {
+  const { db } = ctx;
+  await db.run(`DROP TABLE IF EXISTS t_shmap`);
+  await db.insertRows(
+    "t_shmap",
+    [{ name: "route_id", type: "VARCHAR" }, { name: "prefix", type: "VARCHAR" }, { name: "tz", type: "VARCHAR" }],
+    shadow,
+    join(dir, "shmap.csv"),
+  );
+  await db.run(`UPDATE t_shmap SET prefix = coalesce(prefix, '')`);
+  await db.run(`DROP TABLE IF EXISTS t_sht; CREATE TEMP TABLE t_sht AS
+    SELECT DISTINCT ON (t.trip_id) t.trip_id, coalesce(t.short_name, '') AS num, m.tz FROM t_trips t JOIN t_shmap m ON m.route_id = t.route_id AND m.prefix = t.prefix
+    ORDER BY t.trip_id`);
+  if (!(await db.scalar(`SELECT count(*) FROM t_sht`))) return;
+  const stPath = extract(zipPath, stEntry, dir);
+  const sc = await columns(db, stPath);
+  if (!sc.has("pickup_type") && !sc.has("drop_off_type")) {
+    await rm(stPath, { force: true });
+    return;
+  }
+  const base = await nextKey(db, "limit_hints", "htrip");
+  const pdExpr = `(CASE WHEN ${c(sc, "pickup_type", "NULL")} = '1' THEN ${StopLimit.NoBoarding} ELSE 0 END
+      | CASE WHEN ${c(sc, "drop_off_type", "NULL")} = '1' THEN ${StopLimit.NoAlighting} ELSE 0 END)`;
+  await db.run(`INSERT INTO limit_hints
+    WITH s AS (
+      SELECT sh.trip_id, sh.num, sh.tz, try_cast(${c(sc, "stop_sequence")} AS INTEGER) AS seq, ${c(sc, "stop_id")} AS stop_id,
+        ${sqlGtfsTime(c(sc, "arrival_time"))} AS arr, ${sqlGtfsTime(c(sc, "departure_time"))} AS dep, ${pdExpr} AS pd
+      FROM ${csv(stPath)} st JOIN t_sht sh ON sh.trip_id = ${c(sc, "trip_id", "NULL::VARCHAR", "st")}),
+    w AS (SELECT *, row_number() OVER (PARTITION BY trip_id ORDER BY seq) AS rn, count(*) OVER (PARTITION BY trip_id) AS n
+      FROM s WHERE seq IS NOT NULL AND coalesce(dep, arr) IS NOT NULL),
+    lim AS (SELECT trip_id FROM w GROUP BY trip_id
+      HAVING bool_or(((CASE WHEN rn < n THEN pd & ${StopLimit.NoBoarding} ELSE 0 END) | (CASE WHEN rn > 1 THEN pd & ${StopLimit.NoAlighting} ELSE 0 END)) > 0))
+    SELECT ${base} + (dense_rank() OVER (ORDER BY w.trip_id) - 1)::INTEGER, ${feedIdx}, w.num, w.tz, w.rn, w.n, sa.lat, sa.lon,
+      coalesce(w.arr, w.dep), coalesce(w.dep, w.arr), w.pd::UTINYINT
+    FROM w JOIN lim USING (trip_id) JOIN t_stops_all sa USING (stop_id)
+    WHERE sa.lat IS NOT NULL AND sa.lon IS NOT NULL`);
+  await rm(stPath, { force: true });
+  const n = await db.scalar(`SELECT count(DISTINCT htrip) FROM limit_hints WHERE feed = ${feedIdx}`);
+  if (n) log(`feed ${key}: ${n} trips left to a dedicated operator's feed keep their stop restrictions as hints`);
+  await db.run(`DROP TABLE IF EXISTS t_shmap; DROP TABLE IF EXISTS t_sht;`);
 }
 
 export { existsSync };

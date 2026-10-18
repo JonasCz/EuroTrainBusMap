@@ -2,7 +2,7 @@
  * Departures per station of a city, by mode: which stations of a city can be chosen as the origin
  * under the current mode filter (the panel's station list greys out the others).
  */
-import type { CityFile } from "@etbm/shared";
+import { canBoard, type CityFile } from "@etbm/shared";
 import { serviceDayCount } from "./calendar.ts";
 import { prepare, type NetCtx } from "./context.ts";
 import { CAT_ORDER, type Filters } from "./filters.ts";
@@ -14,7 +14,7 @@ const cache = new WeakMap<CityFile, Map<number, StationDeps>>();
 
 /**
  * station id → Cat bit → departures/day of trips boarding there towards another city (the same trips
- * the reach view uses: a stop of the city's run of a pattern that continues to another city).
+ * the reach view uses: a stop of the city's run of a pattern that continues to another city, boarding allowed).
  * Unfiltered, so the caller can tell which modes serve a station; cached per city file.
  */
 export function stationDepartures(cf: CityFile, ctx: NetCtx): Map<number, StationDeps> {
@@ -35,7 +35,7 @@ export function stationDepartures(cf: CityFile, ctx: NetCtx): Map<number, Statio
       if (sa.city !== cf.city || si === segs.length - 1) return;
       for (let i = sa.first; i <= sa.last; i++) {
         const st = p.stations[i]!;
-        if (seen.has(st)) continue;
+        if (seen.has(st) || !canBoard(p, i)) continue;
         seen.add(st);
         const r = out.get(st) ?? {};
         r[route.cat] = (r[route.cat] ?? 0) + tpd;

@@ -225,7 +225,7 @@ export function matchLeg(cf: CityFile, jl: JourneyLeg, from: number): Leg | null
   const same = (a: number[], b: number[]) => a.length === b.length && a.every((x, i) => x === b[i]);
   const pats = new Set<number>();
   cf.patterns.forEach((p, i) => {
-    if (same(p.stations, jl.stations) && same(p.arr, jl.arr) && same(p.dep, jl.dep) && cf.routes[p.route]?.cat === jl.cat) pats.add(i);
+    if (same(p.stations, jl.stations) && same(p.arr, jl.arr) && same(p.dep, jl.dep) && same(p.limits ?? [], jl.limits ?? []) && cf.routes[p.route]?.cat === jl.cat) pats.add(i);
   });
   if (!pats.size) return null;
   const ti = cf.trips.findIndex((t) => pats.has(t[0]) && t[1] === jl.start && t[2] === jl.cal);

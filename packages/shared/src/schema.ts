@@ -47,6 +47,19 @@ export const Flag = {
   ReservationOnly: 4,
 } as const;
 
+/**
+ * Boarding / alighting restrictions of a pattern stop (Pattern.limits): GTFS stop_times pickup_type / drop_off_type 1
+ * ("no pickup" / "no drop off"). A ride from stop i to stop j needs boarding at i and alighting at j; the vehicle
+ * still calls (or passes) at a restricted stop. Examples: Eurostar / Nightjet / ICE stops in the Netherlands
+ * (no domestic travel), coaches with cabotage restrictions.
+ */
+export const StopLimit = {
+  /** passengers cannot board here (drop-off only) */
+  NoBoarding: 1,
+  /** passengers cannot alight here (boarding only) */
+  NoAlighting: 2,
+} as const;
+
 /** Flags that carry a booking caveat (kept on Route.flags, see bookingCaveat in the web app). */
 export const CAVEAT_FLAGS = Flag.ReservationOnly;
 
@@ -221,6 +234,11 @@ export interface Pattern {
   /** Headsign / final destination text. */
   headsign: string;
   /**
+   * Restricted stops only (absent when every stop allows boarding and alighting): flat pairs [stop index, StopLimit bits].
+   * The first stop's alighting and the last stop's boarding are never listed (meaningless). See canBoard / canAlight.
+   */
+  limits?: number[];
+  /**
    * Index of the run's full stop list in the schedule file (ScheduleFile.runs), when `stations` leaves stops out
    * (buses: stops in places too small to be a destination, the other stops of a town served by its main stop).
    */
@@ -302,6 +320,23 @@ export interface CityShardFile {
 
 export interface AttributionFile {
   sources: { name: string; license: string; url?: string; attribution?: string }[];
+}
+
+/** StopLimit bits of stop `i` of a pattern (`limits`: Pattern.limits). */
+export function stopLimit(limits: readonly number[] | undefined, i: number): number {
+  if (!limits) return 0;
+  for (let k = 0; k + 1 < limits.length; k += 2) if (limits[k] === i) return limits[k + 1]!;
+  return 0;
+}
+
+/** Whether passengers may board at stop `i` of the pattern (it continues and boarding is not restricted). */
+export function canBoard(p: { stations: readonly number[]; limits?: readonly number[] }, i: number): boolean {
+  return i < p.stations.length - 1 && !(stopLimit(p.limits, i) & StopLimit.NoBoarding);
+}
+
+/** Whether passengers may alight at stop `i` of the pattern (not the first stop, alighting not restricted). */
+export function canAlight(p: { stations: readonly number[]; limits?: readonly number[] }, i: number): boolean {
+  return i > 0 && !(stopLimit(p.limits, i) & StopLimit.NoAlighting);
 }
 
 /** Helpers shared by ETL and web. */

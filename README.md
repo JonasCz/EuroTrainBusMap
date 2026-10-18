@@ -63,10 +63,25 @@ Pipeline in short:
    with ≥ 2000 inhabitants as destinations (the trip schedule still lists every stop, see 6 and 9). Synthetic towns with a generic name (≥ 4 of them: "Road End", "Hotel", "Mairie") get the nearest place
    added ("Road End (Strathy)"). Cities never influence the drawing.
 5. **Dedup** – the same train/coach present in several feeds (DE+AT+CH+CZ…) is detected by matching
-   (city, time) sequences and kept once, with merged calendars.
+   (city, time) sequences and kept once, with merged calendars. The kept trip also takes the boarding / alighting
+   restrictions of the dropped copies, and of the copies a feed leaves to a dedicated operator's feed
+   (`dedicatedOperators`; kept by the loader as `limit_hints`): the more restrictive copy wins. The Eurostar feed lets
+   anyone ride Rotterdam → Amsterdam, NS's copy in nl-openov (no domestic travel) does not.
 6. **Patterns & trips** – station sequences with offsets, deduplicated (a bus pattern keeps the stops in places with ≥ 2000
    inhabitants, one main stop per smaller town and the entry / exit stops of a big city; the stops it leaves out are kept with
    their times as the run's full stop list, `ScheduleRun` in `packages/shared/src/schema.ts`, shown only in the trip schedule); calendars as 60-day bitmasks starting the day before the build (Berlin date), so viewers in earlier timezones stay covered.
+   Boarding / alighting restrictions: GTFS `pickup_type` / `drop_off_type` 1 ("no pickup" / "no drop off") become
+   `Pattern.limits` (restricted stops only, `StopLimit` bits). Types 2 / 3 (phone the agency / ask the driver) are
+   ordinary stops: the Austrian PTA feeds mark ordinary trains and buses with 2, NS's international trains their
+   reservation-only stops, German heritage lines their request stops. A ride from A to B needs boarding at A and
+   alighting at B; the web app applies this to the destinations, pair timetables, onward connections, the station
+   lists and the search with changes (the vehicle still passes such stops), and labels the stops in a trip's schedule
+   ("drop-off only" / "boarding only"). Typical cases: no domestic travel on Eurostar and Nightjet trains in the
+   Netherlands (from NS's copies, see 5), long-distance trains that only set down (Trenitalia at Roma Ostiense) or
+   only pick up (ICE at Berlin Südkreuz), pick-up / set-down-only stops of British and Irish coaches (National Express), express
+   buses that carry no local passengers inside a city (Norway, Sweden, Asturias). FlixBus, BlaBlaCar and European
+   Sleeper publish no restrictions. Full build: 31.7k of 412k distinct patterns have restricted stops, 8.3k of 1.1 M
+   direct city pairs disappear; the timetable shards grow by ~0.8 %, the transfer timetable by ~0.6 %.
    Invalid stop times are repaired (`repairTimes` in `core/patterns.ts`): hops of more than 3 km that take no time or would need more than 450 km/h (rail) / 160 km/h (road), as in a Milan–Paris–Lyon pattern whose Paris and Lyon calls both read 12:00, get times interpolated by distance between the surrounding valid times (extrapolated at a typical speed at the end of a trip); the UI never shows "0 min" between two cities.
 7. **Corridors** – the drawn network connects *stations*: a corridor is an undirected edge between two stations
    that are consecutive stops of a trip, between cities as well as inside one (Tipperary – Limerick Junction,

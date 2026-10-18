@@ -27,6 +27,7 @@ import {
   type Trip,
   type CatBit,
   TRANSFER_MAX_M,
+  StopLimit,
 } from "@etbm/shared";
 import type { Db } from "./db.ts";
 import type { FeedsConfig, ResolvedFeed } from "./feeds.ts";
@@ -462,6 +463,143 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     }
   log(`dedup: ${pairRows.length} candidate pairs, ${dropped.size} trips dropped as cross-feed duplicates, ${shapesAdopted} kept trips took a dropped copy's shape`);
   stats.dedupDropped = dropped.size;
+  // Boarding / alighting restrictions of the dropped copies go to the kept trip (the more restrictive copy wins): the
+  // Eurostar feed lets anyone ride Amsterdam → Rotterdam, NS's copy (nl-openov) forbids boarding in the Netherlands
+  // towards Amsterdam. A dropped copy's stop counts at the kept trip's stop in the same city at the same time (± 2 min);
+  // its first stop's alighting and last stop's boarding restrictions say nothing (a copy may cover part of the run).
+  const limitExtra = new Map<number, Map<number, number>>(); // kept trip → stop_sequence → StopLimit bits
+  if (keptFor.size) {
+    await db.run(`DROP TABLE IF EXISTS dupmap`);
+    await db.insertRows("dupmap", [{ name: "dk", type: "INTEGER" }, { name: "kk", type: "INTEGER" }], [...keptFor].map(([d, k]) => [d, k]), join(ctx.tmpDir, "dupmap.csv"));
+    const rows = await db.all<{ trip_key: number; seq: number; bits: number }>(`
+      WITH s AS (
+        SELECT st.trip_key, st.seq, m.city, (st.arr - z.off)::INTEGER AS ua, (st.dep - z.off)::INTEGER AS ud, st.pd::INTEGER AS pd,
+          row_number() OVER (PARTITION BY st.trip_key ORDER BY st.seq) AS rn, count(*) OVER (PARTITION BY st.trip_key) AS n
+        FROM stop_times st JOIN trips t USING (trip_key) JOIN rclass rc USING (rc) JOIN stop_map m USING (stop_key) JOIN tzoff z ON z.tz = rc.tz
+        WHERE st.trip_key IN (SELECT dk FROM dupmap UNION SELECT kk FROM dupmap)),
+      d AS (
+        SELECT s.city, s.ua, s.ud, dm.kk,
+          (CASE WHEN rn < n THEN pd & ${StopLimit.NoBoarding} ELSE 0 END) | (CASE WHEN rn > 1 THEN pd & ${StopLimit.NoAlighting} ELSE 0 END) AS bits
+        FROM s JOIN dupmap dm ON dm.dk = s.trip_key WHERE s.pd > 0)
+      SELECT k.trip_key, k.seq, bit_or(d.bits)::INTEGER AS bits
+      FROM d JOIN s k ON k.trip_key = d.kk AND k.city = d.city AND (abs(k.ud - d.ud) <= 2 OR abs(k.ua - d.ua) <= 2)
+      WHERE d.bits > 0 GROUP BY ALL ORDER BY ALL`);
+    let added = 0;
+    for (const r of rows) {
+      let m = limitExtra.get(r.trip_key);
+      if (!m) limitExtra.set(r.trip_key, (m = new Map()));
+      m.set(r.seq, r.bits);
+      added++;
+    }
+    await db.run(`DROP TABLE IF EXISTS dupmap`);
+    log(`dedup: ${added} stop restrictions (no boarding / no alighting) of dropped copies added to ${limitExtra.size} kept trips`);
+    stats.dedupLimitTrips = limitExtra.size;
+  }
+  // The same for the copies a feed left to a dedicated operator's feed (gtfs/load.ts, limit_hints: NS's Eurostar
+  // trains, never loaded as trips): a hint trip's stop goes to the city of the nearest station (≤ 1.5 km), and the
+  // hint applies to every kept rail / coach trip that calls at ≥ 2 of its cities at the same times (± 2 min) with the
+  // same number (when both have one; another number at ≥ 3 cities), like a duplicate.
+  {
+    const hints = await db.all<{ htrip: number; num: string; tz: string; rn: number; n: number; lat: number; lon: number; arr: number; dep: number; pd: number }>(
+      `SELECT htrip, num, tz, rn, n, lat, lon, arr, dep, pd FROM limit_hints ORDER BY htrip, rn`,
+    ).catch(() => []);
+    if (hints.length) {
+      const stIdx = new GridIndex(stations.map((x) => x.lon), stations.map((x) => x.lat), 0.05);
+      const offCache = new Map<string, number>();
+      const off = (tz: string) => {
+        let o = offCache.get(tz);
+        if (o === undefined) offCache.set(tz, (o = tz === "UTC" ? 0 : tzOffsetMinutes(tz, startDay)));
+        return o;
+      };
+      const hintNum = new Map<number, string>();
+      const rows: unknown[][] = [];
+      for (const h of hints) {
+        let best = -1, bd = 1500;
+        for (const j of stIdx.within(h.lon, h.lat, 1500)) {
+          if (stations[j]!.city < 0) continue;
+          const d = fastDist(h.lon, h.lat, stations[j]!.lon, stations[j]!.lat);
+          if (d <= bd) [best, bd] = [j, d];
+        }
+        if (best < 0) continue;
+        const bits = (h.rn < h.n ? h.pd & StopLimit.NoBoarding : 0) | (h.rn > 1 ? h.pd & StopLimit.NoAlighting : 0);
+        const o = off(h.tz);
+        rows.push([h.htrip, stations[best]!.city, h.arr - o, h.dep - o, bits]);
+        hintNum.set(h.htrip, h.num);
+      }
+      await db.run(`DROP TABLE IF EXISTS hint`);
+      await db.insertRows(
+        "hint",
+        [{ name: "htrip", type: "INTEGER" }, { name: "city", type: "INTEGER" }, { name: "ua", type: "INTEGER" }, { name: "ud", type: "INTEGER" }, { name: "bits", type: "INTEGER" }],
+        rows,
+        join(ctx.tmpDir, "hint.csv"),
+      );
+      const matches = await db.all<{ htrip: number; trip_key: number; seq: number; bits: number; nc: number }>(`
+        WITH k AS (
+          SELECT st.trip_key, st.seq, m.city, (st.arr - z.off)::INTEGER AS ua, (st.dep - z.off)::INTEGER AS ud
+          FROM stop_times st JOIN trips t USING (trip_key) JOIN rclass rc USING (rc) JOIN stop_map m USING (stop_key) JOIN tzoff z ON z.tz = rc.tz
+          WHERE rc.cls IN ('rail', 'coach') AND NOT t.has_freq AND m.city IN (SELECT DISTINCT city FROM hint)),
+        j AS (SELECT h.htrip, k.trip_key, k.seq, h.city, h.bits FROM hint h JOIN k ON k.city = h.city AND (abs(k.ud - h.ud) <= 2 OR abs(k.ua - h.ua) <= 2)),
+        mt AS (SELECT htrip, trip_key, count(DISTINCT city)::INTEGER AS nc FROM j GROUP BY ALL HAVING count(DISTINCT city) >= 2)
+        SELECT j.htrip, j.trip_key, j.seq, bit_or(j.bits)::INTEGER AS bits, any_value(mt.nc) AS nc FROM j JOIN mt USING (htrip, trip_key)
+        GROUP BY j.htrip, j.trip_key, j.seq ORDER BY ALL`);
+      await db.run(`DROP TABLE IF EXISTS hint`);
+      const digitsOf = (x: string | null | undefined) => (x ? (/(\d{2,6})/.exec(x)?.[1] ?? null) : null);
+      let added = 0;
+      const trips = new Set<number>(), used = new Set<number>();
+      for (const m of matches) {
+        if (!m.bits || dropped.has(m.trip_key)) continue;
+        const rc = rclass.get(tRc[m.trip_key]!);
+        const a = digitsOf(hintNum.get(m.htrip)), b = digitsOf(tShort[m.trip_key] ?? (rc ? displayName(rc.short, rc.long, "", rc.agency).number : null));
+        // another number: the same train only when it calls at ≥ 3 of the cities at the same times (Eurostar runs
+        // NS's 9315 as 9415 on some days)
+        if (a && b && a !== b && m.nc < 3) continue;
+        let e = limitExtra.get(m.trip_key);
+        if (!e) limitExtra.set(m.trip_key, (e = new Map()));
+        e.set(m.seq, (e.get(m.seq) ?? 0) | m.bits);
+        trips.add(m.trip_key);
+        used.add(m.htrip);
+        added++;
+      }
+      log(`stop restrictions of ${hintNum.size} trips left to a dedicated operator's feed: ${used.size} matched, ${added} restrictions added to ${trips.size} trips`);
+      stats.hintLimitTrips = trips.size;
+    }
+  }
+  // A restriction taken from another copy is the train's rule, not the day's: it also goes to the trips of the same
+  // feed with the same number and the same cities on days the other feed does not cover or with other times.
+  if (limitExtra.size) {
+    const feedsWith = [...new Set([...limitExtra.keys()].map((k) => tFeed[k]!))];
+    const rows = await db.all<{ trip_key: number; feed: number; short_name: string; cities: number[]; seqs: number[] }>(`
+      SELECT st.trip_key, t.feed, t.short_name, list(m.city ORDER BY st.seq) AS cities, list(st.seq ORDER BY st.seq) AS seqs
+      FROM stop_times st JOIN trips t USING (trip_key) JOIN stop_map m USING (stop_key)
+      WHERE t.feed IN (${feedsWith.join(",")}) AND coalesce(trim(t.short_name), '') <> '' GROUP BY ALL ORDER BY st.trip_key`);
+    const groups = new Map<string, { trip: number; seqs: number[] }[]>();
+    for (const r of rows) {
+      if (dropped.has(r.trip_key)) continue;
+      const k = `${r.feed}|${r.short_name}|${[...r.cities].join(",")}`;
+      let g = groups.get(k);
+      if (!g) groups.set(k, (g = []));
+      g.push({ trip: r.trip_key, seqs: [...r.seqs] });
+    }
+    let spread = 0;
+    for (const g of groups.values()) {
+      if (g.length < 2 || !g.some((x) => limitExtra.has(x.trip))) continue;
+      const bits: number[] = [];
+      for (const x of g) {
+        const e = limitExtra.get(x.trip);
+        if (e) x.seqs.forEach((sq, i) => (bits[i] = (bits[i] ?? 0) | (e.get(sq) ?? 0)));
+      }
+      for (const x of g) {
+        if (limitExtra.has(x.trip)) continue;
+        const e = new Map<number, number>();
+        x.seqs.forEach((sq, i) => bits[i] && e.set(sq, bits[i]!));
+        if (!e.size) continue;
+        limitExtra.set(x.trip, e);
+        spread++;
+      }
+    }
+    log(`stop restrictions from other copies spread to ${spread} more trips of the same train (number, cities)`);
+    stats.spreadLimitTrips = spread;
+  }
 
   // ------------------------------------------------------------------ through runs
   // One train published as consecutive trips with the same number (stay seated at the station where one
@@ -597,6 +735,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       ...(shapeTrips.length > 1 ? { shapeAlt: shapeTrips.slice(1) } : {}),
       ...(shape.via.length ? { via: shape.via } : {}),
       ...(shape.at.length ? { at: shape.at } : {}),
+      ...(shape.limits.length ? { limits: shape.limits } : {}),
     });
     const base = joined ? joined.mask : (through.rest.get(tk) ?? extraMask.get(tk) ?? svcMask.get(tSvc[tk]!));
     if (!base) return;
@@ -657,19 +796,22 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   let cur = -1;
   let raw: RawStop[] = [];
   let nRows = 0;
+  let curExtra: Map<number, number> | undefined;
   await db.stream(
-    `SELECT st.trip_key, m.station, m.city, st.arr, st.dep FROM stop_times st JOIN stop_map m USING (stop_key)
+    `SELECT st.trip_key, m.station, m.city, st.arr, st.dep, st.seq, st.pd FROM stop_times st JOIN stop_map m USING (stop_key)
      ORDER BY st.trip_key, st.seq, st.dep, st.arr, m.station`,
     (c, n) => {
-      const k = c[0]!, s = c[1]!, ci = c[2]!, a = c[3]!, d = c[4]!;
+      const k = c[0]!, s = c[1]!, ci = c[2]!, a = c[3]!, d = c[4]!, sq = c[5]!, pdc = c[6]!;
       for (let r = 0; r < n; r++) {
         const tk = k[r] as number;
         if (tk !== cur) {
           if (cur >= 0) take(cur, raw);
           cur = tk;
           raw = [];
+          curExtra = limitExtra.get(tk);
         }
-        raw.push({ station: s[r] as number, city: ci[r] as number, arr: a[r] as number, dep: d[r] as number });
+        const pd = ((pdc[r] as number | null) ?? 0) | (curExtra?.get(sq[r] as number) ?? 0);
+        raw.push({ station: s[r] as number, city: ci[r] as number, arr: a[r] as number, dep: d[r] as number, ...(pd ? { pd } : {}) });
       }
       nRows += n;
       if (nRows % 20_000_000 < n) log(`  patterns: ${nRows} stop_times streamed, ${store.patterns.length} patterns, ${tripP.length} trips`);
@@ -1094,6 +1236,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
         corridors: patternCorr[p]!.map((x) => corrNew[x]!),
         headsign: pt.headsign,
       };
+      if (pt.limits) po.limits = pt.limits;
       if (pt.via || pt.at) withRun.push([li, p]);
       pOut.push(po);
       pTz.push(pt.tz);

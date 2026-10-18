@@ -1,4 +1,4 @@
-import type { CityFile, NetworkFile, Pattern } from "@etbm/shared";
+import { canAlight, canBoard, type CityFile, type NetworkFile, type Pattern } from "@etbm/shared";
 import { serviceDayCount, type CalIndex } from "./calendar.ts";
 
 /** Network-wide lookups needed by the pure timetable logic. */
@@ -119,11 +119,42 @@ export function stopAt(p: Pattern, seg: Segment, station: number): number {
   return -1;
 }
 
-/** Pick the stop in a segment whose station ranks best (main station first). */
-export function bestStop(p: Pattern, seg: Segment, ctx: NetCtx): number {
-  let best = seg.first;
-  for (let i = seg.first + 1; i <= seg.last; i++) {
-    if (ctx.stationRank[p.stations[i]!]! < ctx.stationRank[p.stations[best]!]!) best = i;
+/**
+ * Pick the stop in a segment whose station ranks best (main station first); with `ok`, only among the stops it
+ * accepts (−1 when none does).
+ */
+export function bestStop(p: Pattern, seg: Segment, ctx: NetCtx, ok?: (i: number) => boolean): number {
+  let best = -1;
+  for (let i = seg.first; i <= seg.last; i++) {
+    if (ok && !ok(i)) continue;
+    if (best < 0 || ctx.stationRank[p.stations[i]!]! < ctx.stationRank[p.stations[best]!]!) best = i;
   }
   return best;
+}
+
+/** The best-ranked stop of a city run where passengers may board (Pattern.limits), or −1. */
+export function bestBoard(p: Pattern, seg: Segment, ctx: NetCtx): number {
+  return bestStop(p, seg, ctx, p.limits ? (i) => canBoard(p, i) : undefined);
+}
+
+/** The best-ranked stop of a city run where passengers may alight (Pattern.limits), or −1. */
+export function bestAlight(p: Pattern, seg: Segment, ctx: NetCtx): number {
+  return bestStop(p, seg, ctx, p.limits ? (i) => canAlight(p, i) : undefined);
+}
+
+/** First and last stop of a city run where passengers may board, or null (a run without boarding). */
+export function boardSpan(p: Pattern, seg: Segment): [number, number] | null {
+  let first = -1, last = -1;
+  for (let i = seg.first; i <= seg.last; i++)
+    if (canBoard(p, i)) {
+      if (first < 0) first = i;
+      last = i;
+    }
+  return first < 0 ? null : [first, last];
+}
+
+/** First stop of a city run where passengers may alight, or −1 (the vehicle only passes through for them). */
+export function firstAlight(p: Pattern, seg: Segment): number {
+  for (let i = seg.first; i <= seg.last; i++) if (canAlight(p, i)) return i;
+  return -1;
 }

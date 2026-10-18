@@ -18,8 +18,11 @@
  * changes on the map.
  */
 
-/** 2: a brand per pattern (TtChunk.pBrand, TtIndex.brands); version 1 chunks still decode (no brands). */
-export const TT_VERSION = 2;
+/**
+ * 2: a brand per pattern (TtChunk.pBrand, TtIndex.brands); version 1 chunks still decode (no brands).
+ * 3: boarding / alighting restrictions per stop (TtChunk.stLimit, Pattern.limits); older chunks decode without them.
+ */
+export const TT_VERSION = 3;
 /** Version of the line files (unchanged by the brands). */
 export const TT_LINES_VERSION = 1;
 
@@ -102,6 +105,8 @@ export interface TtChunk {
   /** arrival / departure offsets (minutes from trip start) */
   stArr: Int32Array;
   stDep: Int32Array;
+  /** StopLimit bits per stop (no boarding / no alighting; 0 in version < 3 chunks) */
+  stLimit: Uint8Array;
   /** trip offsets: trips of pattern p are pTrip[p] … pTrip[p+1]-1, sorted by start */
   pTrip: Int32Array;
   /** start minutes (service day, pattern tz) and calendar index per trip */
@@ -135,6 +140,8 @@ export interface TtPatternIn {
   stations: number[];
   arr: number[];
   dep: number[];
+  /** restricted stops: flat pairs [stop index, StopLimit bits] (Pattern.limits) */
+  limits?: number[];
   /** [start, calendar] pairs */
   trips: [number, number][];
 }
@@ -229,6 +236,15 @@ export function encodeTtChunk(c: TtChunkIn): Uint8Array {
       w.z(p.arr[i]! - p.dep[i - 1]!);
       w.z(p.dep[i]! - p.arr[i]!);
     }
+    // restricted stops: count, then (stop index delta, bits) pairs
+    const lim = p.limits ?? [];
+    w.u(lim.length / 2);
+    let pk = 0;
+    for (let k = 0; k + 1 < lim.length; k += 2) {
+      w.u(lim[k]! - pk);
+      pk = lim[k]!;
+      w.u(lim[k + 1]!);
+    }
     const trips = [...p.trips].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
     w.u(trips.length);
     let ps = 0;
@@ -291,11 +307,12 @@ export function decodeTtChunk(bytes: Uint8Array): TtChunk {
   const r = new Reader(bytes);
   if (r.u() !== MAGIC) throw new Error("not a transfer timetable chunk");
   const v = r.u();
-  if (v !== TT_VERSION && v !== 1) throw new Error(`transfer timetable version ${v}, expected ${TT_VERSION}`);
+  if (v < 1 || v > TT_VERSION) throw new Error(`transfer timetable version ${v}, expected ${TT_VERSION}`);
   const nP = r.u();
   const pId = new Int32Array(nP), pCat = new Uint8Array(nP), pTz = new Uint16Array(nP), pBrand = new Int32Array(nP);
   const pStop = new Int32Array(nP + 1), pTrip = new Int32Array(nP + 1);
   const st = new Grow(), arr = new Grow(), dep = new Grow(), ts = new Grow(), tc = new Grow();
+  const limits: [number, number][] = []; // [global stop index, bits]
   let pid = 0;
   for (let p = 0; p < nP; p++) {
     pid += r.u();
@@ -319,6 +336,14 @@ export function decodeTtChunk(bytes: Uint8Array): TtChunk {
       arr.push(a);
       dep.push(d);
     }
+    if (v >= 3) {
+      const nl = r.u();
+      let k = 0;
+      for (let i = 0; i < nl; i++) {
+        k += r.u();
+        limits.push([pStop[p]! + k, r.u()]);
+      }
+    }
     pStop[p + 1] = st.n;
     const nt = r.u();
     let s = 0;
@@ -338,9 +363,11 @@ export function decodeTtChunk(bytes: Uint8Array): TtChunk {
     walk[3 * i + 1] = pa + r.z();
     walk[3 * i + 2] = r.u();
   }
+  const stLimit = new Uint8Array(st.n);
+  for (const [k, b] of limits) stLimit[k] = b;
   return {
     pId, pCat, pTz, pBrand, pStop,
-    stStation: st.done(), stArr: arr.done(), stDep: dep.done(),
+    stStation: st.done(), stArr: arr.done(), stDep: dep.done(), stLimit,
     pTrip, trStart: ts.done(), trCal: tc.done(),
     walk,
   };

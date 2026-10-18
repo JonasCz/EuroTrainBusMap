@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Cat, cityChunks, decodeTtChunk, decodeTtLines, endpointsName, routeBrand, type City, type CityFile, type TtIndex } from "@etbm/shared";
+import { Cat, StopLimit, cityChunks, decodeTtChunk, decodeTtLines, endpointsName, routeBrand, type City, type CityFile, type TtIndex } from "@etbm/shared";
 import { gunzipSync } from "node:zlib";
 import { TransferCollector } from "../src/transfers.ts";
 
@@ -49,6 +49,24 @@ describe("transfer timetable (ETL)", () => {
     const lines = decodeTtLines(gunzipSync(files.get(`tt/${k}.lines.gz`) as Uint8Array));
     expect(Array.from(lines.cId)).toEqual([12]);
     expect(Array.from(lines.cSegCodes)).toEqual([-13]);
+  });
+});
+
+describe("transfer timetable restrictions", () => {
+  it("keeps the restrictions per pattern and boards regional patterns only in cities where boarding is allowed", async () => {
+    const t = new TransferCollector();
+    // RB 1 → 2 (city 0 → 1) with no boarding at station 1: city 0 has no boarding stop
+    const rbNo = { ...rb, limits: [0, StopLimit.NoBoarding] };
+    t.add(cf(0, [ic, rb, rbNo], [[0, 480, 0], [1, 500, 0], [2, 520, 0]]));
+    expect(t.patterns).toBe(3); // rb and rbNo stay apart
+    const files = new Map<string, Uint8Array | string>();
+    const corridors = [{ id: 10, a: 0, b: 2 }, { id: 11, a: 2, b: 3 }, { id: 12, a: 1, b: 2 }];
+    await t.write(cities, [], corridors, async (rel, d) => void files.set(rel, d), () => undefined);
+    const idx = JSON.parse(files.get("tt/index.json") as string) as TtIndex;
+    const k = cityChunks(idx)[0]!;
+    const region = decodeTtChunk(gunzipSync(files.get(`tt/${k}.bin.gz`) as Uint8Array));
+    expect(Array.from(region.trStart)).toEqual([500]); // only the RB that boards in city 0
+    expect(Array.from(region.stLimit)).toEqual([0, 0]);
   });
 });
 

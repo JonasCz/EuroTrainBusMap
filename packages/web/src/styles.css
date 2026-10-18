@@ -1297,6 +1297,21 @@ button.sched-main:hover {
   letter-spacing: 0.05em;
   color: var(--mode);
 }
+.sched-limit {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: help;
+}
+.sched-limit-mark {
+  font-weight: 700;
+}
 .sched-count {
   flex: none;
   min-width: 22px;

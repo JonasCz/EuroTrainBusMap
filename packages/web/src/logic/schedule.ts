@@ -3,7 +3,7 @@
  * the times shown in the trip view, split into the part before boarding, the ridden part and
  * the part after alighting.
  */
-import type { CityFile, Route, ScheduleFile } from "@etbm/shared";
+import { StopLimit, canAlight, stopLimit, type CityFile, type Route, type ScheduleFile } from "@etbm/shared";
 import { prepare, type NetCtx } from "./context.ts";
 import type { Leg } from "./journey.ts";
 import { dayShift, localDate, serviceTimeToUtc } from "./tz.ts";
@@ -42,8 +42,10 @@ export interface ScheduleStop {
   rideOut: boolean;
   /** Day of the shown (first) time in the stop's city tz, relative to the boarding date at the boarding stop (+1 after midnight). */
   dayShift: number;
-  /** Onward connections from here make sense: a pattern stop after boarding, outside the boarding city. */
+  /** Onward connections from here make sense: a pattern stop after boarding, outside the boarding city, where passengers may alight. */
   onward: boolean;
+  /** Boarding / alighting restrictions of a pattern stop (StopLimit bits: drop-off only, boarding only); absent when none. */
+  limit?: number;
   /**
    * The stop that stands for its run of consecutive stops in one city (the alighting stop, else the best-ranked
    * station): where "connections from the whole city" is offered, once per city.
@@ -149,6 +151,8 @@ export function tripSchedule(cf: CityFile, ctx: NetCtx, leg: Leg, sf?: ScheduleF
     const show = stopShow(i, m, dwell, alight);
     const shown = (show === "dep" ? depUtc : arrUtc)!;
     const listed = it.k < 0;
+    // restrictions that matter: not alighting at the first stop / boarding at the last (meaningless there)
+    const limit = listed ? 0 : stopLimit(p.limits, it.k) & ~(i === 0 ? StopLimit.NoAlighting : 0) & ~(i === m - 1 ? StopLimit.NoBoarding : 0);
     return {
       stop: listed ? -1 : it.k,
       station: it.station,
@@ -163,8 +167,9 @@ export function tripSchedule(cf: CityFile, ctx: NetCtx, leg: Leg, sf?: ScheduleF
       rideIn: i > board && i <= alight,
       rideOut: i >= board && i < alight,
       dayShift: dayShift(shown, stz, refDate),
-      onward: !listed && i > board && city !== boardCity,
+      onward: !listed && i > board && city !== boardCity && canAlight(p, it.k),
       cityRep: false,
+      ...(limit ? { limit } : {}),
     };
   });
   // once per run of pattern stops in one city (listed-only stops never offer connections)

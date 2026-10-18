@@ -1,10 +1,10 @@
 /**
  * Direct departures between two cities on a given (origin-local) date.
  */
-import type { CityFile, Route } from "@etbm/shared";
+import { canAlight, canBoard, type CityFile, type Route } from "@etbm/shared";
 import { addDays, dateFromDayNumber, inHorizon, lastDate, runsOnDate, runsOnDay } from "./calendar.ts";
 import { ServiceDays, mergeRows, serviceKey } from "./merge.ts";
-import { addTraffic, bestStop, patternTpd, prepare, stopAt, trafficCats, type CorridorTraffic, type NetCtx } from "./context.ts";
+import { addTraffic, bestAlight, bestBoard, patternTpd, prepare, stopAt, trafficCats, type CorridorTraffic, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
 import { localDate, serviceTimeToUtc } from "./tz.ts";
 import type { TrackRun } from "./tracks.ts";
@@ -58,7 +58,11 @@ interface Candidate {
   span: number[];
 }
 
-/** Pattern/stop combinations that go from cf.city (or only from `originStation` of it) directly to `dest`. */
+/**
+ * Pattern/stop combinations that go from cf.city (or only from `originStation` of it) directly to `dest`: boarding
+ * allowed at the origin stop and alighting at the destination stop (Pattern.limits; a Eurostar calling at Rotterdam
+ * on its way to Amsterdam does not take passengers from Rotterdam to Amsterdam).
+ */
 export function pairCandidates(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, originStation?: number): Candidate[] {
   const prep = prepare(cf, ctx);
   const out: Candidate[] = [];
@@ -66,22 +70,27 @@ export function pairCandidates(cf: CityFile, ctx: NetCtx, f: Filters, dest: numb
     const route = cf.routes[p.route];
     if (!route || !routeAllowed(route, f)) return;
     const segs = prep.segments[pi]!;
-    const ia = segs.findIndex((s) => s.city === cf.city);
-    if (ia < 0) return;
-    let ib = -1;
-    for (let j = ia + 1; j < segs.length; j++) {
-      if (segs[j]!.city === cf.city) break;
-      if (segs[j]!.city === dest) {
-        ib = j;
-        break;
+    // the first run in the origin city with a boarding stop, then the first run in `dest` with an alighting stop
+    let ia = -1, ib = -1, board = -1, alight = -1;
+    for (let i = 0; i < segs.length && ib < 0; i++) {
+      if (segs[i]!.city !== cf.city) continue;
+      const sa = segs[i]!;
+      board = originStation !== undefined ? stopAt(p, sa, originStation) : bestBoard(p, sa, ctx);
+      if (board < 0 || !canBoard(p, board)) continue;
+      for (let j = i + 1; j < segs.length; j++) {
+        if (segs[j]!.city === cf.city) break;
+        if (segs[j]!.city !== dest) continue;
+        alight = bestAlight(p, segs[j]!, ctx);
+        if (alight >= 0) {
+          ia = i;
+          ib = j;
+          break;
+        }
       }
     }
     if (ib < 0) return;
     const sa = segs[ia]!;
     const sb = segs[ib]!;
-    const board = originStation !== undefined ? stopAt(p, sa, originStation) : bestStop(p, sa, ctx);
-    if (board < 0) return;
-    const alight = bestStop(p, sb, ctx);
     out.push({
       pattern: pi,
       board,
@@ -138,9 +147,9 @@ export function timetable(cf: CityFile, ctx: NetCtx, f: Filters, dest: number, d
         const arrUtc = serviceTimeToUtc(svc, start + p.arr[c.alight]!, tz);
         const st = (i: number): StopTime => ({ stop: i, station: p.stations[i]!, utc: serviceTimeToUtc(svc, start + (i === c.board || i < c.alightSeg[0] ? p.dep[i]! : p.arr[i]!), tz) });
         const altBoard: StopTime[] = [];
-        for (let i = c.boardSeg[0]; i <= c.boardSeg[1]; i++) if (i !== c.board && i < p.stations.length - 1) altBoard.push(st(i));
+        for (let i = c.boardSeg[0]; i <= c.boardSeg[1]; i++) if (i !== c.board && canBoard(p, i)) altBoard.push(st(i));
         const altAlight: StopTime[] = [];
-        for (let i = c.alightSeg[0]; i <= c.alightSeg[1]; i++) if (i !== c.alight) altAlight.push(st(i));
+        for (let i = c.alightSeg[0]; i <= c.alightSeg[1]; i++) if (i !== c.alight && canAlight(p, i)) altAlight.push(st(i));
         const first = p.stations[0]!;
         out.push({
           trip: ti,

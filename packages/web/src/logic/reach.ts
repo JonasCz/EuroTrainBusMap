@@ -3,7 +3,8 @@
  * calendar horizon, respecting filters.
  */
 import type { CityFile } from "@etbm/shared";
-import { addTraffic, patternTpd, prepare, stopAt, trafficCats, type CorridorTraffic, type NetCtx } from "./context.ts";
+import { canBoard } from "@etbm/shared";
+import { addTraffic, boardSpan, firstAlight, patternTpd, prepare, stopAt, trafficCats, type CorridorTraffic, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
 import type { TrackRun } from "./tracks.ts";
 
@@ -41,17 +42,25 @@ export function computeReach(cf: CityFile, ctx: NetCtx, f: Filters, originStatio
     const used = new Set<number>(); // corridors of this pattern used by its trips from the city (counted once)
     segs.forEach((sa, si) => {
       if (sa.city !== cf.city || si === segs.length - 1) return;
-      // boarding stop: the station chosen, else any stop of the city's run (corridors from its first stop on; the fastest time from its last)
-      let first = sa.first, last = sa.last;
+      // boarding stop: the station chosen, else any stop of the city's run where boarding is allowed (corridors from
+      // its first one on; the fastest time from its last)
+      let first: number, last: number;
       if (originStation !== undefined) {
         first = last = stopAt(p, sa, originStation);
-        if (first < 0) return;
+        if (first < 0 || !canBoard(p, first)) return;
+      } else {
+        const span = boardSpan(p, sa);
+        if (!span) return;
+        [first, last] = span;
       }
       const depMin = p.dep[last]!;
       for (let sj = si + 1; sj < segs.length; sj++) {
         const sb = segs[sj]!;
         if (sb.city === cf.city) break; // pattern loops back: stop here
-        const min = p.arr[sb.first]! - depMin;
+        // the first stop of the destination's run where passengers may get off (none: the vehicle only passes)
+        const ai = firstAlight(p, sb);
+        if (ai < 0) continue;
+        const min = p.arr[ai]! - depMin;
         const d = dests.get(sb.city);
         if (!d) dests.set(sb.city, { city: sb.city, minutes: min, cats: route.cat });
         else {
@@ -59,8 +68,8 @@ export function computeReach(cf: CityFile, ctx: NetCtx, f: Filters, originStatio
           if (min > 0 && (d.minutes <= 0 || min < d.minutes)) d.minutes = min;
           d.cats |= route.cat;
         }
-        // every hop from the boarding stop to the first stop in the destination city
-        for (let k = first; k < sb.first; k++) {
+        // every hop from the boarding stop to the alighting stop in the destination city
+        for (let k = first; k < ai; k++) {
           const c = p.corridors[k];
           if (c !== undefined && c >= 0) used.add(c);
         }
@@ -86,16 +95,21 @@ export function reachRuns(cf: CityFile, ctx: NetCtx, f: Filters, originStation?:
     let tpd = -1;
     segs.forEach((sa, si) => {
       if (sa.city !== cf.city || si === segs.length - 1) return;
-      let first = sa.first;
+      let first: number;
       if (originStation !== undefined) {
         first = stopAt(p, sa, originStation);
-        if (first < 0) return;
+        if (first < 0 || !canBoard(p, first)) return;
+      } else {
+        const span = boardSpan(p, sa);
+        if (!span) return;
+        first = span[0];
       }
       const dests: TrackRun["dests"] = [];
       for (let sj = si + 1; sj < segs.length; sj++) {
         const sb = segs[sj]!;
         if (sb.city === cf.city) break;
-        dests.push({ city: sb.city, hops: sb.first - first });
+        const ai = firstAlight(p, sb);
+        if (ai >= 0) dests.push({ city: sb.city, hops: ai - first });
       }
       if (!dests.length) return;
       if (tpd < 0) tpd = patternTpd(cf, ctx, pi);
