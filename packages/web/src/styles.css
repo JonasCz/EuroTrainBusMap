@@ -321,6 +321,88 @@ h2:focus {
 .view-head .icon-btn:first-child {
   margin-left: -8px;
 }
+/* a view with views above it: a top row (Back, the breadcrumbs, Undo / Redo, Close), the title below */
+.view-head.has-nav {
+  flex-wrap: wrap;
+  padding-top: 8px;
+  row-gap: 2px;
+}
+.view-nav {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  margin: 0 -2px 0 0;
+}
+.view-nav .icon-btn {
+  width: 32px;
+  height: 32px;
+}
+.view-nav .icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  background: transparent;
+}
+.nav-crumbs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.nav-crumbs li {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+/* where Back goes stays readable; the farther views give way first */
+.nav-crumbs li:last-child {
+  flex-shrink: 0;
+  max-width: 70%;
+}
+.nav-crumbs li:not(:last-child) .nav-crumb {
+  min-width: 2.6em;
+}
+.nav-sep {
+  flex: none;
+  color: var(--faint);
+  padding: 0 1px;
+}
+.nav-crumb {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 560;
+  padding: 4px 5px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.nav-crumb:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.nav-edits {
+  display: inline-flex;
+  flex: none;
+  margin-left: 4px;
+  padding-left: 4px;
+  border-left: 1px solid var(--line, var(--surface-3));
+}
+.view-head .undo-note {
+  flex: 1 0 100%;
+  margin: 6px -2px 0 0;
+}
 .view-title {
   flex: 1;
   min-width: 0;
@@ -650,8 +732,7 @@ h2:focus {
 
 /* timetable */
 .tt-list,
-.conn-list,
-.crumbs {
+.conn-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -920,38 +1001,6 @@ h2:focus {
 }
 
 /* journey */
-.crumbs {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px;
-  padding: 0 14px 8px;
-}
-.crumbs li {
-  display: inline-flex;
-  align-items: center;
-}
-.crumb {
-  border: 0;
-  background: var(--surface-2);
-  padding: 3px 9px;
-  border-radius: 999px;
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
-}
-button.crumb:hover {
-  background: var(--surface-3);
-}
-.crumb.current {
-  background: var(--accent);
-  color: var(--surface);
-}
-.crumb-sep {
-  color: var(--faint);
-  display: inline-flex;
-  margin: 0 1px;
-}
 /* the legs so far: one button (hover shows them on the map, a click opens them together) */
 button.legs {
   display: block;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { City, Station } from "@etbm/shared";
 import { stationBySlug, stationSlug, type Net } from "../data/net.ts";
-import { applyPatch, extendLegPatch, parseHash, removeLegPatch, toHash } from "./state.ts";
+import { applyPatch, entryOf, extendLegPatch, navPath, parseHash, removeLegPatch, toHash, upPatch, viewLevel } from "./state.ts";
 import { joinStay, tripIn } from "../logic/journey.ts";
 import type { CityFile } from "@etbm/shared";
 
@@ -258,5 +258,58 @@ describe("extending a journey on its own vehicles", () => {
     const route = [{ from: 2, trip: 90, date: "2026-10-19", board: 4, alight: 8 }, { from: 3, trip: 33, date: "2026-10-19", board: 0, alight: 2 }];
     expect(joinStay(legs, route)).toEqual([legs[0], { ...legs[1], alight: 8 }, route[1]]);
     expect(joinStay(legs, route.slice(0, 1))).toEqual([legs[0], { ...legs[1], alight: 8 }]);
+  });
+});
+
+describe("going up one view (Back, Esc) and the breadcrumbs", () => {
+  const up = (hash: string) => {
+    const s = parseHash(net, hash);
+    const p = upPatch(s);
+    return p ? toHash(net, applyPatch(s, p)) : null;
+  };
+  const one = "legs=4.20261019.1.3";
+  const two = "legs=4.20261019.1.3,7.20261019.0.2";
+  it("walks up the views to the map", () => {
+    expect(up("#from=paris&station=bercy&to=lyon")).toBe("#from=paris&station=bercy");
+    expect(up("#from=paris&station=bercy")).toBe("#from=paris");
+    expect(up("#from=paris&date=2026-10-20")).toBe("");
+    expect(up("")).toBeNull();
+  });
+  it("goes from a journey (or a single trip) to the journeys of its pair, whatever edits made it", () => {
+    expect(up(`#from=paris&to=lyon&${two}&trip=all`)).toBe("#from=paris&to=lyon");
+    expect(up(`#from=paris&to=lyon&${two}&trip=all&parts=1`)).toBe("#from=paris&to=lyon");
+    expect(up(`#from=paris&to=lyon&${one}&trip=1`)).toBe("#from=paris&to=lyon");
+  });
+  it("steps back through a journey built step by step", () => {
+    expect(up(`#from=paris&to=lyon&${two}`)).toBe(`#from=paris&to=lyon&${two}&trip=1`);
+    expect(up(`#from=paris&to=lyon&${two}&trip=1`)).toBe(`#from=paris&to=lyon&${one}`);
+    expect(up(`#from=paris&to=lyon&${one}&onward=city`)).toBe(`#from=paris&to=lyon&${one}&trip=1`);
+    // the journey so far returns to the connections, with their scope
+    expect(up(`#from=paris&to=lyon&${two}&trip=sofar&onward=city`)).toBe(`#from=paris&to=lyon&${two}&onward=city`);
+  });
+  it("goes from the continuation search to the journey it continues", () => {
+    expect(up(`#from=lyon&to=paris&${two}&trip=all&next=paris`)).toBe(`#from=lyon&to=paris&${two}&trip=all`);
+    expect(navPath(parseHash(net, `#from=lyon&to=paris&${two}&trip=all&next=paris`)).map((x) => x.level)).toEqual(["city", "pair", "journey"]);
+  });
+  it("lists the views above, the trips of a step-by-step journey only as the way back", () => {
+    const levels = (hash: string) => navPath(parseHash(net, hash)).map((x) => x.level);
+    expect(levels("#from=paris")).toEqual([]);
+    expect(levels("#from=paris&to=lyon")).toEqual(["city"]);
+    expect(levels("#from=paris&station=bercy&to=lyon")).toEqual(["station"]);
+    expect(levels(`#from=paris&to=lyon&${two}&trip=all`)).toEqual(["city", "pair"]);
+    expect(levels(`#from=paris&to=lyon&${two}`)).toEqual(["city", "pair", "connections", "trip"]);
+    expect(levels(`#from=paris&to=lyon&${two}&trip=1`)).toEqual(["city", "pair", "connections"]);
+    expect(levels(`#from=paris&to=lyon&${two}&trip=sofar`)).toEqual(["city", "pair", "connections", "connections"]);
+    expect(viewLevel(parseHash(net, `#from=paris&to=lyon&${two}&trip=sofar`))).toBe("sofar");
+  });
+});
+
+describe("edits recorded in history entries", () => {
+  it("reads only well-formed records", () => {
+    expect(entryOf(null)).toEqual({});
+    expect(entryOf({ other: 1 })).toEqual({});
+    expect(entryOf({ etbm: { prev: "#from=paris", undo: "Removed TGV 1" } })).toEqual({ prev: "#from=paris", undo: "Removed TGV 1" });
+    expect(entryOf({ etbm: { prev: 3, redo: { text: "x", hash: "#a" } } })).toEqual({ redo: { text: "x", hash: "#a" } });
+    expect(entryOf({ etbm: { redo: { text: "x" } } })).toEqual({});
   });
 });

@@ -15,12 +15,12 @@ import { stationDepartures } from "./logic/stations.ts";
 import { tripSchedule, type TripSchedule } from "./logic/schedule.ts";
 import { changeOptions, journeySchedule, type ChangeOption } from "./logic/journeyschedule.ts";
 import { legBrand } from "./logic/journeygroups.ts";
-import { localDate } from "./logic/tz.ts";
+import { fmtTime, localDate } from "./logic/tz.ts";
 import { STATION_ZOOM } from "./map/lod.ts";
 import type { MapView, Highlight } from "./map/mapview.ts";
-import { Panel, type Undo, type View } from "./ui/panel.ts";
+import { Panel, type Nav, type View } from "./ui/panel.ts";
 import { routeDisplayName } from "./ui/format.ts";
-import { applyPatch, extendLegPatch, parseHash, removeLegPatch, storeSettings, toHash, type AppState } from "./ui/state.ts";
+import { applyPatch, entryOf, extendLegPatch, navPath, parseHash, removeLegPatch, storeSettings, toHash, upPatch, type AppState, type Entry } from "./ui/state.ts";
 import { groupJourneys } from "./logic/journeygroups.ts";
 import { TransferClient, matchLeg, type ReachLines, type ReachRound } from "./data/transfer.ts";
 import type { Journey, SearchParams, TransferSettings } from "./logic/transfer.ts";
@@ -67,24 +67,131 @@ export class App {
     addEventListener("hashchange", () => this.fromUrl());
   }
 
+  // ---- history: navigation entries and edits ---------------------------------------------------
+
+  /**
+   * The URL hash and the record (see Entry) of the history entry shown, as last seen: when the browser moves to
+   * another entry, what the one left behind was (an edit undone by going back to the entry before it can be redone).
+   */
+  private seen: { hash: string; entry: Entry } = { hash: location.hash, entry: entryOf(history.state) };
+  /** The edit just made (its history entry's hash): a notice says what it did. */
+  private notice: { hash: string; text: string } | null = null;
+
+  private norm(hash: string): string {
+    return toHash(this.net, parseHash(this.net, hash));
+  }
+
+  /** Replace the record of the current history entry (and, with `url`, its URL). */
+  private writeEntry(e: Entry, url = location.href): void {
+    history.replaceState({ ...(history.state ?? {}), etbm: e }, "", url);
+    this.seen = { hash: location.hash, entry: e };
+  }
+
   private fromUrl(): void {
+    if (location.hash !== this.seen.hash) {
+      const left = this.seen;
+      const e = entryOf(history.state);
+      this.notice = null;
+      this.seen = { hash: location.hash, entry: e };
+      // back from an edit to the entry before it (Undo, browser back, Ctrl+Z): the edit can be redone (forward)
+      if (left.entry.undo !== undefined && left.entry.prev !== undefined && this.norm(left.entry.prev) === this.norm(location.hash)) {
+        this.writeEntry({ ...e, redo: { text: left.entry.undo, hash: left.hash } });
+      }
+    }
     const s = parseHash(this.net, location.hash);
     if (toHash(this.net, s) === toHash(this.net, this.state)) return;
     this.state = s;
     void this.render();
   }
 
-  /** Update state; push a history entry unless `replace`. */
-  set(patch: Partial<AppState>, opts: { replace?: boolean } = {}): void {
+  /**
+   * Update state; push a history entry unless `replace`. With `edit` the change edits the shown journey (a leg removed,
+   * a stop ridden on to, …): its entry records it, `edit` saying what it did, so Undo (going back to the entry before)
+   * offers it, and that entry then Redo. With `over`, the entry shown (the continuation search, a picker) is replaced
+   * when it was opened from the view of that hash: undoing the edit returns there, not to the picker.
+   */
+  set(patch: Partial<AppState>, opts: { replace?: boolean; edit?: string; over?: string } = {}): void {
+    const before = toHash(this.net, this.state);
     const next = applyPatch(this.state, patch);
     this.state = next;
     const hash = toHash(this.net, next);
-    const url = `${location.pathname}${location.search}${hash}`;
-    if (url !== `${location.pathname}${location.search}${location.hash}`) {
-      if (opts.replace) history.replaceState(null, "", url || location.pathname);
-      else history.pushState(null, "", url || location.pathname);
+    const url = `${location.pathname}${location.search}${hash}` || location.pathname;
+    if (hash !== this.norm(location.hash)) {
+      this.notice = null;
+      const cur = entryOf(history.state);
+      if (opts.replace) this.writeEntry(cur, url);
+      else if (opts.edit !== undefined && opts.over !== undefined && cur.prev !== undefined && this.norm(cur.prev) === this.norm(opts.over)) {
+        this.writeEntry({ prev: cur.prev, undo: opts.edit }, url);
+      } else {
+        // a new entry drops the ones after this one: nothing to redo from here any more
+        if (cur.redo) this.writeEntry({ ...cur, redo: undefined });
+        const e: Entry = { prev: before, ...(opts.edit !== undefined ? { undo: opts.edit } : {}) };
+        history.pushState({ etbm: e }, "", url);
+        this.seen = { hash: location.hash, entry: e };
+      }
+      if (opts.edit !== undefined) this.notice = { hash: location.hash, text: opts.edit };
     }
     void this.render();
+  }
+
+  /** Undo the last edit of the shown journey: back to the history entry before it. */
+  undo(): void {
+    const e = entryOf(history.state);
+    if (e.undo !== undefined && e.prev !== undefined) history.back();
+  }
+
+  /** Redo the edit undone from here: forward to its history entry. */
+  redo(): void {
+    if (entryOf(history.state).redo) history.forward();
+  }
+
+  /** Show the view of state `a` (a breadcrumb): every part of the state set to its value there. */
+  private goTo(a: AppState): void {
+    const keys = new Set([...Object.keys(this.state), ...Object.keys(a)] as (keyof AppState)[]);
+    this.set(Object.fromEntries([...keys].map((k) => [k, a[k]])) as Partial<AppState>);
+  }
+
+  /** Where the shown view sits (see Nav): the views above it, the edits to undo or redo, the edit just made. */
+  nav(): Nav {
+    const s = this.state;
+    const net = this.net;
+    const name = (c: number | undefined) => (c !== undefined ? (net.cities[c]?.name ?? "") : "");
+    const le = this.legEnds?.key === encodeLegs(s.legs) ? this.legEnds : null;
+    const crumbs = navPath(s).map(({ state: a, level }) => {
+      const k = a.legs.length - 1;
+      const at = name(le?.to[k]);
+      const [label, title] = ((): [string, string] => {
+        switch (level) {
+          case "station": {
+            const st = a.city !== undefined && a.station !== undefined ? stationBySlug(net, a.city, a.station) : undefined;
+            const n = st !== undefined ? stationName(net, st) : name(a.city);
+            return [n, `${n}: its destinations`];
+          }
+          case "pair":
+            return [name(a.dest), `${name(a.city)} → ${name(a.dest)}: the journeys`];
+          case "connections":
+            return [`at ${at}`, `The connections from ${at}`];
+          case "trip":
+            return [le?.tags[k] || "Trip", `The stops of ${le?.tags[k] || "the trip"}`];
+          case "journey":
+            return ["Journey", `The journey ${name(a.city)} → ${name(a.dest)}`];
+          case "sofar":
+            return ["Journey so far", `The journey so far, ${name(a.city)} → ${at}`];
+          case "continue":
+            return [`to ${name(a.extend)}`, `Continuing to ${name(a.extend)}`];
+          default:
+            return [name(a.city), `${name(a.city)}: its destinations`];
+        }
+      })();
+      return { label, title, go: () => this.goTo(a) };
+    });
+    const e = entryOf(history.state);
+    return {
+      crumbs,
+      ...(e.undo !== undefined && e.prev !== undefined ? { undo: e.undo } : {}),
+      ...(e.redo ? { redo: e.redo.text } : {}),
+      ...(this.notice && this.notice.hash === location.hash ? { notice: this.notice.text } : {}),
+    };
   }
 
   // ---- hoverable tracks ----------------------------------------------------------
@@ -146,32 +253,17 @@ export class App {
     if (this.state.city !== undefined) this.set({ city: undefined, station: undefined, dest: undefined, legs: [], date: undefined });
   }
 
+  /**
+   * One level up in the views (the panel's Back, Esc; see upPatch): never undoes an edit of the journey (Undo does). A
+   * new history entry, as every move between views.
+   */
   back(): void {
-    const s = this.state;
-    // connections → the schedule of the trip that got there → the previous step (departures list / connections);
-    // a journey picked from the journeys list goes back to the list; a continuation (its search, or the joined
-    // journey) goes back to the journey it continues; the journey so far opened from the connections goes back to them
-    const ends = this.legEnds?.key === encodeLegs(s.legs) ? this.legEnds.to : null;
-    const part = s.parts?.[s.parts.length - 1];
-    // the journey a step made in place (a leg removed or ridden further, staying on board): back to the one before it
-    if (this.lastStep() && s.extend === undefined) {
-      this.steps.pop();
-      history.back();
-    } else if (s.extend !== undefined) this.set({ extend: undefined });
-    else if (s.review) this.set({ schedule: undefined, wholeCity: s.wholeCity });
-    else if (s.legs.length && !s.schedule) this.set({ schedule: true });
-    else if (part !== undefined && ends?.[part - 1] !== undefined) {
-      this.set({ legs: s.legs.slice(0, part), dest: ends[part - 1], parts: s.parts!.slice(0, -1), schedule: true, journey: part > 1 || undefined });
-    }
-    else if (s.journey) this.set({ legs: [] });
-    else if (s.legs.length) this.set({ legs: s.legs.slice(0, -1) });
-    else if (s.dest !== undefined) this.set({ dest: undefined });
-    else if (s.station !== undefined) this.set({ station: undefined });
-    else if (s.city !== undefined) this.set({ city: undefined, date: undefined });
+    const up = upPatch(this.state);
+    if (up) this.set(up);
   }
 
   /** Arrival cities and departure instants of the legs of the last journey rendered (per leg), keyed by the encoded legs. */
-  private legEnds: { key: string; to: number[]; dep: number[] } | null = null;
+  private legEnds: { key: string; to: number[]; dep: number[]; tags: string[] } | null = null;
 
   /** The city where the shown journey ends (its legs resolved), if a journey is shown. */
   private journeyEnd(): number | undefined {
@@ -362,10 +454,10 @@ export class App {
     }
     if (infos.length !== s.legs.length) {
       this.state = { ...s, legs: infos.map((i) => i.leg) };
-      history.replaceState(null, "", toHash(net, this.state) || location.pathname);
+      this.writeEntry(entryOf(history.state), `${location.pathname}${location.search}${toHash(net, this.state)}` || location.pathname);
     }
     const last = infos[infos.length - 1]!;
-    this.legEnds = { key: encodeLegs(this.state.legs), to: infos.map((i) => i.to), dep: infos.map((i) => i.depUtc) };
+    this.legEnds = { key: encodeLegs(this.state.legs), to: infos.map((i) => i.to), dep: infos.map((i) => i.depUtc), tags: infos.map((i) => [routeDisplayName(i.route), i.number].filter(Boolean).join(" ")) };
     // every leg is one trip: one trip/day of width on its corridors; the rest of each run is drawn faded
     const traffic: CorridorTraffic = new Map();
     const context = new Map<number, number>();
@@ -411,7 +503,7 @@ export class App {
       const tag = [routeDisplayName(last.route), last.number].filter(Boolean).join(" ");
       document.title = `${tag} → ${last.headsign} – EuroTrainBusMap`;
       const scheds = [...(earlier ?? []), sched];
-      this.panel.show({ kind: "schedule", legs: infos, sched, ...this.undoView(), windowMin: CONNECTION_WINDOW_MIN, onward: (stop, whole) => this.onwardCount(sched, stop, whole, journeyCover(origin, scheds, stop)) });
+      this.panel.show({ kind: "schedule", legs: infos, sched, windowMin: CONNECTION_WINDOW_MIN, onward: (stop, whole) => this.onwardCount(sched, stop, whole, journeyCover(origin, scheds, stop)) });
       this.frame([...new Set([origin, ...sched.stops.flatMap((x) => (x.city >= 0 ? [x.city] : []))])], `t${encodeLegs(s.legs)}`);
       return;
     }
@@ -436,11 +528,17 @@ export class App {
       return;
     }
     for (const c of conns) for (const st of c.stops) focus.add(st.city);
-    await this.map.setHighlight({ emphasis: { focus: this.withCorridorEnds(focus, corridors), active: true, origin, dest: last.to }, corridors, traffic, context });
+    this.withCorridorEnds(focus, corridors);
+    // the places only served by the departures along the journey ("Show them"): drawn lighter, when listed
+    const covered = new Map<number, number>();
+    for (const c of all) for (const st of c.stops) if (!focus.has(st.city)) covered.set(st.city, 2);
+    const hl: Highlight = { emphasis: { focus, active: true, origin, dest: last.to }, corridors, traffic, context };
+    this.coveredHl = { tok, base: hl, covered };
+    await this.map.setHighlight(this.covered && covered.size ? { ...hl, emphasis: { ...hl.emphasis, levels: covered } } : hl);
     if (stale()) return;
     this.useTracks(legTracks(this.trackCtx, infos, () => this.reviewJourney(), infos.length > 1 ? "for the journey so far" : "for this trip's stops", legsKey(infos.length)));
     document.title = `Connections from ${s.wholeCity ? net.cities[last.to]!.name : stationName(net, last.arrStation)} – EuroTrainBusMap`;
-    this.panel.show({ kind: "connections", legs: infos, conns, all, windowMin: CONNECTION_WINDOW_MIN, wholeCity: !!s.wholeCity });
+    this.panel.show({ kind: "connections", legs: infos, conns, all, windowMin: CONNECTION_WINDOW_MIN, wholeCity: !!s.wholeCity, covered: this.covered });
     this.frame(
       [origin, ...infos.map((i) => i.to)],
       `j${infos.map((i) => i.to).join("-")}`,
@@ -506,7 +604,6 @@ export class App {
     document.title = `${net.cities[origin]!.name} → ${net.cities[infos[infos.length - 1]!.to]!.name} – EuroTrainBusMap`;
     this.panel.show({
       kind: "journey",
-      ...this.undoView(),
       legs: infos,
       js,
       options,
@@ -732,7 +829,12 @@ export class App {
     const s = this.state;
     // reviewing the journey so far: still back to the connections, now from the new arrival
     const review = s.review ? { review: true, wholeCity: s.wholeCity } : {};
-    this.set({ legs: [...legs.slice(0, leg), { from: -1, trip: o.trip, date: o.serviceDate, board: o.board, alight: o.alight }], schedule: true, journey: s.journey, ...review });
+    const prev = this.legEnds?.key === encodeLegs(legs) ? this.legEnds.tags[leg] : "";
+    const tz = cityTz(this.net, this.net.ctx.stationCity[o.depStation] ?? s.city ?? 0);
+    this.set(
+      { legs: [...legs.slice(0, leg), { from: -1, trip: o.trip, date: o.serviceDate, board: o.board, alight: o.alight }], schedule: true, journey: s.journey, ...review },
+      { edit: `Changed to the ${fmtTime(o.depUtc, tz)} departure${prev ? ` instead of ${prev}` : ""}.` },
+    );
   }
 
   /**
@@ -742,28 +844,6 @@ export class App {
   reviewJourney(): void {
     const s = this.state;
     if (s.legs.length && !s.schedule) this.set({ schedule: true, review: true, wholeCity: s.wholeCity });
-  }
-
-  /**
-   * The last step that changed the shown journey in place (a leg removed, a leg ridden further, staying on board): the URL
-   * hash it made and what it did, for the undo notice and back.
-   */
-  private steps: { after: string; text: string }[] = [];
-
-  /** The last step, while the journey shown is the one it made (not after another view, nor after a reload). */
-  private lastStep(): { after: string; text: string } | null {
-    const h = toHash(this.net, this.state);
-    // the steps made after it (back in history from them) are dropped
-    let i = this.steps.length - 1;
-    while (i >= 0 && this.steps[i]!.after !== h) i--;
-    if (i < 0) return null;
-    this.steps.length = i + 1;
-    return this.steps[i]!;
-  }
-
-  private pushStep(after: string, text: string): void {
-    this.lastStep();
-    this.steps.push({ after, text });
   }
 
   /**
@@ -779,8 +859,7 @@ export class App {
     const patch = removeLegPatch(s, end, le.to, end === "first" && d !== this.today(city) ? d : undefined);
     if (!patch) return;
     const place = this.net.cities[end === "first" ? city : le.to[le.to.length - 2]!]?.name ?? "";
-    this.pushStep(toHash(this.net, applyPatch(s, patch)), `Removed ${label} – the journey now ${end === "first" ? "starts" : "ends"} in ${place}.`);
-    this.set(patch);
+    this.set(patch, { edit: `Removed ${label} – the journey now ${end === "first" ? "starts" : "ends"} in ${place}.` });
   }
 
   /**
@@ -808,24 +887,19 @@ export class App {
     const patch = extendLegPatch(s, end, stop, city, date);
     if (!patch) return;
     const place = this.net.cities[city]?.name ?? "";
-    this.pushStep(toHash(this.net, applyPatch(this.state, patch)), end === "first" ? `Boarding earlier – the journey now starts in ${place}.` : `Staying on board – the journey now ends in ${place}.`);
-    this.set(patch);
+    this.set(patch, { edit: end === "first" ? `Boarding earlier – the journey now starts in ${place}.` : `Staying on board – the journey now ends in ${place}.` });
   }
 
-  /** The undo notice while the journey is the one the last step made (not after another step, nor after a reload). */
-  private undoView(): { undo?: Undo } {
-    const r = this.lastStep();
-    if (!r) return {};
-    return {
-      undo: {
-        text: r.text,
-        run: () => {
-          this.steps.pop();
-          // the step's history entry: back returns to the journey before it
-          if (toHash(this.net, this.state) === r.after) history.back();
-        },
-      },
-    };
+  /** The onward departures only serving places along the journey are listed and drawn too (for this session). */
+  private covered = false;
+  /** The map highlight of the connections shown, and the places only those departures serve. */
+  private coveredHl: { tok: number; base: Highlight; covered: Map<number, number> } | null = null;
+
+  showCovered(on: boolean): void {
+    this.covered = on;
+    const c = this.coveredHl;
+    if (!c || c.tok !== this.token) return;
+    void this.map.setHighlight(on && c.covered.size ? { ...c.base, emphasis: { ...c.base.emphasis, levels: c.covered } } : c.base);
   }
 
   /** Show the schedule of leg `i` (dropping the legs after it). */
@@ -868,15 +942,18 @@ export class App {
   chooseExtension(route: Leg[], stay = false): void {
     const s = this.state;
     if (s.extend === undefined || !route.length || !s.legs.length) return;
+    const at = this.net.cities[s.extend]?.name ?? "";
+    const end = this.journeyEnd();
+    const from = end !== undefined ? (this.net.cities[end]?.name ?? "") : "";
+    // the continuation search is a picker: the joined journey takes its place, undo returns to the journey before
+    const over = toHash(this.net, applyPatch(s, { extend: undefined }));
     if (!stay) {
-      this.set({ legs: [...s.legs, ...route], dest: s.extend, parts: [...(s.parts ?? []), s.legs.length], schedule: true, journey: true });
+      this.set({ legs: [...s.legs, ...route], dest: s.extend, parts: [...(s.parts ?? []), s.legs.length], schedule: true, journey: true }, { edit: `Continued from ${from} to ${at}.`, over });
       return;
     }
     const legs = joinStay(s.legs, route);
     const patch: Partial<AppState> = { legs, dest: s.extend, parts: s.parts, schedule: true, journey: legs.length > 1 || undefined, extend: undefined };
-    const at = this.net.cities[s.extend]?.name ?? "";
-    this.pushStep(toHash(this.net, applyPatch(s, patch)), `Staying on board${route.length > 1 ? ", then changing" : ""} – the journey now ends in ${at}.`);
-    this.set(patch);
+    this.set(patch, { edit: `Staying on board${route.length > 1 ? ", then changing" : ""} – the journey now ends in ${at}.`, over });
   }
 
   /** A journey with changes (journeys view): its legs, showing the last leg's schedule. */

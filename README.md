@@ -167,7 +167,7 @@ Pipeline in short:
      importance ≥ 0.6, shown once it adds departures; URL `onward=city`, toggle in the connections view) boards anywhere in the
      city with the walking transfer time (`CityFile.transfers`, at least `minTransfer`; stations too far apart to walk are not
      combined, see the walking transfers below). Back goes
-     connections → schedule → departures. On the map the ridden part is highlighted as before and the rest of the run (before
+     connections → schedule → departures (see **Navigation and edits** below). On the map the ridden part is highlighted as before and the rest of the run (before
      boarding / after alighting) is drawn thin and faded (`Highlight.context`, layers `hl-ctx*`).
    - **Connections with changes** (`logic/transfer.ts`, worker `data/transfer.worker.ts`, client `data/transfer.ts`; URL
      `changes=1|2`, `mintransfer=<min>`, `wait=<min>|day`, written only when they differ from the defaults 0 / 10 / same day; the
@@ -188,25 +188,36 @@ Pipeline in short:
      (`logic/journeygroups.ts`: the brand of every leg and the change cities, e.g. "Intercités → Marseille-St-Charles → TER" or
      "TGV INOUI → Paris → TGV INOUI"; header with the duration range, changes and runs a day, below it one row per departure with
      the change time and the walk), each journey matched back to the boarding cities' shards (`matchLeg`) for route names; a row
-     opens the journey's legs (schedule of the last leg, crumbs, the walk between stations shown with the change).
+     opens the journey's legs (schedule of the last leg, the walk between stations shown with the change).
      - **Continuing a journey** (`App.renderExtension`, URL `next=<city>`, then `parts=<n>,…`): while a journey (or a trip's
        schedule, or the connections from a stop) is shown, tapping another city on the map – or naming one in the "Continue from X"
        box under the journey – searches the journeys from the city where it ends to that city, leaving after its arrival
        (`SearchParams.after`: first legs board no earlier than the minimum transfer time / the walk from the arrival station, and
        within the maximum wait or the same day; at least 1 change, the set number if higher). The list is the journeys view with a
        "Continuing A → B" line and "Search A → C instead" (the old tap behaviour); a row appends its legs and opens the joined
-       journey (header A → C, all legs and changes). `parts` records where joined journeys end, so Back drops the last
-       continuation; journeys can so be built beyond the 2 changes searched at once (Bordeaux → Ventimiglia → Genova).
+       journey (header A → C, all legs and changes; an edit, see below: Undo returns to A → B). `parts` records where joined
+       journeys end; journeys can so be built beyond the 2 changes searched at once (Bordeaux → Ventimiglia → Genova).
        When the last leg's vehicle runs on, the search also **stays on board** (`SearchParams.after.ride`, `rideOf`): that trip is
        boarded at the arrival stop at its own departure, whatever the minimum transfer time, and the journeys that do are marked
        (`Journey.stay`), never pruned by the other options (only by staying on with fewer changes arriving no later), grouped apart
        and listed first ("Stay on board to Marseille · arrives 12:36 · no change", then "Or get off in Montpellier and change" with
        the other options – another mode, a break). Picking one rides the last leg on (`joinStay`: its alighting stop moves, no leg
-       or change is added); Back / the undo notice return to the journey before.
+       or change is added); Undo returns to the journey before.
      - **Extending on the journey's own vehicles** (`extendLegPatch`, `extendAt`): in a trip's schedule and a journey's, the greyed
        stops after getting off the last leg ride on to that stop (the destination follows; the stop's count badge still opens the
        connections from there), the greyed stops before boarding the first leg board there (the origin and its date follow). Stops
        of the ride, and every stop of the legs in between, open the connections from there as before.
+     - **Navigation and edits** (`upPatch`, `navPath` in `ui/state.ts`; `App.set` / `undo` / `redo`): moving between views and
+       editing the shown journey are kept apart. The panel's top row has Back (‹, also Esc), the breadcrumbs of the views
+       above (e.g. "Bordeaux › Nice › Journey"; a step-by-step journey shows each step's connections, "at Dijon", and the
+       trip just before) and Close. Back always goes one view up – a journey or trip to its pair's journeys / departures,
+       connections to the trip that got there, the journey so far to its connections, the continuation search to the
+       journey – and never undoes an edit. Edits of the journey (a leg removed, riding on / boarding earlier, staying on board,
+       another departure at a change, a continuation joined) each make a history entry that records what they did
+       (`history.state.etbm`: `prev`, `undo`, `redo`; kept over reloads): Undo / Redo buttons in the top row (Ctrl/Cmd+Z,
+       Ctrl/Cmd+Shift+Z) go back / forward to the journey before / after, as the browser's back and forward do; a notice
+       says what the edit just did. A continuation joined replaces the continuation search's entry, so undoing it returns to
+       the journey, not to the search.
      - **Search**: round-based (RAPTOR-like) over trips, not a time-expanded graph. Round 1 boards every trip leaving the origin on
        the day and records an arrival event at every later stop (intermediate stops included); round r + 1 boards at every city
        reached in round r every trip whose departure is feasible after one of the city's arrivals (transfer time per station pair,

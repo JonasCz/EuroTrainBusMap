@@ -47,11 +47,23 @@ async function main(): Promise<void> {
   panel.actions = app as unknown as PanelActions;
   mountAttribution(document.getElementById("attribution")!, document.getElementById("sources") as HTMLDialogElement, () => loadAttribution(ds), manifest.generatedAt);
 
+  // Esc: one view up; Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z (or Ctrl+Y): undo / redo an edit of the journey (not in text fields)
   addEventListener("keydown", (e) => {
-    if (e.key !== "Escape" || e.defaultPrevented) return;
+    if (e.defaultPrevented) return;
     const t = e.target as HTMLElement;
-    if (t.closest("dialog") || t.id === "search") return;
-    app?.back();
+    if (t.closest("dialog")) return;
+    const typing = t.closest("input, textarea, select, [contenteditable]") !== null;
+    if (e.key === "Escape") {
+      if (t.id !== "search") app?.back();
+      return;
+    }
+    if (typing || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === "z" || k === "y") {
+      e.preventDefault();
+      if (k === "y" || e.shiftKey) app?.redo();
+      else app?.undo();
+    }
   });
 
   await app.render();

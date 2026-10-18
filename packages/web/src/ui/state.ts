@@ -35,7 +35,8 @@ export interface AppState {
   extend?: number;
   /**
    * The legs are journeys joined end to end (each one continuing the previous): the leg counts where the earlier
-   * ones end, ascending (URL `parts=3,4`). Back from the joined journey drops the last continuation.
+   * ones end, ascending (URL `parts=3,4`). Joining one is an edit of the journey (undone by Undo, see App.set); Back
+   * goes to the journeys of the pair, as from any journey.
    */
   parts?: number[];
   /** Onward connections from every station of the last leg's arrival city, not only the arrival station (URL `onward=city`). */
@@ -85,6 +86,59 @@ export function applyPatch(state: AppState, patch: Partial<AppState>): AppState 
   if (!next.legs.length) delete next.extend;
   if (!next.legs.length || !next.parts?.length) delete next.parts;
   return next;
+}
+
+/**
+ * The view one level up from `s` (the panel's Back and Esc; never an edit undone, see App.undo): the continuation search
+ * → the journey it continues; the journey so far opened from the connections → those connections; the connections
+ * from a leg's end → the schedule of that leg's trip; a step-by-step journey's trip → the connections it was picked
+ * from; a journey (or a single trip) → the journeys or departures of its pair; a pair → its origin city (or station);
+ * a station → its city; a city → the map. Null on the map.
+ */
+export function upPatch(s: AppState): Partial<AppState> | null {
+  if (s.city === undefined) return null;
+  if (s.legs.length && s.dest !== undefined) {
+    if (s.extend !== undefined) return { extend: undefined };
+    if (s.review) return { schedule: undefined, wholeCity: s.wholeCity };
+    if (!s.schedule) return { schedule: true };
+    if (s.journey || s.legs.length === 1) return { legs: [] };
+    return { legs: s.legs.slice(0, -1) };
+  }
+  if (s.dest !== undefined) return { dest: undefined };
+  if (s.station !== undefined) return { station: undefined };
+  return { city: undefined, date: undefined };
+}
+
+/** What a view is, for the breadcrumbs (see navPath). */
+export type ViewLevel = "map" | "city" | "station" | "pair" | "connections" | "trip" | "journey" | "sofar" | "continue";
+
+export function viewLevel(s: AppState): ViewLevel {
+  if (s.city === undefined) return "map";
+  if (s.dest === undefined || !s.legs.length) return s.dest !== undefined ? "pair" : s.station !== undefined ? "station" : "city";
+  if (s.extend !== undefined) return "continue";
+  if (!s.schedule) return "connections";
+  if (s.review) return "sofar";
+  return s.journey ? "journey" : "trip";
+}
+
+/**
+ * The views above `s`, the farthest first (breadcrumbs): every step up to the origin city, without the map, the whole
+ * city above one of its stations and the trips of a step-by-step journey before the last step (each one's connections
+ * stand for it). The last one is where Back goes.
+ */
+export function navPath(s: AppState): { state: AppState; level: ViewLevel }[] {
+  const out: { state: AppState; level: ViewLevel }[] = [];
+  let cur = s;
+  for (let i = 0; i < 64; i++) {
+    const up = upPatch(cur);
+    if (!up) break;
+    cur = applyPatch(cur, up);
+    const level = viewLevel(cur);
+    if (level === "map") break;
+    out.unshift({ state: cur, level });
+  }
+  const parent = out[out.length - 1];
+  return out.filter((x, i) => x === parent || x.level !== "trip" && !(x.level === "city" && out[i + 1]?.level === "station"));
 }
 
 /**
@@ -139,6 +193,29 @@ export function extendLegPatch(s: AppState, end: "first" | "last", stop: number,
   const l = s.legs[0]!;
   if (stop >= l.board || city === s.dest) return null;
   return { ...view, city, station: undefined, date, legs: [{ ...l, from: city, board: stop }, ...s.legs.slice(1)], wholeCity: s.review ? s.wholeCity : undefined };
+}
+
+/**
+ * What the app records in a history entry (history.state.etbm; kept over reloads): `prev`, the URL hash of the entry
+ * before it (when it was pushed from there); `undo`, what the edit that made it did (back to `prev` undoes it);
+ * `redo`, the edit undone by going back from the next entry (forward redoes it).
+ */
+export interface Entry {
+  prev?: string;
+  undo?: string;
+  redo?: { text: string; hash: string };
+}
+
+export function entryOf(state: unknown): Entry {
+  const e = (state as { etbm?: unknown } | null)?.etbm;
+  if (!e || typeof e !== "object") return {};
+  const x = e as Record<string, unknown>;
+  const r = x.redo as Record<string, unknown> | undefined;
+  return {
+    ...(typeof x.prev === "string" ? { prev: x.prev } : {}),
+    ...(typeof x.undo === "string" ? { undo: x.undo } : {}),
+    ...(r && typeof r.text === "string" && typeof r.hash === "string" ? { redo: { text: r.text, hash: r.hash } } : {}),
+  };
 }
 
 const PREFS_KEY = "etbm.transfers";

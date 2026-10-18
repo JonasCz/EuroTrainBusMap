@@ -75,7 +75,6 @@ export type View =
       windowMin: number;
       /** onward departures from a stop (pattern index): from its station, or `whole` from every station of its city; loads lazily */
       onward: (stop: number, whole: boolean) => Promise<number>;
-      undo?: Undo;
     }
   | {
       kind: "journey";
@@ -87,7 +86,6 @@ export type View =
       windowMin: number;
       /** onward departures from stop `stop` of leg `leg`'s trip (see the schedule view) */
       onward: (leg: number, stop: number, whole: boolean) => Promise<number>;
-      undo?: Undo;
     }
   | {
       kind: "connections";
@@ -98,12 +96,20 @@ export type View =
       all: Connection[];
       windowMin: number;
       wholeCity: boolean;
+      /** the departures and stops along the journey (`all` minus `conns`) are listed and drawn too */
+      covered: boolean;
     };
 
-/** A leg just removed from the journey: a notice with a button that brings it back. */
-export interface Undo {
-  text: string;
-  run: () => void;
+/**
+ * Where the shown view sits (the panel's top row): the views above it, the farthest first, each a link there (the last
+ * one is where Back and Esc go); the edits of the journey that can be undone or redone (what they did).
+ */
+export interface Nav {
+  crumbs: { label: string; title: string; go: () => void }[];
+  undo?: string;
+  redo?: string;
+  /** the edit just made: a notice says what it did */
+  notice?: string;
 }
 
 /** A place reached only with changes. */
@@ -145,6 +151,12 @@ export interface PanelActions {
   clickCity(id: number): void;
   clickStation(id: number, city: number, name: string): void;
   back(): void;
+  /** Where the shown view sits, for its top row (see Nav). */
+  nav(): Nav;
+  undo(): void;
+  redo(): void;
+  /** List (and draw) the onward departures only serving places along the journey too. */
+  showCovered(on: boolean): void;
   chooseDeparture(d: Departure): void;
   chooseConnection(c: Connection, stop: OnwardStop, fromCity: number): void;
   /** Ride leg `leg` (default: the last) to stop `stop` and show the onward connections from there. */
@@ -489,20 +501,55 @@ export class Panel {
     }
   }
 
+  /**
+   * The view's heading. With `back`, a top row first: Back (one view up, see Nav), the breadcrumbs of the views above,
+   * Undo / Redo of the journey's edits when there are any, Close.
+   */
   private header(title: string | Node, sub: string | Node | null, opts: { back?: boolean; extra?: Node } = {}): HTMLElement {
+    const nav = opts.back ? this.actions.nav() : null;
+    const close = h(
+      "button",
+      { type: "button", class: "icon-btn", "aria-label": "Close", title: "Close", onclick: () => this.actions.set({ city: undefined, dest: undefined, legs: [], date: undefined }) },
+      icon("close"),
+    );
+    const titleEl = h("div", { class: "view-title" }, h("h2", { tabindex: "-1" }, title), sub ? h("p", { class: "sub" }, sub) : null);
+    if (!nav?.crumbs.length) return h("div", { class: "view-head" }, titleEl, opts.extra ?? null, close);
+    const up = nav.crumbs[nav.crumbs.length - 1]!;
+    const edits = nav.undo !== undefined || nav.redo !== undefined;
+    const row = h(
+      "nav",
+      { class: "view-nav", "aria-label": "Views" },
+      h("button", { type: "button", class: "icon-btn nav-back", "aria-label": `Back: ${up.title}`, title: `Back: ${up.title} (Esc)`, onclick: () => this.actions.back() }, icon("back")),
+      h(
+        "ol",
+        { class: "nav-crumbs" },
+        nav.crumbs.map((c, i) =>
+          h(
+            "li",
+            null,
+            i ? h("span", { class: "nav-sep", "aria-hidden": "true" }, "›") : null,
+            h("button", { type: "button", class: "nav-crumb", title: c.title, onclick: c.go }, c.label),
+          ),
+        ),
+      ),
+      edits
+        ? h(
+            "span",
+            { class: "nav-edits", role: "group", "aria-label": "Edits of the journey" },
+            h("button", { type: "button", class: "icon-btn", "aria-label": nav.undo ? `Undo: ${nav.undo}` : "Undo", title: nav.undo ? `Undo: ${nav.undo} (Ctrl+Z)` : "Nothing to undo", disabled: nav.undo === undefined, onclick: () => this.actions.undo() }, icon("undo")),
+            h("button", { type: "button", class: "icon-btn", "aria-label": nav.redo ? `Redo: ${nav.redo}` : "Redo", title: nav.redo ? `Redo: ${nav.redo} (Ctrl+Shift+Z)` : "Nothing to redo", disabled: nav.redo === undefined, onclick: () => this.actions.redo() }, icon("redo")),
+          )
+        : null,
+      close,
+    );
+    // the edit just made: what it did, and the way back (also the Undo button above)
     return h(
       "div",
-      { class: "view-head" },
-      opts.back
-        ? h("button", { type: "button", class: "icon-btn", "aria-label": "Back", title: "Back (Esc)", onclick: () => this.actions.back() }, icon("back"))
-        : null,
-      h("div", { class: "view-title" }, h("h2", { tabindex: "-1" }, title), sub ? h("p", { class: "sub" }, sub) : null),
+      { class: "view-head has-nav" },
+      row,
+      titleEl,
       opts.extra ?? null,
-      h(
-        "button",
-        { type: "button", class: "icon-btn", "aria-label": "Close", title: "Close", onclick: () => this.actions.set({ city: undefined, dest: undefined, legs: [], date: undefined }) },
-        icon("close"),
-      ),
+      nav.notice ? h("p", { class: "undo-note", role: "status" }, h("span", null, nav.notice), h("button", { type: "button", class: "link small", onclick: () => this.actions.undo() }, "Undo")) : null,
     );
   }
 
@@ -1262,31 +1309,6 @@ export class Panel {
     return wrap;
   }
 
-  /** Breadcrumbs of a journey: the origin city, then each leg's arrival city (the last one is the current step). */
-  private crumbs(legs: LegInfo[]): HTMLElement {
-    const n = this.net;
-    const origin = n.cities[n.file.stations[legs[0]!.depStation]!.city]!.name;
-    return h(
-      "ol",
-      { class: "crumbs", "aria-label": "Journey" },
-      h("li", null, h("button", { type: "button", class: "crumb", title: `Start over from ${origin}: the departures from there (drops the journey)`, onclick: () => this.actions.set({ legs: [] }) }, origin)),
-      legs.map((l, i) =>
-        h(
-          "li",
-          null,
-          h("span", { class: "crumb-sep", "aria-hidden": "true" }, icon("next", 14)),
-          i === legs.length - 1
-            ? h("span", { class: "crumb current", "aria-current": "step" }, n.cities[l.to]!.name)
-            : h(
-                "button",
-                { type: "button", class: "crumb", title: `Back to the connections from ${n.cities[l.to]!.name} (drops the later legs)`, onclick: () => this.actions.set({ legs: this.actions.state.legs.slice(0, i + 1) }) },
-                n.cities[l.to]!.name,
-              ),
-        ),
-      ),
-    );
-  }
-
   /** Same vehicle continues from leg i−1 into leg i (stay on board). */
   private static isThrough(legs: LegInfo[], i: number): boolean {
     const p = legs[i - 1];
@@ -1372,8 +1394,7 @@ export class Panel {
     const stopName = (st: ScheduleStop) => st.minorName ?? stationName(n, st.station);
     const title = h("span", { class: "sched-title" }, routeTag(sc.route, sc.number), h("span", { class: "headsign" }, sc.headsign));
     const out: Node[] = [this.header(title, `${formatDateShort(sc.refDate)} · ${cityName(board)} → ${cityName(alight)} · ${fmtDuration(mins)}`, { back: true })];
-    if (v.undo) out.push(undoNote(v.undo));
-    if (v.legs.length > 1) out.push(this.crumbs(v.legs), this.legsBox(v.legs.slice(0, -1), () => this.actions.showSchedule(v.legs.length - 2)));
+    if (v.legs.length > 1) out.push(this.legsBox(v.legs.slice(0, -1), () => this.actions.showSchedule(v.legs.length - 2)));
     const before = sc.board, after = stops.length - 1 - sc.alight;
     out.push(
       h(
@@ -1526,7 +1547,6 @@ export class Panel {
     const k = js.changeCount;
     const sub = `${formatDateShort(first.refDate)} · ${fmtTime(js.depUtc, b0.tz)} – ${fmtTime(js.arrUtc, al.tz)} · ${fmtDuration(js.minutes)} · ${k ? `${k} change${k === 1 ? "" : "s"}` : "direct"}`;
     const out: Node[] = [this.header(title, sub, { back: true })];
-    if (v.undo) out.push(undoNote(v.undo));
     const counts: OnwardCount[] = [];
     const items: HTMLElement[] = [];
     const k0 = js.legs.length;
@@ -1779,7 +1799,6 @@ export class Panel {
         `${fmtDuration(total)} so far · ${changes === 0 ? "direct" : `${changes} change${changes > 1 ? "s" : ""}`}`,
         { back: true },
       ),
-      this.crumbs(legs),
       this.legsBox(legs, () => this.actions.reviewJourney()),
     ];
     if (multi) {
@@ -1841,7 +1860,7 @@ export class Panel {
     };
     const list = h("ol", { class: "conn-list" });
     const empty = h("p", { class: "pad muted" });
-    let all = false;
+    let all = v.covered;
     const note = h("p", { class: "pad muted small conn-hidden" });
     const render = () => {
       const conns = all ? v.all : v.conns;
@@ -1860,7 +1879,7 @@ export class Panel {
       const title = all
         ? "List only the departures to places the journey does not reach yet"
         : "Also list the departures and stops along this journey: to stop over, or for a later train the same way";
-      note.replaceChildren(`${what}. `, h("button", { type: "button", class: "link small", "aria-pressed": String(all), title, onclick: () => ((all = !all), render()) }, all ? "Hide them" : "Show them"));
+      note.replaceChildren(`${what}. `, h("button", { type: "button", class: "link small", "aria-pressed": String(all), title, onclick: () => ((all = !all), render(), this.actions.showCovered(all)) }, all ? "Hide them" : "Show them"));
     };
     render();
     // above the list, where it is seen before scrolling through it
@@ -1873,11 +1892,6 @@ export class Panel {
 /** "train", "coach", "bus": what a route's vehicle is called. */
 function vehicleWord(cat: number): string {
   return cat === Cat.Coach ? "coach" : cat === Cat.Bus ? "bus" : "train";
-}
-
-/** The notice of a leg just removed, with its undo button. */
-function undoNote(u: Undo): HTMLElement {
-  return h("p", { class: "undo-note", role: "status" }, h("span", null, u.text), h("button", { type: "button", class: "link small", onclick: u.run }, "Undo"));
 }
 
 /**
