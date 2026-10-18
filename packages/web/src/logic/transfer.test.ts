@@ -191,3 +191,63 @@ describe("journeys with changes", () => {
     expect(new Date(j!.arrUtc).toISOString()).toBe("2026-10-20T22:50:00.000Z");
   });
 });
+
+describe("journeys: route options", () => {
+  // O origin; P, M, Q change cities; N target. Brands: 1 Intercités, 2 TGV, 3 TER
+  const C2: Record<string, number[]> = { O: [0], P: [1, 2], M: [3], Q: [4], N: [5] };
+  const nm = Object.keys(C2);
+  const id = (n: string) => nm.indexOf(n);
+  const sc = new Int32Array(6).fill(-1);
+  nm.forEach((n, i) => C2[n]!.forEach((s) => (sc[s] = i)));
+  const net2: TtNet = { stationCity: sc, cityStations: (c) => C2[nm[c]!]!, cityTz: nm.map(() => "Europe/Berlin"), timezones: ["Europe/Berlin"], brands: ["", "Intercités", "TGV", "TER", "Zou"], cal };
+  const IC = 1, TGV = 2, TER = 3;
+  const b = (brand: number, p: TtPatternIn): TtPatternIn => ({ ...p, brand });
+  const base: TtPatternIn[] = [
+    b(IC, pat(Cat.LongDistance, [[0, 0], [3, 386]], [h(6, 10)])), // O 06:10 → M 12:36
+    b(TGV, pat(Cat.LongDistance, [[0, 0], [1, 129]], [h(6, 46)])), // O 06:46 → P 08:55
+    b(TGV, pat(Cat.LongDistance, [[2, 0], [3, 198], [5, 356]], [h(10, 10)])), // P 10:10 → M 13:28 → N 16:06
+    b(TER, pat(Cat.Regional, [[3, 0], [5, 160]], [h(13), h(17)])), // M 13:00 / 17:00 → N +2:40
+    b(TGV, pat(Cat.LongDistance, [[0, 0], [4, 140]], [h(6, 40)])), // O 06:40 → Q 09:00
+    b(TGV, pat(Cat.LongDistance, [[4, 0], [5, 420]], [h(9, 30)])), // Q 09:30 → N 16:30
+  ];
+  const search = (pats: TtPatternIn[], over: Partial<SearchParams> = {}, walkMin = 25) => {
+    const st = new TtStore(6);
+    st.addChunk(decodeTtChunk(encodeTtChunk({ patterns: pats, walk: [[1, 2, walkMin]] })));
+    const s = new TransferSearch(st, net2, { origin: id("O"), target: id("N"), date: DATE, cats: 15, transfers: 1, minTransfer: 10, maxWait: null, ...over });
+    while (!s.done) s.round();
+    const fmt = (u: number) => new Date(u).toISOString().slice(11, 16);
+    return s.journeys().map((j) => `${fmt(j.depUtc)}-${fmt(j.arrUtc)} ${j.legs.map((l) => `${l.brand}@${nm[sc[l.stations[l.board]!]!]}`).join(" ")}`);
+  };
+  // times in UTC (CEST − 2 h)
+  it("keeps a slower option of other brands and every onward service at the change", () => {
+    expect(search(base)).toEqual([
+      "04:10-13:40 Intercités@O TER@M", // Intercités → M → TER (13:00), the 17:00 TER is later on the same option
+      "04:10-14:06 Intercités@O TGV@M", // beaten on time by TGV → P → TGV (same TGV), but other brands
+      "04:46-14:06 TGV@O TGV@P", // the change at Q (06:40 → 16:30, same brands) is beaten by it
+    ]);
+  });
+  it("drops options beaten by fewer changes without another brand", () => {
+    // a direct TGV 07:00 → 15:00 beats both journeys with a TGV leg, not the Intercités + TER
+    const direct = b(TGV, pat(Cat.LongDistance, [[0, 0], [5, 480]], [h(7)]));
+    expect(search([...base, direct])).toEqual(["04:10-13:40 Intercités@O TER@M", "05:00-13:00 TGV@O"]);
+  });
+  it("keeps one of journeys at the same times with the same modes and changes", () => {
+    const zou = b(4, pat(Cat.Regional, [[3, 0], [5, 160]], [h(13)])); // another brand, same run times as the 13:00 TER
+    expect(search([...base, zou], { cats: Cat.LongDistance | Cat.Regional })).toHaveLength(3);
+  });
+  it("does not wait out the night after a change reached after midnight (same day)", () => {
+    const late = [
+      b(TER, pat(Cat.Regional, [[0, 0], [3, 70]], [h(23)])), // O 23:00 → M 00:10
+      b(TER, pat(Cat.Regional, [[3, 0], [5, 60]], [h(1), h(6)])), // M 01:00 / 06:00 → N
+    ];
+    expect(search(late)).toEqual(["21:00-00:00 TER@O TER@M"]); // the 01:00, not the 06:00
+    expect(search([late[0]!, b(TER, pat(Cat.Regional, [[3, 0], [5, 60]], [h(6)]))])).toEqual([]);
+    expect(search([late[0]!, b(TER, pat(Cat.Regional, [[3, 0], [5, 60]], [h(6)]))], { maxWait: 360 })).toEqual(["21:00-05:00 TER@O TER@M"]);
+  });
+  it("applies the mode filter and walks between stations of the change city", () => {
+    expect(search(base, { cats: Cat.LongDistance })).toEqual(["04:10-14:06 Intercités@O TGV@M", "04:46-14:06 TGV@O TGV@P"]);
+    // P 08:55, then a walk to the other station for the 10:10 TGV: 75 min are enough, 80 are not
+    expect(search(base, { cats: Cat.LongDistance }, 75)).toEqual(["04:10-14:06 Intercités@O TGV@M", "04:46-14:06 TGV@O TGV@P"]);
+    expect(search(base, { cats: Cat.LongDistance }, 80)).toEqual(["04:10-14:06 Intercités@O TGV@M", "04:40-14:30 TGV@O TGV@Q"]);
+  });
+});

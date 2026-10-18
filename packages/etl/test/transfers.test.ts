@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Cat, cityChunks, decodeTtChunk, decodeTtLines, type City, type CityFile, type TtIndex } from "@etbm/shared";
+import { Cat, cityChunks, decodeTtChunk, decodeTtLines, routeBrand, type City, type CityFile, type TtIndex } from "@etbm/shared";
 import { gunzipSync } from "node:zlib";
 import { TransferCollector } from "../src/transfers.ts";
 
@@ -7,7 +7,7 @@ const city = (id: number, lon: number, stations: number[]): City => ({ id, name:
 const cities = [city(0, 0, [0, 1]), city(1, 1, [2]), city(2, 2, [3])];
 const routes = [
   { name: "IC", agency: "A", cat: Cat.LongDistance, flags: 0 },
-  { name: "RB", agency: "A", cat: Cat.Regional, flags: 0 },
+  { name: "RB 21", agency: "A", cat: Cat.Regional, flags: 0 },
 ];
 const ic = { route: 0, stations: [0, 2, 3], arr: [0, 30, 60], dep: [0, 31, 60], corridors: [10, 11], headsign: "C2" };
 const rb = { route: 1, stations: [1, 2], arr: [0, 20], dep: [0, 20], corridors: [12], headsign: "C1" };
@@ -42,8 +42,30 @@ describe("transfer timetable (ETL)", () => {
     expect(Array.from(region.trStart)).toEqual([500, 530]);
     expect(Array.from(region.trCal)).toEqual([0, 1]);
     expect(Array.from(region.walk)).toEqual([0, 1, 7]);
+    // brands: the route names without line numbers, per pattern
+    expect(idx.brands).toEqual(["IC", "RB"]);
+    expect(Array.from(trunk.pBrand)).toEqual([0]);
+    expect(Array.from(region.pBrand)).toEqual([1]);
     const lines = decodeTtLines(gunzipSync(files.get(`tt/${k}.lines.gz`) as Uint8Array));
     expect(Array.from(lines.cId)).toEqual([12]);
     expect(Array.from(lines.cSegCodes)).toEqual([-13]);
+  });
+});
+
+describe("routeBrand", () => {
+  it("drops line and train numbers, a bare line code gives the agency", () => {
+    expect(routeBrand("TGV INOUI")).toBe("TGV INOUI");
+    expect(routeBrand("FlixBus N1138")).toBe("FlixBus");
+    expect(routeBrand("RE 7")).toBe("RE");
+    expect(routeBrand("EC 35")).toBe("EC");
+    expect(routeBrand("IC 850 TÓPART")).toBe("IC");
+    expect(routeBrand("ALSA - Irun-Tuy")).toBe("ALSA");
+    expect(routeBrand("S-Bahn S3")).toBe("S-Bahn");
+    expect(routeBrand("Marseille-St-Charles/Paris-Gare-de-Lyon")).toBe("Marseille-St-Charles/Paris-Gare-de-Lyon");
+    expect(routeBrand("Intercités de Nuit")).toBe("Intercités de Nuit");
+    expect(routeBrand("S1", "S-Bahn Berlin")).toBe("S-Bahn Berlin");
+    expect(routeBrand("7", "Stagecoach")).toBe("Stagecoach");
+    expect(routeBrand("QIWI", "RER", Cat.Regional)).toBe("RER");
+    expect(routeBrand("AVLO", "Renfe", Cat.LongDistance)).toBe("AVLO");
   });
 });

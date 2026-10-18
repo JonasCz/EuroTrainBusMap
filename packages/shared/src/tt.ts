@@ -18,7 +18,10 @@
  * changes on the map.
  */
 
-export const TT_VERSION = 1;
+/** 2: a brand per pattern (TtChunk.pBrand, TtIndex.brands); version 1 chunks still decode (no brands). */
+export const TT_VERSION = 2;
+/** Version of the line files (unchanged by the brands). */
+export const TT_LINES_VERSION = 1;
 
 export interface TtIndex {
   version: number;
@@ -26,6 +29,26 @@ export interface TtIndex {
   chunks: { file: string; lines: string; bytes: number; lineBytes: number; patterns: number; trips: number }[];
   /** chunk of every city (city id → index into `chunks`), one character each: TT_ALPHABET[chunk] */
   cityChunk: string;
+  /** brand names (TtChunk.pBrand indexes them; see routeBrand); missing before version 2 */
+  brands?: string[];
+}
+
+/**
+ * The brand of a route, telling services of one mode apart in connections with changes ("TGV INOUI" vs
+ * "Intercités", "TER", "FlixBus"): the words of its name before the first one with a digit ("FlixBus N1138" →
+ * "FlixBus", "IC 850 TÓPART" → "IC", "RE 7" → "RE") and before a route description ("ALSA - Irun-Tuy" → "ALSA");
+ * a name that is only a line code ("S1", "C2", "7"), or regional rail named by a mission code ("QIWI"), gives the agency.
+ */
+export function routeBrand(name: string, agency = "", cat = 0): string {
+  // regional rail named by its mission code (RER / Transilien "QIWI", "KALI"): the agency
+  if (cat === 2 && /^[A-Z]{4}$/.test(name.trim())) return agency.trim() || name.trim();
+  const words = name.trim().split(/\s+/);
+  const i = words.findIndex((w) => /\d/.test(w));
+  let b = (i >= 0 ? words.slice(0, i) : words).join(" ");
+  const dash = b.indexOf(" - ");
+  if (dash >= 2) b = b.slice(0, dash);
+  b = b.replace(/[\s:,/–-]+$/, "");
+  return b.length >= 2 ? b : agency.trim() || name.trim();
 }
 
 export const TT_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-";
@@ -36,6 +59,8 @@ export interface TtChunk {
   pId: Int32Array;
   /** Cat bit per pattern */
   pCat: Uint8Array;
+  /** brand per pattern (TtIndex.brands; 0 in version 1 chunks) */
+  pBrand: Int32Array;
   /** timezone index per pattern (NetworkFile.timezones) */
   pTz: Uint16Array;
   /** stop offsets: stops of pattern p are pStop[p] … pStop[p+1]-1 */
@@ -72,6 +97,8 @@ export interface TtPatternIn {
   id: number;
   cat: number;
   tz: number;
+  /** index into TtIndex.brands */
+  brand?: number;
   stations: number[];
   arr: number[];
   dep: number[];
@@ -154,6 +181,7 @@ export function encodeTtChunk(c: TtChunkIn): Uint8Array {
     pid = p.id;
     w.u(p.cat);
     w.u(p.tz);
+    w.u(p.brand ?? 0);
     const n = p.stations.length;
     w.u(n);
     let prev = 0;
@@ -193,7 +221,7 @@ export function encodeTtChunk(c: TtChunkIn): Uint8Array {
 export function encodeTtLines(c: TtLinesIn): Uint8Array {
   const w = new Writer();
   w.u(MAGIC_LINES);
-  w.u(TT_VERSION);
+  w.u(TT_LINES_VERSION);
   const cors = [...c.corridors].sort((a, b) => a.id - b.id);
   w.u(cors.length);
   let cid = 0, pc = 0;
@@ -230,9 +258,9 @@ export function decodeTtChunk(bytes: Uint8Array): TtChunk {
   const r = new Reader(bytes);
   if (r.u() !== MAGIC) throw new Error("not a transfer timetable chunk");
   const v = r.u();
-  if (v !== TT_VERSION) throw new Error(`transfer timetable version ${v}, expected ${TT_VERSION}`);
+  if (v !== TT_VERSION && v !== 1) throw new Error(`transfer timetable version ${v}, expected ${TT_VERSION}`);
   const nP = r.u();
-  const pId = new Int32Array(nP), pCat = new Uint8Array(nP), pTz = new Uint16Array(nP);
+  const pId = new Int32Array(nP), pCat = new Uint8Array(nP), pTz = new Uint16Array(nP), pBrand = new Int32Array(nP);
   const pStop = new Int32Array(nP + 1), pTrip = new Int32Array(nP + 1);
   const st = new Grow(), arr = new Grow(), dep = new Grow(), ts = new Grow(), tc = new Grow();
   let pid = 0;
@@ -241,6 +269,7 @@ export function decodeTtChunk(bytes: Uint8Array): TtChunk {
     pId[p] = pid;
     pCat[p] = r.u();
     pTz[p] = r.u();
+    if (v >= 2) pBrand[p] = r.u();
     const n = r.u();
     let prev = 0;
     for (let i = 0; i < n; i++) {
@@ -277,7 +306,7 @@ export function decodeTtChunk(bytes: Uint8Array): TtChunk {
     walk[3 * i + 2] = r.u();
   }
   return {
-    pId, pCat, pTz, pStop,
+    pId, pCat, pTz, pBrand, pStop,
     stStation: st.done(), stArr: arr.done(), stDep: dep.done(),
     pTrip, trStart: ts.done(), trCal: tc.done(),
     walk,
@@ -288,7 +317,7 @@ export function decodeTtLines(bytes: Uint8Array): TtLines {
   const r = new Reader(bytes);
   if (r.u() !== MAGIC_LINES) throw new Error("not a transfer line file");
   const v = r.u();
-  if (v !== TT_VERSION) throw new Error(`transfer line file version ${v}, expected ${TT_VERSION}`);
+  if (v !== TT_LINES_VERSION) throw new Error(`transfer line file version ${v}, expected ${TT_LINES_VERSION}`);
   const nC = r.u();
   const cId = new Int32Array(nC), cA = new Int32Array(nC), cB = new Int32Array(nC), cSeg = new Int32Array(nC + 1);
   const codes = new Grow();

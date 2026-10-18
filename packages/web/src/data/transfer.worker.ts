@@ -205,6 +205,7 @@ scope.onmessage = (e) => {
       cityStations: (c) => msg.cityStations.subarray(msg.cityStart[c]!, msg.cityStart[c + 1]!),
       cityTz: tzNames,
       timezones: msg.timezones,
+      ...(msg.index.brands ? { brands: msg.index.brands } : {}),
       cal,
     };
     store = new TtStore(msg.stationCity.length);

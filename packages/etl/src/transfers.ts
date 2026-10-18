@@ -4,7 +4,7 @@
  * regional chunks (regional rail + bus by area) – for the web app's search of connections with changes.
  */
 import { gzipSync } from "node:zlib";
-import { Cat, TT_ALPHABET, TT_VERSION, encodeTtChunk, encodeTtLines, segId, type City, type CityFile, type Segment, type TtIndex, type TtLinesIn, type TtPatternIn } from "@etbm/shared";
+import { Cat, TT_ALPHABET, TT_VERSION, encodeTtChunk, routeBrand, encodeTtLines, segId, type City, type CityFile, type Segment, type TtIndex, type TtLinesIn, type TtPatternIn } from "@etbm/shared";
 import { simplifyLine } from "./util/geo.ts";
 
 /** Geometry tolerance of the lines drawn for connections with changes (thin, faded lines). */
@@ -21,17 +21,24 @@ export class TransferCollector {
   private byKey = new Map<string, Pat>();
   private list: Pat[] = [];
   private walk = new Map<number, Map<string, [number, number, number]>>();
+  /** brand names (routeBrand) → index */
+  private brands = new Map<string, number>();
 
   /** Add the patterns / trips / walking transfers of one CityFile (patterns seen before are merged). */
   add(cf: CityFile): void {
     const refs: Pat[] = [];
     cf.patterns.forEach((p, i) => {
-      const cat = cf.routes[p.route]?.cat ?? Cat.Bus;
+      const route = cf.routes[p.route];
+      const cat = route?.cat ?? Cat.Bus;
       const tz = cf.patternTz[i] ?? 0;
-      const key = `${cat}|${tz}|${p.stations.join(",")}|${p.arr.join(",")}|${p.dep.join(",")}`;
+      // regional buses: the mode is enough (route names are line numbers or place lists)
+      const bn = route && cat !== Cat.Bus ? routeBrand(route.name, route.agency, cat) : "";
+      let brand = this.brands.get(bn);
+      if (brand === undefined) this.brands.set(bn, (brand = this.brands.size));
+      const key = `${cat}|${tz}|${brand}|${p.stations.join(",")}|${p.arr.join(",")}|${p.dep.join(",")}`;
       let e = this.byKey.get(key);
       if (!e) {
-        e = { id: this.list.length, cat, tz, stations: p.stations, arr: p.arr, dep: p.dep, trips: [], corridors: p.corridors, tripKeys: new Set() };
+        e = { id: this.list.length, cat, tz, brand, stations: p.stations, arr: p.arr, dep: p.dep, trips: [], corridors: p.corridors, tripKeys: new Set() };
         this.byKey.set(key, e);
         this.list.push(e);
       }
@@ -128,7 +135,7 @@ export class TransferCollector {
       }
       return s;
     };
-    const index: TtIndex = { version: TT_VERSION, chunks: [], cityChunk: "" };
+    const index: TtIndex = { version: TT_VERSION, chunks: [], cityChunk: "", brands: [...this.brands.keys()] };
     let bytes = 0;
     for (let k = 0; k < nChunks; k++) {
       const pats = chunkPats[k]!;

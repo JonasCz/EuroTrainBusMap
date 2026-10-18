@@ -16,6 +16,7 @@ import { STATION_ZOOM } from "./map/lod.ts";
 import type { MapView, Highlight } from "./map/mapview.ts";
 import { Panel, type View } from "./ui/panel.ts";
 import { parseHash, storeSettings, toHash, type AppState } from "./ui/state.ts";
+import { groupJourneys } from "./logic/journeygroups.ts";
 import { TransferClient, matchLeg, type ReachLines, type ReachRound } from "./data/transfer.ts";
 import type { Journey, SearchParams, TransferSettings } from "./logic/transfer.ts";
 import type { JourneyRow, XferDest, XferView } from "./ui/panel.ts";
@@ -24,6 +25,8 @@ import type { Reach } from "./logic/reach.ts";
 export const CONNECTION_WINDOW_MIN = 180;
 /** Places reached with connections drawn as emphasised dots / labels (the most important ones). */
 const MAP_XFER_CITIES = 1500;
+/** Most journeys listed in the journeys view (whole route options, the best first). */
+const JOURNEY_ROWS = 150;
 
 /** A value computed on first use (e.g. the date picker's service days, only needed when it opens). */
 function lazy<T>(f: () => T): () => T {
@@ -422,7 +425,13 @@ export class App {
       if (!p) files.set(c, (p = loadCity(net.ds, c).catch(() => null)));
       return p;
     };
-    for (const j of res.journeys.slice(0, 80)) rows.push(await this.journeyRow(j, fileOf, traffic));
+    // the best route options first, up to JOURNEY_ROWS journeys (each resolved against the boarding cities' timetables)
+    const picked: Journey[] = [];
+    for (const g of groupJourneys(res.journeys, (j) => j, () => [], net.ctx.stationCity)) {
+      if (picked.length && picked.length + g.rows.length > JOURNEY_ROWS) break;
+      picked.push(...g.rows);
+    }
+    for (const j of picked) rows.push(await this.journeyRow(j, fileOf, traffic));
     if (stale()) return;
     const corridors = trafficCats(traffic);
     this.panel.show({ ...base, status: "done", rows });

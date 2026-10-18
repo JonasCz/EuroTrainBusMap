@@ -8,7 +8,11 @@
  * there: no earlier than the transfer time (the minimum transfer time at the same station; between two stations
  * of the city the walk between them, see packages/shared/src/walk.ts, and at least the minimum transfer time;
  * stations too far apart to walk, i.e. without a walking transfer in the chunks, have no transfer) and no later
- * than the maximum wait (or, with "same day", before local midnight of the arrival). Mode filters apply to every leg.
+ * than the maximum wait (or, with "same day", before local midnight of the arrival, see sameDayLimit). Mode filters
+ * apply to every leg.
+ *
+ * Journeys between a pair (`target`) run the earlier rounds only to load the chunks and finish with a search per
+ * route option (brands of the legs), see searchOptions.
  *
  * The search is resumable round by round, so the caller can load the chunks of the cities where the next
  * round changes (`boardCities`) before running it.
@@ -40,6 +44,8 @@ export interface TtNet {
   cityTz: ArrayLike<string>;
   /** IANA tz names indexed by TtChunk.pTz */
   timezones: ArrayLike<string>;
+  /** brand names indexed by TtChunk.pBrand (TtIndex.brands; missing for version 1 data) */
+  brands?: ArrayLike<string>;
   cal: CalIndex;
 }
 
@@ -152,6 +158,8 @@ export interface JourneyLeg {
   arr: number[];
   dep: number[];
   cat: number;
+  /** brand of the service (routeBrand, e.g. "TGV INOUI", "TER"; "" without brands in the data) */
+  brand: string;
   /** trip start (minutes, pattern tz) and calendar */
   start: number;
   cal: number;
@@ -186,12 +194,13 @@ export class TransferSearch {
   private calDays: Int16Array;
   private midnights = new Map<string, number[]>();
   // events of every stored round
-  private ev = { station: new Grow(), time: new Grow(), dep0: new Grow(), prev: new Grow(), ref: new Grow(), trip: new Grow(), dd: new Grow(), board: new Grow(), alight: new Grow() };
+  private ev: Events = newEvents();
+  /** events of the route-option search (journeys mode) */
+  private dv: Events = newEvents();
   private roundStart: number[] = [0];
   /** events of the last round grouped: city → station groups (station, sorted event indices) */
   private groups = new Map<number, { station: number; evs: Int32Array }[]>();
   readonly out: ReachLevels;
-  private journeysOut: { ev: number; round: number }[] = [];
   private nCities: number;
 
   constructor(
@@ -297,6 +306,12 @@ export class TransferSearch {
   /** Run the next round. */
   round(): void {
     if (this.done) return;
+    if (this.params.target !== undefined && this.rounds + 1 === this.maxRounds) {
+      // journeys mode: the earlier rounds only loaded the chunks; the journeys come from the route-option search
+      this.rounds++;
+      this.searchOptions();
+      return;
+    }
     const r = ++this.rounds;
     const P = this.params;
     const store = this.store;
@@ -350,10 +365,6 @@ export class TransferSearch {
       const et = ev.time.a, ed = ev.dep0.a;
       for (const [city, groups] of this.groups) {
         const mids = this.midnightsOf(city);
-        const nextMid = (t: number) => {
-          for (const x of mids) if (x > t) return x;
-          return t + 1440;
-        };
         // all arrivals in the city, by time: origin departure, station and the latest departure each one allows
         // (non-decreasing, so the arrivals that make a departure form one index range), with a range maximum
         // over the origin departures
@@ -375,7 +386,7 @@ export class TransferSearch {
           time[k] = et[x]!;
           dep0[k] = ed[x]!;
           eg[k] = flatG[f]!;
-          lim[k] = W === null ? nextMid(et[x]!) - 1 : et[x]! + W;
+          lim[k] = W === null ? sameDayLimit(mids, et[x]!) : et[x]! + W;
         }
         const all: Arrivals = { time, dep0, lim, evs, eg, rmq: new RangeMax(dep0, W === null ? lim : null) };
         // arrivals without the stations too far from a departure station to walk (cached by the excluded set)
@@ -515,7 +526,6 @@ export class TransferSearch {
     }
     o.hops.push(hopsOut.done());
     this.roundStart.push(ev.station.n);
-    if (P.target !== undefined) for (let x = roundFirst; x < ev.station.n; x++) if (sc[ev.station.a[x]!] === P.target) this.journeysOut.push({ ev: x, round: r });
     this.groupRound(roundFirst, ev.station.n);
   }
 
@@ -573,28 +583,332 @@ export class TransferSearch {
     }
   }
 
-  /** Complete journeys to the target (journeys mode), Pareto-optimal over departure, arrival and changes, by departure. */
+  /** Complete journeys to the target (journeys mode), by departure: the route options of searchOptions. */
   journeys(): Journey[] {
-    const ev = this.ev;
-    const all = this.journeysOut.map(({ ev: x, round }) => ({ x, round, dep0: ev.dep0.a[x]!, arr: ev.time.a[x]! }));
-    // Pareto sweep: later departures first; a journey is kept unless one departing no earlier arrives no later with no more changes
-    all.sort((a, b) => b.dep0 - a.dep0 || a.arr - b.arr || a.round - b.round);
-    const bestArr: number[] = [];
-    const keep = all.filter((a) => {
-      for (let r = 1; r <= a.round; r++) if (bestArr[r] !== undefined && bestArr[r]! <= a.arr) return false;
-      bestArr[a.round] = Math.min(bestArr[a.round] ?? Infinity, a.arr);
-      return true;
-    });
-    keep.sort((a, b) => a.dep0 - b.dep0 || a.arr - b.arr);
-    return keep.map((k) => {
-      const legs: JourneyLeg[] = [];
-      for (let x = k.x; x >= 0; x = ev.prev.a[x]!) legs.unshift(this.leg(x));
-      return { legs, depUtc: legs[0]!.depUtc, arrUtc: legs[legs.length - 1]!.arrUtc };
-    });
+    return this.options;
   }
 
-  private leg(x: number): JourneyLeg {
-    const ev = this.ev;
+  private options: Journey[] = [];
+
+  /**
+   * Journeys mode, run as the last round (the earlier rounds have loaded the chunks of every city a journey can
+   * change in): a round-based search whose labels are *route options* – the brands of the legs so far
+   * (TtChunk.pBrand: "Intercités", "TGV INOUI", "TER"; the mode without brands in the data) – instead of one label
+   * per trip. A trip is boarded once per option arriving in time (with the latest origin departure of that option),
+   * so a slower option (Intercités → Marseille → TGV) is not merged into a faster one riding the same trip
+   * (TGV → Paris → TGV), and every onward service of a change city (TER and TGV) is kept for every option arriving
+   * there. To keep this small, events are only stored where the target is still reachable with the legs left
+   * (cities whose patterns lead to the target, ignoring times).
+   *
+   * Results: per brand sequence the Pareto set over (later departure, earlier arrival), equal ones by the longest
+   * change; of journeys at the same times with the same modes and change cities one; a journey is dropped when one
+   * with fewer changes and no other brand departs no earlier and arrives no later, or when it takes more than twice
+   * the fastest journey + 1 h.
+   */
+  private searchOptions(): void {
+    const P = this.params, R = this.maxRounds, store = this.store, target = P.target!;
+    const B = store.boardings();
+    const sc = this.net.stationCity;
+    const rc = store.refChunk.a, rp = store.refP.a, rtb = store.refTripBase.a, chunks = store.chunks;
+    const nRef = store.refP.n;
+    const W = P.maxWait;
+    const cityOf = (s: number) => (s >= 0 && s < sc.length ? sc[s]! : -1);
+    // legs needed from a city to the target (time-independent; 255 = more than R − 1)
+    const dist = new Uint8Array(this.nCities).fill(255);
+    dist[target] = 0;
+    for (let m = 1; m < R; m++) {
+      for (let ref = 0; ref < nRef; ref++) {
+        const c = chunks[rc[ref]!]!, p = rp[ref]!;
+        if (!(c.pCat[p]! & P.cats)) continue;
+        const k0 = c.pStop[p]!;
+        let j = c.pStop[p + 1]! - 1;
+        for (; j > k0; j--) {
+          const city = cityOf(c.stStation[j]!);
+          if (city >= 0 && dist[city]! < m) break;
+        }
+        for (let i = k0; i < j; i++) {
+          const city = cityOf(c.stStation[i]!);
+          if (city >= 0 && dist[city]! > m) dist[city] = m;
+        }
+      }
+    }
+    const ok = (r: number, city: number) => city >= 0 && city !== P.origin && dist[city]! <= R - r;
+    // per round: last stop (pattern index) of a pattern where an event may be stored; -1 none, -2 not computed
+    const lastOk: Int32Array[] = [];
+    const lastOf = (r: number, ref: number): number => {
+      let a = lastOk[r];
+      if (!a) a = lastOk[r] = new Int32Array(nRef).fill(-2);
+      let v = a[ref]!;
+      if (v === -2) {
+        const c = chunks[rc[ref]!]!, p = rp[ref]!;
+        const k0 = c.pStop[p]!;
+        v = -1;
+        for (let j = c.pStop[p + 1]! - 1; j > k0; j--) {
+          if (ok(r, cityOf(c.stStation[j]!))) {
+            v = j - k0;
+            break;
+          }
+        }
+        a[ref] = v;
+      }
+      return v;
+    };
+    // route options: (previous option, brand, mode) interned; brands of an option, sorted and unique, as a string
+    const keys = new Map<number, number>();
+    const kLegs = new Grow(), kSet: string[] = [""], kList: number[][] = [[]];
+    kLegs.push(0);
+    const keyOf = (prev: number, ref: number): number => {
+      const c = chunks[rc[ref]!]!, p = rp[ref]!;
+      // without brands in the data (version 1) the mode stands for the brand
+      const brand = this.net.brands ? c.pBrand[p]! : -c.pCat[p]!;
+      const h = (prev * 2097152 + brand + 16) * 16 + c.pCat[p]!;
+      let k = keys.get(h);
+      if (k === undefined) {
+        k = kLegs.n;
+        keys.set(h, k);
+        kLegs.push(kLegs.a[prev]! + 1);
+        const list = [...kList[prev]!, brand];
+        kList.push(list);
+        kSet.push([...new Set(list)].sort((a, b) => a - b).join(","));
+      }
+      return k;
+    };
+    const ev = this.dv;
+    let from = 0;
+    for (let r = 1; r <= R; r++) {
+      // trip instances boarded this round and their boardings (stop, option, origin departure, previous event)
+      const inst = new Map<number, number>();
+      const iRef = new Grow(), iTrip = new Grow(), iDd = new Grow(), iHead = new Grow();
+      const bStop = new Grow(), bVal = new Grow(), bPrev = new Grow(), bKey = new Grow(), bNext = new Grow();
+      const add = (ref: number, t: number, t0: number, dd: number, stop: number, val: number, prev: number, key: number) => {
+        const ik = (rtb[ref]! + t - t0) * 8 + dd + 3;
+        let k = inst.get(ik);
+        if (k === undefined) {
+          k = iRef.n;
+          inst.set(ik, k);
+          iRef.push(ref); iTrip.push(t); iDd.push(dd); iHead.push(-1);
+        }
+        bStop.push(stop); bVal.push(val); bPrev.push(prev); bKey.push(key); bNext.push(iHead.a[k]!);
+        iHead.a[k] = bStop.n - 1;
+      };
+      if (r === 1) {
+        const stations = P.originStation !== undefined ? [P.originStation] : Array.from(this.net.cityStations(P.origin));
+        for (const s of stations) {
+          if (s >= store.nStations) continue;
+          for (let e = B.start[s]!; e < B.start[s + 1]!; e++) {
+            const ref = B.ref[e]!, i = B.stop[e]!;
+            const c = chunks[rc[ref]!]!, p = rp[ref]!;
+            if (!(c.pCat[p]! & P.cats) || lastOf(1, ref) <= i) continue;
+            const key = keyOf(0, ref);
+            const dep = c.stDep[c.pStop[p]! + i]!;
+            const t0 = c.pTrip[p]!, t1 = c.pTrip[p + 1]!;
+            for (let dd = -3; dd <= 0; dd++) {
+              const base = this.baseOf(c.pTz[p]!, dd) + dep;
+              for (let t = lowerBound(c.trStart, t0, t1, -base); t < t1 && c.trStart[t]! + base < this.dayLen; t++) {
+                if (this.runs(c.trCal[t]!, dd)) add(ref, t, t0, dd, i, c.trStart[t]! + base, -1, key);
+              }
+            }
+          }
+        }
+      } else {
+        // arrivals of the previous round per city, then per option and station: sorted by time, Pareto-pruned
+        const byCity = new Map<number, Map<number, number[]>>();
+        for (let x = from; x < ev.station.n; x++) {
+          const st = ev.station.a[x]!, city = cityOf(st);
+          if (city === target) continue;
+          let m = byCity.get(city);
+          if (!m) byCity.set(city, (m = new Map()));
+          const gk = ev.key.a[x]! * store.nStations + st;
+          let g = m.get(gk);
+          if (!g) m.set(gk, (g = []));
+          g.push(x);
+        }
+        for (const [city, subs] of byCity) {
+          const mids = this.midnightsOf(city);
+          const groups: OptionArrivals[] = [];
+          let cityLo = Infinity, cityHi = -Infinity;
+          for (const [gk, xs] of subs) {
+            xs.sort((a, b) => ev.time.a[a]! - ev.time.a[b]! || ev.dep0.a[b]! - ev.dep0.a[a]!);
+            const time: number[] = [], dep0: number[] = [], lim: number[] = [], evs: number[] = [];
+            for (const x of xs) {
+              const t = ev.time.a[x]!, d0 = ev.dep0.a[x]!;
+              const l = W === null ? sameDayLimit(mids, t) : t + W;
+              // same day: an arrival is useless when an earlier one of the option (same day) departed no earlier
+              if (W === null && time.length && lim[lim.length - 1] === l && dep0[dep0.length - 1]! >= d0) continue;
+              time.push(t); dep0.push(d0); lim.push(l); evs.push(x);
+            }
+            const g: OptionArrivals = {
+              key: Math.floor(gk / store.nStations), station: gk % store.nStations,
+              time: Int32Array.from(time), dep0: Int32Array.from(dep0), lim: Int32Array.from(lim), evs: Int32Array.from(evs), rmq: null!,
+            };
+            g.rmq = new RangeMax(g.dep0, W === null ? g.lim : null);
+            groups.push(g);
+            cityLo = Math.min(cityLo, time[0]! + P.minTransfer);
+            cityHi = Math.max(cityHi, lim[lim.length - 1]!);
+          }
+          const xg = new Float64Array(groups.length);
+          const stations = this.net.cityStations(city);
+          for (let si = 0; si < stations.length; si++) {
+            const s2 = stations[si]!;
+            if (s2 >= store.nStations || B.start[s2] === B.start[s2 + 1]) continue;
+            let near = 0;
+            for (let gi = 0; gi < groups.length; gi++) if ((xg[gi] = this.transferMin(groups[gi]!.station, s2)) !== Infinity) near++;
+            if (!near) continue;
+            for (let e = B.start[s2]!; e < B.start[s2 + 1]!; e++) {
+              const ref = B.ref[e]!, i = B.stop[e]!;
+              const c = chunks[rc[ref]!]!, p = rp[ref]!;
+              const cat = c.pCat[p]!;
+              if (!(cat & P.cats) || lastOf(r, ref) <= i) continue;
+              const dep = c.stDep[c.pStop[p]! + i]!;
+              const t0 = c.pTrip[p]!, t1 = c.pTrip[p + 1]!;
+              const trStart = c.trStart, days = this.tripDays(c);
+              const sMin = trStart[t0]!, sMax = trStart[t1 - 1]!;
+              const tz = c.pTz[p]!;
+              for (let dd = -2; dd <= 3; dd++) {
+                const base = this.baseOf(tz, dd) + dep;
+                if (sMax + base < cityLo || sMin + base > cityHi) continue;
+                const bit = 1 << (dd + 4);
+                for (let t = lowerBound(trStart, t0, t1, cityLo - base); t < t1; t++) {
+                  const d = trStart[t]! + base;
+                  if (d > cityHi) break;
+                  if (!(days[t]! & bit)) continue;
+                  for (let gi = 0; gi < groups.length; gi++) {
+                    const x = xg[gi]!;
+                    if (x === Infinity) continue;
+                    const g = groups[gi]!;
+                    if (d < g.time[0]! + x) continue;
+                    const hiK = upperBound(g.time, d - x) - 1;
+                    if (hiK < 0 || g.lim[hiK]! < d) continue;
+                    const best = g.rmq.argmax(lowerBound(g.lim, 0, hiK + 1, d), hiK);
+                    add(ref, t, t0, dd, i, g.dep0[best]!, g.evs[best]!, keyOf(g.key, ref));
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      // ride: an event per option at every later stop where the target can still be reached
+      from = ev.station.n;
+      const order: number[] = [];
+      const aKey: number[] = [], aVal: number[] = [], aB: number[] = [];
+      for (let k = 0; k < iRef.n; k++) {
+        order.length = 0;
+        for (let b = iHead.a[k]!; b >= 0; b = bNext.a[b]!) order.push(b);
+        if (order.length > 1) order.sort((x, y) => bStop.a[x]! - bStop.a[y]!);
+        const ref = iRef.a[k]!, t = iTrip.a[k]!, dd = iDd.a[k]!;
+        const c = chunks[rc[ref]!]!, p = rp[ref]!;
+        const k0 = c.pStop[p]!;
+        const base = this.baseOf(c.pTz[p]!, dd) + c.trStart[t]!;
+        const end = lastOf(r, ref);
+        aKey.length = aVal.length = aB.length = 0;
+        let oi = 0;
+        for (let j = bStop.a[order[0]!]! + 1; j <= end; j++) {
+          for (; oi < order.length && bStop.a[order[oi]!]! < j; oi++) {
+            const b = order[oi]!, key = bKey.a[b]!;
+            const a = aKey.indexOf(key);
+            if (a < 0) {
+              aKey.push(key); aVal.push(bVal.a[b]!); aB.push(b);
+            } else if (bVal.a[b]! > aVal[a]!) {
+              aVal[a] = bVal.a[b]!;
+              aB[a] = b;
+            }
+          }
+          const sb = c.stStation[k0 + j]!;
+          if (!ok(r, cityOf(sb))) continue;
+          const time = base + c.stArr[k0 + j]!;
+          for (let a = 0; a < aKey.length; a++) {
+            const b = aB[a]!;
+            ev.station.push(sb); ev.time.push(time); ev.dep0.push(aVal[a]!); ev.prev.push(bPrev.a[b]!);
+            ev.ref.push(ref); ev.trip.push(t); ev.dd.push(dd); ev.board.push(bStop.a[b]!); ev.alight.push(j); ev.key.push(aKey[a]!);
+          }
+        }
+      }
+    }
+    // ---- journeys at the target
+    const fin: { x: number; key: number; dep0: number; arr: number; wait: number }[] = [];
+    for (let x = 0; x < ev.station.n; x++) {
+      if (cityOf(ev.station.a[x]!) !== target) continue;
+      // shortest change (between arrival and departure, minutes)
+      let wait = Infinity;
+      for (let y = x; ev.prev.a[y]! >= 0; y = ev.prev.a[y]!) wait = Math.min(wait, this.depTime(y, ev) - ev.time.a[ev.prev.a[y]!]!);
+      fin.push({ x, key: ev.key.a[x]!, dep0: ev.dep0.a[x]!, arr: ev.time.a[x]!, wait });
+    }
+    // per brand sequence (whatever the change cities): later departure first, a journey is kept when it arrives earlier
+    // than every one departing no earlier; of equal ones the one with the longest change
+    const seq = (k: number) => kList[k]!.join(",");
+    fin.sort((a, b) => (seq(a.key) < seq(b.key) ? -1 : seq(a.key) > seq(b.key) ? 1 : 0) || b.dep0 - a.dep0 || a.arr - b.arr || b.wait - a.wait);
+    const pareto: typeof fin = [];
+    let bestArr = Infinity;
+    for (let q = 0; q < fin.length; q++) {
+      const f = fin[q]!;
+      if (q === 0 || seq(fin[q - 1]!.key) !== seq(f.key)) bestArr = Infinity;
+      if (f.arr >= bestArr) continue;
+      bestArr = f.arr;
+      pareto.push(f);
+    }
+    // journeys at the same times with the same modes and change cities (other brands of one mode, e.g. two suburban
+    // trains to the same station): one is enough, the one with the longest change
+    const same = new Map<string, (typeof pareto)[number]>();
+    for (const f of pareto) {
+      let k = `${f.dep0}|${f.arr}`;
+      for (let y = f.x; y >= 0; y = ev.prev.a[y]!) {
+        const { c, p } = this.store.ref(ev.ref.a[y]!);
+        k += `|${c.pCat[p]}@${cityOf(c.stStation[c.pStop[p]! + ev.board.a[y]!]!)}`;
+      }
+      const o = same.get(k);
+      if (!o || o.wait < f.wait) same.set(k, f);
+    }
+    const distinct = new Set(same.values());
+    // a journey with fewer changes and no other brand that departs no earlier and arrives no later beats it
+    const stairs = new Map<string, { dep: number[]; minArr: number[] }>();
+    const byDep = pareto.filter((f) => distinct.has(f)).sort((a, b) => b.dep0 - a.dep0);
+    for (const f of byDep) {
+      const sk = `${kLegs.a[f.key]}|${kSet[f.key]}`;
+      let st = stairs.get(sk);
+      if (!st) stairs.set(sk, (st = { dep: [], minArr: [] }));
+      st.dep.push(f.dep0);
+      st.minArr.push(Math.min(f.arr, st.minArr[st.minArr.length - 1] ?? Infinity));
+    }
+    const fastest = byDep.reduce((m, f) => Math.min(m, f.arr - f.dep0), Infinity);
+    const kept = byDep.filter((f) => {
+      // far slower than the fastest journey of the day (waits overnight and the like)
+      if (f.arr - f.dep0 > 2 * fastest + 60) return false;
+      const legs = kLegs.a[f.key]!;
+      const brands = kSet[f.key]!.split(",");
+      for (let mask = 1; mask < 1 << brands.length; mask++) {
+        const sub = brands.filter((_, i) => mask & (1 << i)).join(",");
+        for (let l = 1; l < legs; l++) {
+          const st = stairs.get(`${l}|${sub}`);
+          if (!st) continue;
+          // entries departing no earlier: dep sorted descending
+          let lo = 0, hi = st.dep.length;
+          while (lo < hi) {
+            const m = (lo + hi) >> 1;
+            if (st.dep[m]! >= f.dep0) lo = m + 1;
+            else hi = m;
+          }
+          if (lo > 0 && st.minArr[lo - 1]! <= f.arr) return false;
+        }
+      }
+      return true;
+    });
+    this.options = kept
+      .map((f) => {
+        const legs: JourneyLeg[] = [];
+        for (let x = f.x; x >= 0; x = ev.prev.a[x]!) legs.unshift(this.leg(x, ev));
+        return { legs, depUtc: legs[0]!.depUtc, arrUtc: legs[legs.length - 1]!.arrUtc };
+      })
+      .sort((a, b) => a.depUtc - b.depUtc || a.arrUtc - b.arrUtc || a.legs.length - b.legs.length);
+  }
+
+  /** Departure (minutes relative to t0) of the leg of event x at its boarding stop. */
+  private depTime(x: number, ev: Events): number {
+    const { c, p } = this.store.ref(ev.ref.a[x]!);
+    return this.baseOf(c.pTz[p]!, ev.dd.a[x]!) + c.trStart[ev.trip.a[x]!]! + c.stDep[c.pStop[p]! + ev.board.a[x]!]!;
+  }
+
+  private leg(x: number, ev: Events = this.ev): JourneyLeg {
     const { c, p } = this.store.ref(ev.ref.a[x]!);
     const k0 = c.pStop[p]!, k1 = c.pStop[p + 1]!;
     const t = ev.trip.a[x]!, dd = ev.dd.a[x]!;
@@ -606,6 +920,7 @@ export class TransferSearch {
       arr: Array.from(c.stArr.subarray(k0, k1)),
       dep: Array.from(c.stDep.subarray(k0, k1)),
       cat: c.pCat[p]!,
+      brand: this.net.brands?.[c.pBrand[p]!] ?? "",
       start: c.trStart[t]!,
       cal: c.trCal[t]!,
       serviceDate: addDays(this.params.date, dd),
@@ -615,6 +930,35 @@ export class TransferSearch {
       arrUtc: (this.t0 + base + c.stArr[k0 + alight]!) * 60000,
     };
   }
+}
+
+/** Arrival events: station, time, origin departure, previous event (−1: first leg), pattern ref, trip, day offset, boarding / alighting stop, route option. */
+interface Events {
+  station: Grow;
+  time: Grow;
+  dep0: Grow;
+  prev: Grow;
+  ref: Grow;
+  trip: Grow;
+  dd: Grow;
+  board: Grow;
+  alight: Grow;
+  key: Grow;
+}
+
+function newEvents(): Events {
+  return { station: new Grow(), time: new Grow(), dep0: new Grow(), prev: new Grow(), ref: new Grow(), trip: new Grow(), dd: new Grow(), board: new Grow(), alight: new Grow(), key: new Grow() };
+}
+
+/** Arrivals of one route option at one station of a city, by time (Pareto-pruned for "same day"), with a range max over the origin departures. */
+interface OptionArrivals {
+  key: number;
+  station: number;
+  time: Int32Array;
+  dep0: Int32Array;
+  lim: Int32Array;
+  evs: Int32Array;
+  rmq: RangeMax;
 }
 
 /**
@@ -690,6 +1034,23 @@ export class RangeMax {
     for (let k = hi - 1; k >= lo; k--) if (this.v[k]! > this.v[best]!) best = k;
     return best;
   }
+}
+
+/** Night hours after midnight during which an arrival still belongs to the previous evening ("same day" changes). */
+export const NIGHT_END_MIN = 240;
+
+/**
+ * Latest connecting departure for an arrival at `t` with "same day": before the next local midnight (`mids`: local
+ * midnights, ascending); an arrival after midnight but before NIGHT_END_MIN may not wait out the night (otherwise a
+ * short hop arriving at 00:05 would allow waiting until the next evening).
+ */
+function sameDayLimit(mids: number[], t: number): number {
+  let prev = -Infinity;
+  for (const m of mids) {
+    if (m > t) return t < prev + NIGHT_END_MIN ? prev + NIGHT_END_MIN - 1 : m - 1;
+    prev = m;
+  }
+  return t + 1439;
 }
 
 /** First index in [lo, hi) with a[i] >= x. */

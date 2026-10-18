@@ -156,16 +156,19 @@ Pipeline in short:
      "{m} destinations with 1 same-day connection" (and with 2) with a pencil that opens the settings dialog: number of connections
      (0 = direct only, the default; 1; 2), minimum transfer time (at the same station; a change between two stations of a city takes at
      least the walk between them, `CityFile.transfers`) and maximum waiting time (1–12 h or "same day":
-     the connecting departure leaves before local midnight of the arrival). The search runs for the travel day (the view's date, else
+     the connecting departure leaves before local midnight of the arrival; an arrival between midnight and 04:00 may not wait
+     out the night, `NIGHT_END_MIN`). The search runs for the travel day (the view's date, else
      today, origin-local; a date bar under the count changes it), mode filters apply to every leg. Lists: "Major destinations / Other
      places (direct)", then the same per level "(with 1 connection)", "(with 2 connections)", each place with the change city of its
      fastest journey ("via Limoges") and that journey's duration; lists of places with connections render 300 rows until "Show all" or
      a filter. On the map direct lines keep their colour and width, lines ridden after one change are drawn thin in the category colour
      at ~50 % opacity, after two changes at ~25 %, everything else stays grey (layer `hl-xfer`, built as GeoJSON in the worker); the
      1500 most important places reached with changes get lighter dots / labels. A place reached only with changes opens the
-     **journeys view** (a pair without a direct service, `renderJourneys`): the Pareto-optimal journeys of the day (later departure,
-     earlier arrival, fewer changes), each matched back to the boarding cities' shards (`matchLeg`) for route names; a journey opens
-     its legs (schedule of the last leg, crumbs, the walk between stations shown with the change).
+     **journeys view** (a pair without a direct service, `renderJourneys`): the journeys of the day grouped by *route option*
+     (`logic/journeygroups.ts`: the brand of every leg and the change cities, e.g. "Intercités → Marseille-St-Charles → TER" or
+     "TGV INOUI → Paris → TGV INOUI"; header with the duration range, changes and runs a day, below it one row per departure with
+     the change time and the walk), each journey matched back to the boarding cities' shards (`matchLeg`) for route names; a row
+     opens the journey's legs (schedule of the last leg, crumbs, the walk between stations shown with the change).
      - **Search**: round-based (RAPTOR-like) over trips, not a time-expanded graph. Round 1 boards every trip leaving the origin on
        the day and records an arrival event at every later stop (intermediate stops included); round r + 1 boards at every city
        reached in round r every trip whose departure is feasible after one of the city's arrivals (transfer time per station pair,
@@ -173,6 +176,19 @@ Pipeline in short:
        picks the latest origin departure in O(log n)). The last round of a reach search keeps one entry per pattern and boarding stop
        (the best "slack"), not per trip. Results per city: first round, fastest duration, change city, modes; hops ridden per round
        for the map.
+     - **Journeys between a pair** (`searchOptions`): a plain RAPTOR keeps one label per trip (the latest origin departure), so a
+       slower option riding into the same or another fast train is merged away (Bordeaux → Nice: Intercités → Marseille → TGV
+       vanished behind TGV → Paris → TGV, and TER onward services behind the TGV). The pair search therefore runs the earlier
+       rounds only to load the chunks, then a multi-label search whose label is the *brand sequence* of the legs so far
+       (`TtChunk.pBrand`, `routeBrand`: route name without line / train number, "FlixBus N1138" → "FlixBus"; regional buses
+       count by mode): a trip is boarded once per brand sequence arriving in time, every onward service of a change city is
+       kept per arriving sequence. Events are only stored in cities from which the target is still reachable with the legs left
+       (time-independent backward pass over the loaded patterns), which keeps it cheaper than the old single-label pair search.
+       Results: per brand sequence the Pareto set over (later departure, earlier arrival), ties by the longer change; a journey is
+       dropped when one with fewer changes and no other brand departs no earlier and arrives no later, or when it takes more than
+       twice the fastest journey + 1 h. Measured (Mon 19 Oct, all chunks loaded, desktop Node): Bordeaux → Nice rail 0.3 s,
+       all modes 0.75 s, Paris → Nice rail 0.5 s, London → Edinburgh 3.5 s (old: 0.4 / 2.8 / 2.0 / 5.1 s); in the browser
+       (dev build, headless Chromium, chunks not cached) Bordeaux → Nice 2.1 s, of which 1 s loading.
      - **Walking transfers** (`packages/shared/src/walk.ts`, used by the ETL and the web app): a change between two stations of a
        city is always a walk, never a metro / bus ride (local transport is not in the timetable), so its time is a conservative
        estimate for every station pair: straight-line distance × 1.3 (street detour) at 75 m/min (4.5 km/h) + 3 min, rounded up,
@@ -183,8 +199,8 @@ Pipeline in short:
        stations out of walking range of a departure station are left out of that station's range maximum (a filtered copy of the
        city's arrivals, cached per excluded set).
      - **Data** (`packages/shared/src/tt.ts`, written by the map-data stage, `src/transfers.ts`): every pattern and trip of the
-       shards deduplicated (412 k patterns, 2.19 M trips; shards repeat a pattern for every city it calls at, ~3 M times), as gzipped
-       varint chunks: chunk 0 = the *trunk* (all long-distance trains and coaches of Europe, 1.1 MB gz) and 32 regions (k-d split of
+       shards deduplicated (416 k patterns (a pattern per brand), 2.19 M trips; shards repeat a pattern for every city it calls at, ~3 M times), as gzipped
+       varint chunks (version 2: a brand per pattern, names in `TtIndex.brands`): chunk 0 = the *trunk* (all long-distance trains and coaches of Europe, 1.1 MB gz) and 32 regions (k-d split of
        the cities by regional rail / bus departures, 0.08–0.36 MB gz each; a regional pattern is in every region it can be boarded
        in), plus per chunk a line file (corridor → segment codes, segments simplified to 100 m, 1e-4° coordinates; 4.7 MB gz in
        all) and `tt/index.json` (chunk of every city). 8 MB + 4.7 MB gz, 67 files. A search loads the trunk plus the regions of the

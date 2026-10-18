@@ -16,6 +16,7 @@ import { fmtKm, routeTag, timeAt, timeEl } from "./format.ts";
 import { localIcon, modeIcon } from "./icons.ts";
 import { datePicker, focusPicker } from "./datepicker.ts";
 import { depCats, depsWith, type StationDeps } from "../logic/stations.ts";
+import { groupJourneys, type JourneyGroup } from "../logic/journeygroups.ts";
 
 export type View =
   | { kind: "intro" }
@@ -622,7 +623,7 @@ export class Panel {
     const k = v.settings.transfers;
     const sub =
       v.status === "done"
-        ? `${v.rows.length} journey${v.rows.length === 1 ? "" : "s"} with up to ${connWord(k)} · no direct service`
+        ? `${v.rows.length} journey${v.rows.length === 1 ? "" : "s"} with up to ${connWord(k)}${v.rows.length > 1 ? ` in ${countOptions(v.rows, n)}` : ""} · no direct service`
         : `No direct service · searching journeys with up to ${connWord(k)}…`;
     const out: Node[] = [this.header(title, sub, { back: true })];
     out.push(this.dateBar(v.date, v.today, () => new Set(), true));
@@ -645,60 +646,107 @@ export class Panel {
       return out;
     }
     const nowUtc = Date.now();
-    out.push(
-      h(
-        "ol",
-        { class: "tt-list jr-list", "aria-label": `Journeys ${a.name} to ${b.name}` },
-        v.rows.map((r) => {
-          const j = r.journey;
-          const first = j.legs[0]!, last = j.legs[j.legs.length - 1]!;
-          const depStation = first.stations[first.board]!, arrStation = last.stations[last.alight]!;
-          const mins = Math.round((j.arrUtc - j.depUtc) / 60000);
-          const changes: Node[] = [];
-          for (let i = 1; i < j.legs.length; i++) {
-            const p = j.legs[i - 1]!, l = j.legs[i]!;
-            const sa = p.stations[p.alight]!, sb = l.stations[l.board]!;
-            const wait = Math.round((l.depUtc - p.arrUtc) / 60000);
-            const at = n.cities[n.ctx.stationCity[sb]!]!.name;
-            const walk = r.legs[i]?.walk, km = walkKm(n, sa, sb, "");
-            changes.push(
-              sa === sb
-                ? h("span", null, `change at ${stationName(n, sb).includes(at) ? stationName(n, sb) : at} · ${fmtDuration(wait)}`)
-                : h(
-                    "span",
-                    { class: "walk", title: `Change in ${at}: walk from ${stationName(n, sa)} to ${stationName(n, sb)}${walk !== undefined ? ` (about ${walk} min${km ? `, ${km}` : ""} on foot; ${fmtDuration(wait)} between the trains)` : ""}` },
-                    icon("walk", 13),
-                    ` ${walk !== undefined ? `${walk} min walk ` : ""}${shortStationName(stationName(n, sa), at)} → ${shortStationName(stationName(n, sb), at)} (${at})${km ? ` · ${km}` : ""} · ${fmtDuration(wait)}`,
-                  ),
-            );
-          }
+    const groups = groupJourneys(v.rows, (r) => r.journey, (r) => r.legs.map((l) => (l.info ? { route: l.info.route } : {})), n.ctx.stationCity);
+    const cityName = (c: number) => n.cities[c]?.name ?? "";
+    const row = (r: JourneyRow, g: JourneyGroup<JourneyRow>) => {
+      const j = r.journey;
+      const first = j.legs[0]!, last = j.legs[j.legs.length - 1]!;
+      const depStation = first.stations[first.board]!, arrStation = last.stations[last.alight]!;
+      const mins = Math.round((j.arrUtc - j.depUtc) / 60000);
+      const changes: Node[] = [];
+      for (let i = 1; i < j.legs.length; i++) {
+        const p = j.legs[i - 1]!, l = j.legs[i]!;
+        const sa = p.stations[p.alight]!, sb = l.stations[l.board]!;
+        const wait = Math.round((l.depUtc - p.arrUtc) / 60000);
+        const at = cityName(n.ctx.stationCity[sb]!);
+        const many = g.cities.length > 1 ? ` in ${at}` : "";
+        const walk = r.legs[i]?.walk, km = walkKm(n, sa, sb, "");
+        changes.push(
+          sa === sb
+            ? h("span", { title: `Change at ${stationName(n, sb)}: ${fmtDuration(wait)} between the trains` }, `${fmtDuration(wait)} change${many}${g.stations[i - 1] ? "" : ` at ${shortStationName(stationName(n, sb), at)}`}`)
+            : h(
+                "span",
+                { class: "jr-walk", title: `Change in ${at}: walk from ${stationName(n, sa)} to ${stationName(n, sb)}${walk !== undefined ? ` (about ${walk} min${km ? `, ${km}` : ""} on foot; ${fmtDuration(wait)} between the trains)` : ""}` },
+                `${fmtDuration(wait)} change${many} · `,
+                icon("walk", 13),
+                ` ${walk !== undefined ? `${walk} min ` : ""}${shortStationName(stationName(n, sa), at)} → ${shortStationName(stationName(n, sb), at)}`,
+              ),
+        );
+      }
+      const numbers = r.legs.map((l) => l.info?.number).filter((x): x is string => !!x);
+      const sameEnds = g.rows.every((o) => o.journey.legs[0]!.stations[o.journey.legs[0]!.board] === depStation && o.journey.legs[o.journey.legs.length - 1]!.stations[o.journey.legs[o.journey.legs.length - 1]!.alight] === arrStation);
+      return h(
+        "li",
+        { class: j.depUtc < nowUtc ? "past" : "" },
+        h(
+          "button",
+          {
+            type: "button",
+            class: "tt-row",
+            disabled: !r.route,
+            title: r.route ? `${r.legs.map((l) => (l.info ? [l.info.route.name, l.info.number].filter(Boolean).join(" ") : CAT_LABEL[l.raw.cat])).join(" + ")}: show the legs and the stops` : "This journey could not be matched to the timetable",
+            onclick: () => r.route && this.actions.chooseJourney(r.route),
+          },
+          h("span", { class: "tt-times" }, timeEl(n, j.depUtc, depStation, { strong: true }), timeEl(n, j.arrUtc, arrStation, { refDate: localDate(j.depUtc, originTz), refTz: originTz })),
+          h(
+            "span",
+            { class: "tt-main" },
+            h("span", { class: "tt-meta" }, changes.map((m, i) => [i ? h("span", { class: "sep" }, "·") : null, m])),
+            numbers.length || !sameEnds
+              ? h(
+                  "span",
+                  { class: "tt-stations" },
+                  numbers.length ? numbers.join(" + ") : null,
+                  numbers.length && !sameEnds ? h("span", { class: "sep" }, " · ") : null,
+                  sameEnds ? null : [stationName(n, depStation), h("span", { class: "arr" }, " → "), stationName(n, arrStation)],
+                )
+              : null,
+          ),
+          h("span", { class: "tt-dur" }, fmtDuration(mins)),
+        ),
+      );
+    };
+    const groupEl = (g: JourneyGroup<JourneyRow>) => {
+          const r0 = g.rows[0]!;
+          const tags: Node[] = [];
+          g.brands.forEach((brand, i) => {
+            if (i) {
+              const st = g.stations[i - 1];
+              const city = cityName(g.cities[i - 1]!);
+              const place = st && st.arr === st.dep ? stationName(n, st.dep) : city;
+              tags.push(h("span", { class: "jr-sep", "aria-hidden": "true" }, icon("next", 12)), h("span", { class: "jr-via", title: st && st.arr === st.dep ? stationName(n, st.dep) : `Change in ${city}` }, place), h("span", { class: "jr-sep", "aria-hidden": "true" }, icon("next", 12)));
+            }
+            const info = r0.legs[i]?.info;
+            const cat = r0.journey.legs[i]!.cat;
+            // the route name when every journey of the group rides the same one ("C2"), else the brand ("TER")
+            const names = new Set(g.rows.map((r) => r.legs[i]?.info?.route.name));
+            const name = names.size === 1 && info ? info.route.name : brand.startsWith("cat") ? (CAT_LABEL[cat] ?? brand) : brand;
+            tags.push(info ? routeTag({ ...info.route, name }) : modeIcon(cat, 16, CAT_LABEL[cat]));
+          });
+          const k = g.cities.length;
+          const dur = g.minMin === g.maxMin ? fmtDuration(g.minMin) : `${fmtDuration(g.minMin)} – ${fmtDuration(g.maxMin)}`;
+          const sum = [dur, k ? `${k} change${k === 1 ? "" : "s"}` : "direct", g.rows.length > 1 ? `${g.rows.length} a day` : "once a day"].join(" · ");
           return h(
             "li",
-            { class: j.depUtc < nowUtc ? "past" : "" },
-            h(
-              "button",
-              {
-                type: "button",
-                class: "tt-row",
-                disabled: !r.route,
-                title: r.route ? "Show the legs and the stops" : "This journey could not be matched to the timetable",
-                onclick: () => r.route && this.actions.chooseJourney(r.route),
-              },
-              h("span", { class: "tt-times" }, timeEl(n, j.depUtc, depStation, { strong: true }), timeEl(n, j.arrUtc, arrStation, { refDate: localDate(j.depUtc, originTz), refTz: originTz })),
-              h(
-                "span",
-                { class: "tt-main" },
-                h("span", { class: "tt-line jr-legs" }, r.legs.map((l, i) => [i ? h("span", { class: "jr-sep", "aria-hidden": "true" }, icon("next", 12)) : null, l.info ? routeTag(l.info.route, l.info.number) : modeIcon(l.raw.cat, 16, CAT_LABEL[l.raw.cat])])),
-                h("span", { class: "tt-stations" }, stationName(n, depStation), h("span", { class: "arr" }, " → "), stationName(n, arrStation)),
-                h("span", { class: "tt-meta" }, changes.map((m, i) => [i ? h("span", { class: "sep" }, "·") : null, m])),
-              ),
-              h("span", { class: "tt-dur" }, fmtDuration(mins)),
-            ),
+            { class: "jr-group" },
+            h("div", { class: "jr-head" }, h("span", { class: "tt-line jr-legs" }, tags), h("span", { class: "jr-sum" }, sum)),
+            h("ol", { class: "tt-list jr-list" }, g.rows.map((r) => row(r, g))),
           );
-        }),
-      ),
-    );
-    out.push(h("p", { class: "hint" }, "Times are local. Earliest arrivals for every departure; changes include the walk between stations. Select a journey for its legs and stops."));
+    };
+    // the best options first; the rest on request
+    const FIRST_GROUPS = 8;
+    const list = h("ol", { class: "jr-groups", "aria-label": `Journeys ${a.name} to ${b.name}` }, groups.slice(0, FIRST_GROUPS).map(groupEl));
+    if (groups.length > FIRST_GROUPS) {
+      const rest = groups.slice(FIRST_GROUPS);
+      const more: HTMLElement = h(
+        "li",
+        { class: "jr-more" },
+        h("button", { type: "button", class: "btn", onclick: () => more.replaceWith(...rest.map(groupEl)) }, `${rest.length} more option${rest.length === 1 ? "" : "s"} (${rest.reduce((k, g) => k + g.rows.length, 0)} journeys)`),
+      );
+      list.append(more);
+    }
+    out.push(list);
+    out.push(h("p", { class: "hint" }, "Times are local. Grouped by the trains or buses taken and where to change; per option the departures not beaten by a later one arriving no later. Changes include the walk between stations. Select a journey for its legs and stops."));
     return out;
   }
 
@@ -1345,6 +1393,12 @@ function noDepartures(name: string, d: StationDeps | undefined): string {
   if (!cats.length) return `No departures to other cities from ${name}`;
   const list = cats.length === 1 ? cats[0]! : `${cats.slice(0, -1).join(", ")} and ${cats[cats.length - 1]}`;
   return `No departures with the selected modes – ${name} is only served by ${list}`;
+}
+
+/** "3 options": the route options (journeys view groups) of the rows. */
+function countOptions(rows: JourneyRow[], n: Net): string {
+  const k = groupJourneys(rows, (r) => r.journey, (r) => r.legs.map((l) => (l.info ? { route: l.info.route } : {})), n.ctx.stationCity).length;
+  return `${k} option${k === 1 ? "" : "s"}`;
 }
 
 /** Estimated walking distance between two (loaded) stations, prefixed by `sep`; "" while unknown. */
