@@ -216,6 +216,34 @@ describe("continuing a journey (after an arrival)", () => {
     expect(cont("B", "Q", { station: 2, utc: at(9) }, { maxWait: 30 })).toEqual(["07:20"]);
     expect(cont("B", "Q", { station: 2, utc: at(9) }, { maxWait: 15 })).toEqual([]);
   });
+  it("stays on board the trip it arrives on: no transfer time, not a change", () => {
+    // arriving at B 09:00 on the A → B → C train (no stop time at B): it runs on to C at 10:00
+    const ride = { stations: [0, 2, 3], arr: [0, 60, 120], dep: [0, 60, 120], start: h(8), cal: 0, date: DATE, stop: 1 };
+    const run = (after: SearchParams["after"], over: Partial<SearchParams> = {}) => {
+      const s = new TransferSearch(store(), net, { origin: cityId("B"), target: cityId("C"), date: DATE, cats: 15, transfers: 1, minTransfer: 10, maxWait: null, after, ...over });
+      while (!s.done) s.round();
+      return s.journeys();
+    };
+    expect(run({ station: 2, utc: at(9) })).toEqual([]);
+    const js = run({ station: 2, utc: at(9), ride });
+    expect(js).toHaveLength(1);
+    expect(js[0]!.stay).toBe(true);
+    expect(js[0]!.legs).toHaveLength(1);
+    expect(js[0]!.legs[0]!.board).toBe(1);
+    expect(js[0]!.legs[0]!.alight).toBe(2);
+    expect(new Date(js[0]!.depUtc).toISOString().slice(11, 16)).toBe("07:00");
+    // another trip (the arrival is not on it) or another day: nothing to stay on
+    expect(run({ station: 2, utc: at(9), ride: { ...ride, start: h(8, 1) } })).toEqual([]);
+    expect(run({ station: 2, utc: at(9), ride: { ...ride, stop: 2 } })).toEqual([]);
+    // staying on board to C and changing there (the 18:00 bus to D)
+    const d = new TransferSearch(store(), net, { origin: cityId("B"), target: cityId("D"), date: DATE, cats: 15, transfers: 1, minTransfer: 10, maxWait: null, after: { station: 2, utc: at(9), ride } });
+    while (!d.done) d.round();
+    expect(d.journeys().map((j) => [j.stay ?? false, j.legs.length])).toEqual([[true, 2]]);
+    // the other options stay: B → E (change at 09:05 with 5 min) next to staying on board to C and changing there
+    const s = new TransferSearch(store(), net, { origin: cityId("B"), target: cityId("E"), date: DATE, cats: 15, transfers: 1, minTransfer: 5, maxWait: null, after: { station: 2, utc: at(9), ride } });
+    while (!s.done) s.round();
+    expect(s.journeys().map((j) => [j.stay ?? false, j.legs.length])).toEqual([[false, 1]]);
+  });
   it("walks from the arrival station to the other stations of the city", () => {
     // arriving at W station 8 at 12:00; station 9 is a 12 min walk: the 12:15 bus to X, not the 12:08 one to Y
     expect(cont("W", "X", { station: 8, utc: at(12) })).toEqual(["10:15"]);

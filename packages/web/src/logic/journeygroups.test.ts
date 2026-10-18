@@ -28,6 +28,15 @@ describe("journey groups", () => {
     expect(tgv.stations).toEqual([null]);
     expect(g[1]!.stations).toEqual([{ arr: 3, dep: 3 }]);
   });
+  it("puts staying on board first, apart from the same service boarded anew", () => {
+    const rows = [
+      j(leg("TGV INOUI", 3, 4, 800, 900)),
+      { ...j(leg("TGV INOUI", 3, 4, 760, 1000)), stay: true },
+      j(leg("TER", 3, 4, 770, 880, Cat.Regional)),
+    ];
+    const g = groupJourneys(rows, (r) => r, () => [], stationCity);
+    expect(g.map((x) => [x.key, x.stay ?? false])).toEqual([["stay:TGV INOUI#", true], ["TGV INOUI#", false], ["TER#", false]]);
+  });
   it("takes the brand from the matched route when the data has none", () => {
     expect(legBrand("", Cat.Coach, { name: "FlixBus 1628", agency: "FlixBus", cat: Cat.Coach, flags: 0 })).toBe("FlixBus");
     expect(legBrand("TER", Cat.Regional, { name: "C2", agency: "SNCF", cat: Cat.Regional, flags: 0 })).toBe("TER");

@@ -197,6 +197,16 @@ Pipeline in short:
        "Continuing A → B" line and "Search A → C instead" (the old tap behaviour); a row appends its legs and opens the joined
        journey (header A → C, all legs and changes). `parts` records where joined journeys end, so Back drops the last
        continuation; journeys can so be built beyond the 2 changes searched at once (Bordeaux → Ventimiglia → Genova).
+       When the last leg's vehicle runs on, the search also **stays on board** (`SearchParams.after.ride`, `rideOf`): that trip is
+       boarded at the arrival stop at its own departure, whatever the minimum transfer time, and the journeys that do are marked
+       (`Journey.stay`), never pruned by the other options (only by staying on with fewer changes arriving no later), grouped apart
+       and listed first ("Stay on board to Marseille · arrives 12:36 · no change", then "Or get off in Montpellier and change" with
+       the other options – another mode, a break). Picking one rides the last leg on (`joinStay`: its alighting stop moves, no leg
+       or change is added); Back / the undo notice return to the journey before.
+     - **Extending on the journey's own vehicles** (`extendLegPatch`, `extendAt`): in a trip's schedule and a journey's, the greyed
+       stops after getting off the last leg ride on to that stop (the destination follows; the stop's count badge still opens the
+       connections from there), the greyed stops before boarding the first leg board there (the origin and its date follow). Stops
+       of the ride, and every stop of the legs in between, open the connections from there as before.
      - **Search**: round-based (RAPTOR-like) over trips, not a time-expanded graph. Round 1 boards every trip leaving the origin on
        the day and records an arrival event at every later stop (intermediate stops included); round r + 1 boards at every city
        reached in round r every trip whose departure is feasible after one of the city's arrivals (transfer time per station pair,

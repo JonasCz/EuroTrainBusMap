@@ -1338,6 +1338,44 @@ button.sched-main:hover {
   color: var(--faint);
   font-weight: 500;
 }
+/* a greyed stop of the run that extends the journey (stay on board to it / board there); the count opens the connections */
+.sched-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+.sched-line .sched-main {
+  flex: 1;
+  min-width: 0;
+}
+.sched-conn {
+  flex: none;
+  min-height: 32px;
+  padding: 6px 6px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  line-height: 18px;
+  cursor: pointer;
+}
+.sched-conn:hover {
+  background: var(--surface-2);
+}
+.sched-act {
+  display: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--mode);
+}
+.sched-main.is-extend:hover .sched-act,
+.sched-main.is-extend:focus-visible .sched-act {
+  display: inline;
+}
+.sched-main.is-extend:hover .sched-name {
+  color: var(--text);
+}
 .sched-whole {
   align-self: flex-start;
   display: inline-flex;
@@ -2000,6 +2038,31 @@ dialog::backdrop {
 .jr-group + .jr-group {
   margin-top: 6px;
   border-top: 1px solid var(--line);
+}
+/* staying on board the vehicle a continued journey arrives on: first, set apart */
+.jr-group.is-stay {
+  margin: 4px 0 6px;
+  border: 1px solid color-mix(in srgb, var(--focus) 45%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--focus) 6%, transparent);
+}
+.jr-group.is-stay + .jr-group.is-stay {
+  border-top: 1px solid color-mix(in srgb, var(--focus) 45%, var(--line));
+}
+.jr-stay {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-weight: 650;
+}
+.jr-or {
+  padding: 8px 10px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.jr-or + .jr-group {
+  border-top: 0;
 }
 .jr-head {
   display: flex;

@@ -5,7 +5,7 @@ import { cityTz, ensureDetail, stationBySlug, stationName, stationSlug, type Net
 import { addDays, inHorizon } from "./logic/calendar.ts";
 import { changeIn, connections, coverKey, journeyCover, transferMinutes, usefulConnections, type Arrival, type Connection, type JourneyCover, type OnwardStop } from "./logic/connections.ts";
 import { localOn, sameFilters, type Filters } from "./logic/filters.ts";
-import { encodeLegs, resolveLeg, type Leg, type LegInfo } from "./logic/journey.ts";
+import { encodeLegs, joinStay, resolveLeg, rideOf, tripIn, type Leg, type LegInfo } from "./logic/journey.ts";
 import { computeReach, reachRuns } from "./logic/reach.ts";
 import { addTraffic, trafficCats, type CorridorTraffic } from "./logic/context.ts";
 import { nextServiceDates, pairCandidates, pairRuns, pairTraffic, serviceDates, timetable, type Departure } from "./logic/timetable.ts";
@@ -20,7 +20,7 @@ import { STATION_ZOOM } from "./map/lod.ts";
 import type { MapView, Highlight } from "./map/mapview.ts";
 import { Panel, type Undo, type View } from "./ui/panel.ts";
 import { routeDisplayName } from "./ui/format.ts";
-import { applyPatch, parseHash, removeLegPatch, storeSettings, toHash, type AppState } from "./ui/state.ts";
+import { applyPatch, extendLegPatch, parseHash, removeLegPatch, storeSettings, toHash, type AppState } from "./ui/state.ts";
 import { groupJourneys } from "./logic/journeygroups.ts";
 import { TransferClient, matchLeg, type ReachLines, type ReachRound } from "./data/transfer.ts";
 import type { Journey, SearchParams, TransferSettings } from "./logic/transfer.ts";
@@ -153,7 +153,11 @@ export class App {
     // journey) goes back to the journey it continues; the journey so far opened from the connections goes back to them
     const ends = this.legEnds?.key === encodeLegs(s.legs) ? this.legEnds.to : null;
     const part = s.parts?.[s.parts.length - 1];
-    if (s.extend !== undefined) this.set({ extend: undefined });
+    // the journey a step made in place (a leg removed or ridden further, staying on board): back to the one before it
+    if (this.lastStep() && s.extend === undefined) {
+      this.steps.pop();
+      history.back();
+    } else if (s.extend !== undefined) this.set({ extend: undefined });
     else if (s.review) this.set({ schedule: undefined, wholeCity: s.wholeCity });
     else if (s.legs.length && !s.schedule) this.set({ schedule: true });
     else if (part !== undefined && ends?.[part - 1] !== undefined) {
@@ -376,7 +380,7 @@ export class App {
     // ---- continuing the journey to another city: the journeys from its end, after the arrival
     if (s.extend !== undefined) {
       if (s.extend === last.to || s.extend === origin) this.set({ extend: undefined }, { replace: true });
-      else await this.renderExtension(infos, origin, s.extend, focus, traffic, context, stale);
+      else await this.renderExtension(infos, legFiles, origin, s.extend, focus, traffic, context, stale);
       return;
     }
 
@@ -599,6 +603,7 @@ export class App {
       return p;
     };
     const picked: Journey[] = [];
+    // (staying on board, when continuing a journey, comes first)
     for (const g of groupJourneys(journeys, (j) => j, () => [], net.ctx.stationCity)) {
       if (picked.length && picked.length + g.rows.length > JOURNEY_ROWS) break;
       picked.push(...g.rows);
@@ -611,10 +616,12 @@ export class App {
   /**
    * Continuing the journey of `infos` to city `to`: the journeys from the city where it ends, leaving after its
    * arrival (the minimum transfer time or the walk to another station, at most the maximum wait), with up to the
-   * set number of changes (at least one). The journey so far stays on the map.
+   * set number of changes (at least one). When the last leg's vehicle runs on, staying on board is one of them (no
+   * transfer time, not a change; see Ride). The journey so far stays on the map.
    */
   private async renderExtension(
     infos: LegInfo[],
+    files: CityFile[],
     origin: number,
     to: number,
     focus: Set<number>,
@@ -636,7 +643,8 @@ export class App {
     focus.add(to);
     await this.map.setHighlight({ emphasis: { ...emphasis, focus: this.withCorridorEnds(new Set(focus), trafficCats(traffic)) }, corridors: trafficCats(traffic), traffic, context });
     if (!this.transfers.available || stale()) return;
-    const params: SearchParams = { origin: from, date, cats: s.filters.cats, ...settings, target: to, after: { station: last.arrStation, utc: last.arrUtc } };
+    const ride = rideOf(files[files.length - 1]!, last.leg);
+    const params: SearchParams = { origin: from, date, cats: s.filters.cats, ...settings, target: to, after: { station: last.arrStation, utc: last.arrUtc, ...(ride ? { ride } : {}) } };
     let res: Awaited<ReturnType<TransferClient["journeys"]>>;
     try {
       res = await this.transfers.journeys(params, `${net.cities[from]!.name}→${net.cities[to]!.name} after ${new Date(last.arrUtc).toISOString()}`);
@@ -655,7 +663,7 @@ export class App {
     for (const [c, t] of more) for (const [cat, v] of Object.entries(t)) addTraffic(traffic, [c], +cat, v ?? 0);
     const corridors = trafficCats(traffic);
     await this.map.setHighlight({ emphasis: { ...emphasis, focus: this.withCorridorEnds(focus, corridors) }, corridors, traffic, context });
-    if (!stale()) this.useTracks(journeyTracks(this.trackCtx, rows, (route) => this.chooseExtension(route), true));
+    if (!stale()) this.useTracks(journeyTracks(this.trackCtx, rows, (route, stay) => this.chooseExtension(route, stay), true));
   }
 
   private async journeyRow(j: Journey, fileOf: (city: number) => Promise<CityFile | null>, traffic: CorridorTraffic): Promise<JourneyRow> {
@@ -736,8 +744,27 @@ export class App {
     if (s.legs.length && !s.schedule) this.set({ schedule: true, review: true, wholeCity: s.wholeCity });
   }
 
-  /** The leg removed last (removeLeg): the URL hash it made, and what was removed. */
-  private removed: { after: string; text: string } | null = null;
+  /**
+   * The last step that changed the shown journey in place (a leg removed, a leg ridden further, staying on board): the URL
+   * hash it made and what it did, for the undo notice and back.
+   */
+  private steps: { after: string; text: string }[] = [];
+
+  /** The last step, while the journey shown is the one it made (not after another view, nor after a reload). */
+  private lastStep(): { after: string; text: string } | null {
+    const h = toHash(this.net, this.state);
+    // the steps made after it (back in history from them) are dropped
+    let i = this.steps.length - 1;
+    while (i >= 0 && this.steps[i]!.after !== h) i--;
+    if (i < 0) return null;
+    this.steps.length = i + 1;
+    return this.steps[i]!;
+  }
+
+  private pushStep(after: string, text: string): void {
+    this.lastStep();
+    this.steps.push({ after, text });
+  }
 
   /**
    * Remove the first or the last leg of the shown journey (see removeLegPatch): a new history entry, so back (or the
@@ -752,20 +779,49 @@ export class App {
     const patch = removeLegPatch(s, end, le.to, end === "first" && d !== this.today(city) ? d : undefined);
     if (!patch) return;
     const place = this.net.cities[end === "first" ? city : le.to[le.to.length - 2]!]?.name ?? "";
-    this.removed = { after: toHash(this.net, applyPatch(s, patch)), text: `Removed ${label} – the journey now ${end === "first" ? "starts" : "ends"} in ${place}.` };
+    this.pushStep(toHash(this.net, applyPatch(s, patch)), `Removed ${label} – the journey now ${end === "first" ? "starts" : "ends"} in ${place}.`);
     this.set(patch);
   }
 
-  /** The undo notice while the journey is the one a removal made (not after another step, nor after a reload). */
+  /**
+   * A stop of the shown journey's own vehicles beyond it (see extendLegPatch): the last leg rides on to its stop `stop`
+   * (after alighting), or the first leg boards at its earlier stop `stop` departing at `depUtc` – the journey now ends /
+   * starts in `city`, without a change. A new history entry: back (or the notice's undo) restores the journey before.
+   */
+  async extendLeg(end: "first" | "last", stop: number, city: number, depUtc?: number): Promise<void> {
+    let s = this.state;
+    let date: string | undefined;
+    if (end === "first") {
+      if (depUtc !== undefined) {
+        const d = localDate(depUtc, cityTz(this.net, city));
+        if (d !== this.today(city)) date = d;
+      }
+      // a leg's trip is indexed in the CityFile of the city it boards in: find it in the new origin's
+      const l = s.legs[0];
+      if (!l || s.city === undefined) return;
+      const [src, dst] = await Promise.all([loadCity(this.net.ds, s.city), loadCity(this.net.ds, city)]).catch(() => [null, null]);
+      if (!src || !dst || this.state !== s) return;
+      const trip = tripIn(src, { ...l, from: s.city }, dst);
+      if (trip < 0) return;
+      s = { ...s, legs: [{ ...l, trip }, ...s.legs.slice(1)] };
+    }
+    const patch = extendLegPatch(s, end, stop, city, date);
+    if (!patch) return;
+    const place = this.net.cities[city]?.name ?? "";
+    this.pushStep(toHash(this.net, applyPatch(this.state, patch)), end === "first" ? `Boarding earlier – the journey now starts in ${place}.` : `Staying on board – the journey now ends in ${place}.`);
+    this.set(patch);
+  }
+
+  /** The undo notice while the journey is the one the last step made (not after another step, nor after a reload). */
   private undoView(): { undo?: Undo } {
-    const r = this.removed;
-    if (!r || r.after !== toHash(this.net, this.state)) return {};
+    const r = this.lastStep();
+    if (!r) return {};
     return {
       undo: {
         text: r.text,
         run: () => {
-          this.removed = null;
-          // the removal's history entry: back returns to the journey before it
+          this.steps.pop();
+          // the step's history entry: back returns to the journey before it
           if (toHash(this.net, this.state) === r.after) history.back();
         },
       },
@@ -805,11 +861,22 @@ export class App {
     this.set({ legs: [...this.state.legs, leg] });
   }
 
-  /** A journey continuing the shown one (continuation view): the legs joined, showing the whole journey. */
-  chooseExtension(route: Leg[]): void {
+  /**
+   * A journey continuing the shown one (continuation view): the legs joined, showing the whole journey. One that stays
+   * on board (`stay`) rides the last leg on instead of adding a leg (no change); back returns to the journey before.
+   */
+  chooseExtension(route: Leg[], stay = false): void {
     const s = this.state;
     if (s.extend === undefined || !route.length || !s.legs.length) return;
-    this.set({ legs: [...s.legs, ...route], dest: s.extend, parts: [...(s.parts ?? []), s.legs.length], schedule: true, journey: true });
+    if (!stay) {
+      this.set({ legs: [...s.legs, ...route], dest: s.extend, parts: [...(s.parts ?? []), s.legs.length], schedule: true, journey: true });
+      return;
+    }
+    const legs = joinStay(s.legs, route);
+    const patch: Partial<AppState> = { legs, dest: s.extend, parts: s.parts, schedule: true, journey: legs.length > 1 || undefined, extend: undefined };
+    const at = this.net.cities[s.extend]?.name ?? "";
+    this.pushStep(toHash(this.net, applyPatch(s, patch)), `Staying on board${route.length > 1 ? ", then changing" : ""} – the journey now ends in ${at}.`);
+    this.set(patch);
   }
 
   /** A journey with changes (journeys view): its legs, showing the last leg's schedule. */

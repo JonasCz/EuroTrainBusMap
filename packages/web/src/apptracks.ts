@@ -46,7 +46,7 @@ export function routeLabel(r: Route): string {
 
 /** "TGV INOUI › Paris › TGV INOUI" */
 function groupLabel(net: Net, g: JourneyGroup<JourneyRow>): string {
-  const parts: string[] = [];
+  const parts: string[] = g.stay ? ["Stay on board"] : [];
   g.brands.forEach((b, i) => {
     if (i) parts.push(net.cities[g.cities[i - 1]!]?.name ?? "?");
     const cat = g.rows[0]!.journey.legs[i]!.cat;
@@ -64,7 +64,7 @@ function groupSum(g: JourneyGroup<JourneyRow>): string {
  * Journeys view: a track is ridden by route options (groups). Hover: their legs on the map, the groups marked in
  * the list; click: the next journey of the one option, or a card to pick one of several.
  */
-export function journeyTracks(c: Ctx, rows: JourneyRow[], open: (route: Leg[]) => void, cont: boolean): ViewTracks {
+export function journeyTracks(c: Ctx, rows: JourneyRow[], open: (route: Leg[], stay: boolean) => void, cont: boolean): ViewTracks {
   const { net, map, panel } = c;
   const groups = journeyGroups(rows, net);
   const index = lazyIndex(net, () => groups.map((g) => ({ corridors: g.rows.flatMap((r) => r.legs.flatMap((l) => l.corridors ?? [])) })));
@@ -81,7 +81,7 @@ export function journeyTracks(c: Ctx, rows: JourneyRow[], open: (route: Leg[]) =
   };
   const openGroup = (g: JourneyGroup<JourneyRow>) => {
     const r = next(g);
-    if (r?.route) open(r.route);
+    if (r?.route) open(r.route, !!r.journey.stay);
   };
   const verb = cont ? "add" : "open";
   return {

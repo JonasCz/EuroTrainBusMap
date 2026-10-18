@@ -13,6 +13,8 @@ export interface GroupLegIn {
 
 export interface JourneyGroup<T> {
   key: string;
+  /** The journeys stay on board the vehicle a continued journey arrives on (Journey.stay): their first leg is no change. */
+  stay?: boolean;
   /** brand per leg */
   brands: string[];
   /** city of every change (before legs 2 …) */
@@ -32,8 +34,8 @@ export function legBrand(brand: string, cat: number, route?: Route): string {
 }
 
 /**
- * Groups journeys by brands of the legs and change cities; groups are sorted by their fastest journey with
- * 30 minutes added per change, rows by departure.
+ * Groups journeys by brands of the legs and change cities (staying on board apart); groups are sorted by their
+ * fastest journey with 30 minutes added per change (staying on board first), rows by departure.
  */
 export function groupJourneys<T>(rows: T[], journey: (r: T) => Journey, legs: (r: T) => GroupLegIn[], stationCity: ArrayLike<number>): JourneyGroup<T>[] {
   const groups = new Map<string, JourneyGroup<T>>();
@@ -49,10 +51,10 @@ export function groupJourneys<T>(rows: T[], journey: (r: T) => Journey, legs: (r
       cities.push(stationCity[dep]!);
       stations.push({ arr: p.stations[p.alight]!, dep });
     }
-    const key = `${brands.join("|")}#${cities.join(",")}`;
+    const key = `${j.stay ? "stay:" : ""}${brands.join("|")}#${cities.join(",")}`;
     const min = Math.round((j.arrUtc - j.depUtc) / 60000);
     let g = groups.get(key);
-    if (!g) groups.set(key, (g = { key, brands, cities, stations, rows: [], minMin: min, maxMin: min }));
+    if (!g) groups.set(key, (g = { key, ...(j.stay ? { stay: true } : {}), brands, cities, stations, rows: [], minMin: min, maxMin: min }));
     else {
       g.stations = g.stations.map((s, i) => (s && s.arr === stations[i]!.arr && s.dep === stations[i]!.dep ? s : null));
       g.minMin = Math.min(g.minMin, min);
@@ -63,5 +65,5 @@ export function groupJourneys<T>(rows: T[], journey: (r: T) => Journey, legs: (r
   const out = [...groups.values()];
   for (const g of out) g.rows.sort((a, b) => journey(a).depUtc - journey(b).depUtc || journey(a).arrUtc - journey(b).arrUtc);
   const score = (g: JourneyGroup<T>) => g.minMin + 30 * g.cities.length;
-  return out.sort((a, b) => score(a) - score(b) || b.rows.length - a.rows.length || (a.key < b.key ? -1 : 1));
+  return out.sort((a, b) => Number(!!b.stay) - Number(!!a.stay) || score(a) - score(b) || b.rows.length - a.rows.length || (a.key < b.key ? -1 : 1));
 }

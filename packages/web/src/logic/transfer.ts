@@ -172,7 +172,23 @@ export interface SearchParams extends TransferSettings {
    * the transfer time from that station (the minimum transfer time, or the walk to another station of the city)
    * and within the maximum wait (or the same day), instead of every departure of the travel day.
    */
-  after?: { station: number; utc: number };
+  after?: { station: number; utc: number; ride?: Ride };
+}
+
+/**
+ * The trip a continued journey arrives on (SearchParams.after), when it runs on beyond the arrival: its pattern (as in
+ * the city files and the transfer chunks), trip start (minutes) and calendar, service date and the stop index of the
+ * arrival. Staying on board is no change: the search boards it there at its departure, whatever the minimum transfer
+ * time, and the journeys that do are marked (Journey.stay).
+ */
+export interface Ride {
+  stations: number[];
+  arr: number[];
+  dep: number[];
+  start: number;
+  cal: number;
+  date: string;
+  stop: number;
 }
 
 /** Per reached city: first round (1 = direct on the day) and the fastest journey of that round. */
@@ -214,6 +230,8 @@ export interface Journey {
   legs: JourneyLeg[];
   depUtc: number;
   arrUtc: number;
+  /** The first leg stays on board the trip the continued journey arrives on (SearchParams.after.ride): not a change. */
+  stay?: boolean;
 }
 
 /**
@@ -368,6 +386,32 @@ export class TransferSearch {
     return [t + x, W === null ? sameDayLimit(this.midnightsOf(this.params.origin), t) : t + W];
   }
 
+  /**
+   * The trip instance of params.after.ride in the loaded chunks (pattern ref, trip, day offset, boarding stop and its
+   * departure, relative minutes), if it runs on from the arrival stop; null otherwise.
+   */
+  private findRide(): { ref: number; t: number; t0: number; dd: number; stop: number; dep: number } | null {
+    const ride = this.params.after?.ride;
+    if (!ride || ride.stop >= ride.stations.length - 1) return null;
+    const dd = dayNumber(ride.date) - dayNumber(this.params.date);
+    if (dd < -4 || dd > 4) return null;
+    const store = this.store, n = ride.stations.length;
+    for (let ref = 0; ref < store.refP.n; ref++) {
+      const { c, p } = store.ref(ref);
+      const k0 = c.pStop[p]!;
+      if (c.pStop[p + 1]! - k0 !== n || c.stStation[k0 + ride.stop] !== ride.stations[ride.stop]) continue;
+      let same = true;
+      for (let k = 0; k < n && same; k++) same = c.stStation[k0 + k] === ride.stations[k] && c.stArr[k0 + k] === ride.arr[k] && c.stDep[k0 + k] === ride.dep[k];
+      if (!same) continue;
+      const t0 = c.pTrip[p]!;
+      for (let t = t0; t < c.pTrip[p + 1]!; t++) {
+        if (c.trStart[t] !== ride.start || c.trCal[t] !== ride.cal) continue;
+        return { ref, t, t0, dd, stop: ride.stop, dep: this.baseOf(c.pTz[p]!, dd) + ride.start + ride.dep[ride.stop]! };
+      }
+    }
+    return null;
+  }
+
   /** Local midnights (relative minutes) around the day in a city's tz. */
   private midnightsOf(city: number): number[] {
     const tz = this.net.cityTz[city] ?? "UTC";
@@ -438,6 +482,9 @@ export class TransferSearch {
           if (byRef && bestVal > -Infinity) add(ref, ref, -1, 0, i, bestVal, -1);
         }
       }
+      // staying on board the trip a continued journey arrives on (its later stops' chunks load for the next round)
+      const ride = byRef ? null : this.findRide();
+      if (ride) add((rtb[ride.ref]! + ride.t - ride.t0) * 8 + ride.dd + 3, ride.ref, ride.t, ride.dd, ride.stop, ride.dep, -1);
     } else {
       const ev = this.ev;
       const et = ev.time.a, ed = ev.dep0.a;
@@ -780,6 +827,7 @@ export class TransferSearch {
       return k;
     };
     const ev = this.dv;
+    const ride = this.findRide();
     let from = 0;
     for (let r = 1; r <= R; r++) {
       // trip instances boarded this round and their boardings (stop, option, origin departure, previous event)
@@ -817,6 +865,8 @@ export class TransferSearch {
             }
           }
         }
+        // staying on board the trip the journey arrives on: boarded at its departure, no transfer time
+        if (ride && lastOf(1, ride.ref) > ride.stop) add(ride.ref, ride.t, ride.t0, ride.dd, ride.stop, ride.dep, -1, keyOf(0, ride.ref));
       } else {
         // arrivals of the previous round per city, then per option and station: sorted by time, Pareto-pruned
         const byCity = new Map<number, Map<number, number[]>>();
@@ -955,23 +1005,25 @@ export class TransferSearch {
       }
     }
     // ---- journeys at the target
-    const fin: { x: number; key: number; dep0: number; arr: number; wait: number }[] = [];
+    const fin: { x: number; key: number; dep0: number; arr: number; wait: number; stay: boolean }[] = [];
     for (let x = 0; x < ev.station.n; x++) {
       if (cityOf(ev.station.a[x]!) !== target) continue;
       // shortest change (between arrival and departure, minutes)
-      let wait = Infinity;
-      for (let y = x; ev.prev.a[y]! >= 0; y = ev.prev.a[y]!) wait = Math.min(wait, this.depTime(y, ev) - ev.time.a[ev.prev.a[y]!]!);
-      fin.push({ x, key: ev.key.a[x]!, dep0: ev.dep0.a[x]!, arr: ev.time.a[x]!, wait });
+      let wait = Infinity, y = x;
+      for (; ev.prev.a[y]! >= 0; y = ev.prev.a[y]!) wait = Math.min(wait, this.depTime(y, ev) - ev.time.a[ev.prev.a[y]!]!);
+      // the first leg stays on board the trip the journey arrives on
+      const stay = !!ride && ev.ref.a[y] === ride.ref && ev.trip.a[y] === ride.t && ev.dd.a[y] === ride.dd && ev.board.a[y] === ride.stop;
+      fin.push({ x, key: ev.key.a[x]!, dep0: ev.dep0.a[x]!, arr: ev.time.a[x]!, wait, stay });
     }
-    // per brand sequence (whatever the change cities): later departure first, a journey is kept when it arrives earlier
-    // than every one departing no earlier; of equal ones the one with the longest change
-    const seq = (k: number) => kList[k]!.join(",");
-    fin.sort((a, b) => (seq(a.key) < seq(b.key) ? -1 : seq(a.key) > seq(b.key) ? 1 : 0) || b.dep0 - a.dep0 || a.arr - b.arr || b.wait - a.wait);
+    // per brand sequence (whatever the change cities; staying on board apart): later departure first, a journey is kept
+    // when it arrives earlier than every one departing no earlier; of equal ones the one with the longest change
+    const seq = (f: { key: number; stay: boolean }) => `${f.stay ? "s" : ""}${kList[f.key]!.join(",")}`;
+    fin.sort((a, b) => (seq(a) < seq(b) ? -1 : seq(a) > seq(b) ? 1 : 0) || b.dep0 - a.dep0 || a.arr - b.arr || b.wait - a.wait);
     const pareto: typeof fin = [];
     let bestArr = Infinity;
     for (let q = 0; q < fin.length; q++) {
       const f = fin[q]!;
-      if (q === 0 || seq(fin[q - 1]!.key) !== seq(f.key)) bestArr = Infinity;
+      if (q === 0 || seq(fin[q - 1]!) !== seq(f)) bestArr = Infinity;
       if (f.arr >= bestArr) continue;
       bestArr = f.arr;
       pareto.push(f);
@@ -980,7 +1032,7 @@ export class TransferSearch {
     // trains to the same station): one is enough, the one with the longest change
     const same = new Map<string, (typeof pareto)[number]>();
     for (const f of pareto) {
-      let k = `${f.dep0}|${f.arr}`;
+      let k = `${f.stay ? "s" : ""}${f.dep0}|${f.arr}`;
       for (let y = f.x; y >= 0; y = ev.prev.a[y]!) {
         const { c, p } = this.store.ref(ev.ref.a[y]!);
         k += `|${c.pCat[p]}@${cityOf(c.stStation[c.pStop[p]! + ev.board.a[y]!]!)}`;
@@ -993,6 +1045,7 @@ export class TransferSearch {
     const stairs = new Map<string, { dep: number[]; minArr: number[] }>();
     const byDep = pareto.filter((f) => distinct.has(f)).sort((a, b) => b.dep0 - a.dep0);
     for (const f of byDep) {
+      if (f.stay) continue;
       const sk = `${kLegs.a[f.key]}|${kSet[f.key]}`;
       let st = stairs.get(sk);
       if (!st) stairs.set(sk, (st = { dep: [], minArr: [] }));
@@ -1001,6 +1054,9 @@ export class TransferSearch {
     }
     const fastest = byDep.reduce((m, f) => Math.min(m, f.arr - f.dep0), Infinity);
     const kept = byDep.filter((f) => {
+      // staying on board is always offered (the vehicle the traveller is on), unless staying on with fewer changes
+      // arrives no later
+      if (f.stay) return !byDep.some((o) => o.stay && kLegs.a[o.key]! < kLegs.a[f.key]! && o.arr <= f.arr);
       // far slower than the fastest journey of the day (waits overnight and the like)
       if (f.arr - f.dep0 > 2 * fastest + 60) return false;
       const legs = kLegs.a[f.key]!;
@@ -1026,7 +1082,7 @@ export class TransferSearch {
       .map((f) => {
         const legs: JourneyLeg[] = [];
         for (let x = f.x; x >= 0; x = ev.prev.a[x]!) legs.unshift(this.leg(x, ev));
-        return { legs, depUtc: legs[0]!.depUtc, arrUtc: legs[legs.length - 1]!.arrUtc };
+        return { legs, depUtc: legs[0]!.depUtc, arrUtc: legs[legs.length - 1]!.arrUtc, ...(f.stay ? { stay: true } : {}) };
       })
       .sort((a, b) => a.depUtc - b.depUtc || a.arrUtc - b.arrUtc || a.legs.length - b.legs.length);
   }

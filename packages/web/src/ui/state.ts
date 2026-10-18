@@ -120,6 +120,27 @@ export function removeLegPatch(s: AppState, end: "first" | "last", ends: readonl
   };
 }
 
+/**
+ * The patch that extends the shown journey on its own vehicles (at least one leg, a schedule shown): with "last" the last
+ * leg rides on to its stop `stop` (pattern index, after the alighting stop) in city `city`, which becomes the
+ * destination; with "first" the first leg boards earlier, at its stop `stop` in city `city`, which becomes the origin
+ * (`date`: the departure's local date there, if not today). No change is added, the view stays the same (the whole
+ * journey, a trip's schedule or the journey so far). Null when the stop does not extend the journey.
+ */
+export function extendLegPatch(s: AppState, end: "first" | "last", stop: number, city: number, date?: string): Partial<AppState> | null {
+  const n = s.legs.length;
+  if (!n || s.city === undefined || s.dest === undefined || !s.schedule || city < 0) return null;
+  const view = { schedule: true, journey: s.journey || undefined, review: s.review || undefined, parts: s.parts, extend: undefined };
+  if (end === "last") {
+    const l = s.legs[n - 1]!;
+    if (stop <= l.alight || city === s.city) return null;
+    return { ...view, dest: city, legs: [...s.legs.slice(0, -1), { ...l, alight: stop }], wholeCity: undefined };
+  }
+  const l = s.legs[0]!;
+  if (stop >= l.board || city === s.dest) return null;
+  return { ...view, city, station: undefined, date, legs: [{ ...l, from: city, board: stop }, ...s.legs.slice(1)], wholeCity: s.review ? s.wholeCity : undefined };
+}
+
 const PREFS_KEY = "etbm.transfers";
 
 /** The viewer's remembered minimum transfer time / maximum wait (defaults when the URL names none). */

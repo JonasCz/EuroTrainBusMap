@@ -152,8 +152,10 @@ export interface PanelActions {
   /** Another departure at the change before the journey's last leg `leg`. */
   chooseOption(leg: number, o: ChangeOption): void;
   chooseJourney(legs: Leg[]): void;
-  /** A journey of the continuation view: appended to the shown journey. */
-  chooseExtension(legs: Leg[]): void;
+  /** A journey of the continuation view: appended to the shown journey (`stay`: its first leg rides the last one on). */
+  chooseExtension(legs: Leg[], stay?: boolean): void;
+  /** Ride the journey's last leg on to its later stop `stop`, or board its first leg earlier, at `stop` (departing `depUtc`); `city`: the new end. */
+  extendLeg(end: "first" | "last", stop: number, city: number, depUtc?: number): void;
   setTransfers(x: TransferSettings): void;
   showSchedule(leg: number): void;
   /** The journey so far (connections view): all its legs' stops and changes; back returns to the connections. */
@@ -881,6 +883,11 @@ export class Panel {
                 ),
         );
       }
+      // staying on board the vehicle the journey arrives on: its stop here instead of a change
+      if (g.stay && arrived) {
+        const stop = Math.round((first.depUtc - arrived.arrUtc) / 60000);
+        changes.unshift(h("span", { title: `Stay on board at ${stationName(n, depStation)}: the same ${vehicleWord(first.cat)} runs on, no change` }, icon("seat", 13), ` Stay on board${stop > 0 ? ` · ${fmtDuration(stop)} stop` : ""}`));
+      }
       const numbers = r.legs.map((l) => l.info?.number).filter((x): x is string => !!x);
       const sameEnds = g.rows.every((o) => o.journey.legs[0]!.stations[o.journey.legs[0]!.board] === depStation && o.journey.legs[o.journey.legs.length - 1]!.stations[o.journey.legs[o.journey.legs.length - 1]!.alight] === arrStation);
       return h(
@@ -892,8 +899,8 @@ export class Panel {
             type: "button",
             class: "tt-row",
             disabled: !r.route,
-            title: r.route ? `${r.legs.map((l) => (l.info ? [routeDisplayName(l.info.route), l.info.number].filter(Boolean).join(" ") : CAT_LABEL[l.raw.cat])).join(" + ")}: ${cont ? "add it to the journey" : "show the legs and the stops"}` : "This journey could not be matched to the timetable",
-            onclick: () => r.route && (cont ? this.actions.chooseExtension(r.route) : this.actions.chooseJourney(r.route)),
+            title: r.route ? `${r.legs.map((l) => (l.info ? [routeDisplayName(l.info.route), l.info.number].filter(Boolean).join(" ") : CAT_LABEL[l.raw.cat])).join(" + ")}: ${g.stay ? "stay on board – the journey rides on" : cont ? "add it to the journey" : "show the legs and the stops"}` : "This journey could not be matched to the timetable",
+            onclick: () => r.route && (cont ? this.actions.chooseExtension(r.route, !!j.stay) : this.actions.chooseJourney(r.route)),
           },
           h("span", { class: "tt-times" }, timeEl(n, j.depUtc, depStation, { strong: true }), timeEl(n, j.arrUtc, arrStation, { refDate: localDate(j.depUtc, originTz), refTz: originTz })),
           h(
@@ -935,19 +942,30 @@ export class Panel {
           });
           const k = g.cities.length;
           const dur = g.minMin === g.maxMin ? fmtDuration(g.minMin) : `${fmtDuration(g.minMin)} – ${fmtDuration(g.maxMin)}`;
-          const sum = [dur, k ? `${k} change${k === 1 ? "" : "s"}` : "direct", g.rows.length > 1 ? `${g.rows.length} a day` : "once a day"].join(" · ");
+          const sum = g.stay
+            ? [`arrives ${fmtTime(r0.journey.arrUtc, cityTz(n, v.dest))}`, dur, k ? `then ${k} change${k === 1 ? "" : "s"}` : "no change"].join(" · ")
+            : [dur, k ? `${k} change${k === 1 ? "" : "s"}` : "direct", g.rows.length > 1 ? `${g.rows.length} a day` : "once a day"].join(" · ");
+          // staying on board: said first (the same vehicle, to the destination or to the first change)
+          if (g.stay) tags.unshift(h("span", { class: "jr-stay" }, icon("seat", 14), k ? " Stay on board" : ` Stay on board to ${b.name}`));
           return h(
             "li",
-            { class: "jr-group", "data-hl": `g:${g.key}` },
+            { class: g.stay ? "jr-group is-stay" : "jr-group", "data-hl": `g:${g.key}` },
             h("div", { class: "jr-head" }, h("span", { class: "tt-line jr-legs" }, tags), h("span", { class: "jr-sum" }, sum)),
             h("ol", { class: "tt-list jr-list" }, g.rows.map((r) => row(r, g))),
           );
     };
     // the best options first; the rest on request
     const FIRST_GROUPS = 8;
-    const list = h("ol", { class: "jr-groups", "aria-label": `Journeys ${a.name} to ${b.name}` }, groups.slice(0, FIRST_GROUPS).map(groupEl));
-    if (groups.length > FIRST_GROUPS) {
-      const rest = groups.slice(FIRST_GROUPS);
+    const shown = groups.slice(0, Math.max(FIRST_GROUPS, groups.filter((g) => g.stay).length + 1));
+    const items: HTMLElement[] = [];
+    shown.forEach((g, i) => {
+      // after staying on board: the other options (another vehicle, a break)
+      if (i && shown[i - 1]!.stay && !g.stay) items.push(h("li", { class: "jr-or" }, `Or get off in ${a.name} and change`));
+      items.push(groupEl(g));
+    });
+    const list = h("ol", { class: "jr-groups", "aria-label": `Journeys ${a.name} to ${b.name}` }, items);
+    if (groups.length > shown.length) {
+      const rest = groups.slice(shown.length);
       const more: HTMLElement = h(
         "li",
         { class: "jr-more" },
@@ -956,7 +974,7 @@ export class Panel {
       list.append(more);
     }
     out.push(list);
-    out.push(h("p", { class: "hint" }, `Times are local. Grouped by the trains or buses taken and where to change; per option the departures not beaten by a later one arriving no later. Changes include the ${byWords(v.settings.changeBy)} between stations. ${cont ? "Select a journey to add it." : "Select a journey for its legs and stops."}`));
+    out.push(h("p", { class: "hint" }, `Times are local. Grouped by the trains or buses taken and where to change; per option the departures not beaten by a later one arriving no later. Changes include the ${byWords(v.settings.changeBy)} between stations${groups.some((g) => g.stay) ? "; staying on board needs no time to change" : ""}. ${cont ? "Select a journey to add it." : "Select a journey for its legs and stops."}`));
     return out;
   }
 
@@ -1370,10 +1388,13 @@ export class Panel {
     const caveat = caveatNote(sc.route);
     if (caveat) out.push(caveat);
     const counts: OnwardCount[] = [];
-    const row = (_st: ScheduleStop, i: number) => this.schedRow(sc, i, { windowMin: v.windowMin, counts, count: (stop, whole) => v.onward(stop, whole), choose: (stop, whole) => this.actions.chooseStop(stop, whole) });
-    const list = h("ol", { class: "sched", style: `--mode:var(--cat-${sc.route.cat})`, "aria-label": `Stops of ${tag}` }, stops.map(row));
     const start = v.legs[0]!;
-    out.push(list, this.continueBox(alight.city, n.file.stations[start.depStation]!.city), h("p", { class: "hint" }, `Times are local. Tap a stop for the connections from there within ${v.windowMin / 60} h of arriving; numbers count them (the same vehicle not included).`));
+    const origin = n.file.stations[start.depStation]!.city;
+    // the trip's own stops beyond the journey: ride on to a later one; board earlier only when it is the journey's first leg
+    const extend = (i: number) => extendAt(sc, i, v.legs.length === 1, true, origin);
+    const row = (_st: ScheduleStop, i: number) => this.schedRow(sc, i, { windowMin: v.windowMin, counts, count: (stop, whole) => v.onward(stop, whole), choose: (stop, whole) => this.actions.chooseStop(stop, whole), extend });
+    const list = h("ol", { class: "sched", style: `--mode:var(--cat-${sc.route.cat})`, "aria-label": `Stops of ${tag}` }, stops.map(row));
+    out.push(list, this.continueBox(alight.city, origin), h("p", { class: "hint" }, schedHint(v.windowMin, stops.some((_, i) => extend(i) !== null))));
     this.lazyCounts(counts);
     queueMicrotask(() => list.querySelector(".is-end")?.scrollIntoView({ block: "nearest" }));
     return out;
@@ -1387,7 +1408,15 @@ export class Panel {
   private schedRow(
     sc: TripSchedule,
     i: number,
-    o: { windowMin: number; counts: OnwardCount[]; count: (stop: number, whole: boolean) => Promise<number>; choose: (stop: number, whole: boolean) => void; order?: number },
+    o: {
+      windowMin: number;
+      counts: OnwardCount[];
+      count: (stop: number, whole: boolean) => Promise<number>;
+      choose: (stop: number, whole: boolean) => void;
+      order?: number;
+      /** Whether stop i extends the journey on this vehicle: ride on to it ("last"), board there ("first"); see extendAt. */
+      extend?: (i: number) => "first" | "last" | null;
+    },
   ): HTMLElement {
     const n = this.net;
     const stops = sc.stops;
@@ -1419,14 +1448,33 @@ export class Panel {
     const multi = st.onward && st.cityRep && !!c && c.stations.length > 1 && c.importance >= WHOLE_CITY_MIN_IMPORTANCE;
     const order = (o.order ?? 0) + i;
     let body: HTMLElement[];
-    if (st.onward) {
+    const ext = o.extend?.(i) ?? null;
+    const conns = `Connections from ${name} within ${o.windowMin / 60} h of arriving`;
+    if (ext === "first") {
+      // before boarding: board here instead (the journey starts earlier, on the same vehicle)
+      body = [
+        h(
+          "button",
+          { type: "button", class: "sched-main is-extend", title: `Board here – start the journey at ${name} (departs ${fmtTime(st.depUtc!, st.tz)})`, onclick: () => this.actions.extendLeg("first", st.stop, st.city, st.depUtc!) },
+          h("span", { class: "sched-label" }, label, h("span", { class: "sched-act" }, "board here")),
+        ),
+      ];
+    } else if (st.onward) {
       const el = countEl();
-      const main = h(
-        "button",
-        { type: "button", class: "sched-main", title: `Connections from ${name} within ${o.windowMin / 60} h of arriving`, onclick: () => o.choose(st.stop, false) },
-        h("span", { class: "sched-label" }, label),
-        el,
-      );
+      // after getting off: stay on board to here (the journey ends here, no change); the count opens the connections
+      const main =
+        ext === "last"
+          ? h(
+              "div",
+              { class: "sched-line" },
+              h(
+                "button",
+                { type: "button", class: "sched-main is-extend", title: `Stay on board to ${name} (arrives ${fmtTime(st.arrUtc!, st.tz)}) – the journey then ends here`, onclick: () => this.actions.extendLeg("last", st.stop, st.city) },
+                h("span", { class: "sched-label" }, label, h("span", { class: "sched-act" }, "stay on to here")),
+              ),
+              h("button", { type: "button", class: "sched-conn", title: conns, "aria-label": conns, onclick: () => o.choose(st.stop, false) }, el),
+            )
+          : h("button", { type: "button", class: "sched-main", title: conns, onclick: () => o.choose(st.stop, false) }, h("span", { class: "sched-label" }, label), el);
       body = [main];
       if (multi) {
         const wel = countEl();
@@ -1492,6 +1540,7 @@ export class Panel {
           count: (stop, whole) => v.onward(li, stop, whole),
           choose: (stop, whole) => this.actions.chooseStop(stop, whole, li),
           order: li * 10000,
+          extend: (i) => extendAt(sc, i, li === 0, li === k0 - 1, b0.city),
         });
         el.setAttribute("style", mode);
         el.dataset.hl = `l:${li}`;
@@ -1546,7 +1595,8 @@ export class Panel {
       if (part.foldAfter) items.push(fold("after", part.to + 1, sc.stops.length - 1));
     });
     const list = h("ol", { class: "sched jsched", "aria-label": "Stops and changes of the journey" }, items);
-    out.push(list, this.continueBox(al.city, b0.city), h("p", { class: "hint" }, `Times are local. Tap a stop for the connections from there within ${v.windowMin / 60} h of arriving; numbers count them (the same vehicle not included).`));
+    const ext = js.legs.some((part, li) => part.sched.stops.some((_, i) => extendAt(part.sched, i, li === 0, li === k0 - 1, b0.city) !== null));
+    out.push(list, this.continueBox(al.city, b0.city), h("p", { class: "hint" }, schedHint(v.windowMin, ext)));
     this.lazyCounts(counts.splice(0));
     return out;
   }
@@ -1866,6 +1916,29 @@ export function journeyGroups(rows: JourneyRow[], n: Net): JourneyGroup<JourneyR
 /** `data-hl` of the departures of a route (timetable view). */
 export function routeKey(r: { cat: number; name: string }): string {
   return `rt:${r.cat}:${r.name}`;
+}
+
+/**
+ * Whether stop i of a journey leg's schedule extends the journey on that vehicle: "last" for a stop after getting off
+ * the journey's last leg (`last`) where one may get off, outside the origin city – riding on to it; "first" for a stop
+ * before boarding its first leg (`first`) where one may board, in another city than the boarding and alighting ones –
+ * boarding there. Null otherwise (connections from there, or nothing).
+ */
+export function extendAt(sc: TripSchedule, i: number, first: boolean, last: boolean, origin: number): "first" | "last" | null {
+  const st = sc.stops[i];
+  if (!st || st.stop < 0 || st.city < 0) return null;
+  if (last && i > sc.alight && st.onward && st.city !== origin) return "last";
+  const b = sc.stops[sc.board]!, a = sc.stops[sc.alight]!;
+  if (first && i < sc.board && st.depUtc !== null && !((st.limit ?? 0) & StopLimit.NoBoarding) && st.city !== b.city && st.city !== a.city) return "first";
+  return null;
+}
+
+/** The hint under a schedule: what tapping a stop does. */
+function schedHint(windowMin: number, extend: boolean): string {
+  const conns = `connections from there within ${windowMin / 60} h of arriving; numbers count them (the same vehicle not included)`;
+  return extend
+    ? `Times are local. Tap a greyed stop of the run to stay on board to it (or board there) – the journey is extended, no change. Tap a stop of the ride, or a number, for the ${conns}.`
+    : `Times are local. Tap a stop for the ${conns}.`;
 }
 
 function stopsBetween(sc: TripSchedule): string {

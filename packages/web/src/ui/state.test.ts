@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { City, Station } from "@etbm/shared";
 import { stationBySlug, stationSlug, type Net } from "../data/net.ts";
-import { applyPatch, parseHash, removeLegPatch, toHash } from "./state.ts";
+import { applyPatch, extendLegPatch, parseHash, removeLegPatch, toHash } from "./state.ts";
+import { joinStay, tripIn } from "../logic/journey.ts";
+import type { CityFile } from "@etbm/shared";
 
 const city = (id: number, name: string, stations: number[]): City => ({ id, name, country: "FR", lon: 0, lat: 0, population: 1, importance: 0.5, cats: 3, stations, tz: 0 });
 const st = (id: number, c: number, name: string): Station => ({ id, city: c, name, lon: 0, lat: 0, cats: 3 });
@@ -203,5 +205,58 @@ describe("removing the first or last leg of a journey", () => {
     const s = parseHash(jnet, `#from=bordeaux&to=agen&legs=1.20261019.0.1,2.20261019.0.1,3.20261019.0.1&trip=all`);
     const p = removeLegPatch(s, "last", [2, 1, 3])!;
     expect(applyPatch(s, p).dest).toBe(2);
+  });
+});
+
+describe("extending a journey on its own vehicles", () => {
+  // Sainte-Foy (0) → Bordeaux (1) → Marmande (2) → Agen (3)
+  const four = ["sainte-foy", "bordeaux", "marmande", "agen"];
+  const jnet = {
+    cities: four.map((n, i) => city(i, n, [i])),
+    slug: four,
+    bySlug: new Map(four.map((n, i) => [n, i])),
+    file: { stations: four.map((n, i) => st(i, i, n)), timezones: [] },
+  } as unknown as Net;
+  const ext = (hash: string, end: "first" | "last", stop: number, c: number, date?: string) => {
+    const s = parseHash(jnet, hash);
+    const p = extendLegPatch(s, end, stop, c, date);
+    return p && applyPatch(s, p);
+  };
+
+  it("rides the last leg on to a later stop: the destination follows, the view stays", () => {
+    const s = ext("#from=bordeaux&to=marmande&legs=715.20261019.0.4&trip=1", "last", 8, 3)!;
+    expect(toHash(jnet, s)).toBe("#from=bordeaux&to=agen&legs=715.20261019.0.8&trip=1");
+    expect(toHash(jnet, parseHash(jnet, toHash(jnet, s)))).toBe(toHash(jnet, s));
+    const j = ext("#from=sainte-foy&to=marmande&legs=1.20261019.2.8,715.20261019.0.4&trip=all&parts=1", "last", 8, 3)!;
+    expect(toHash(jnet, j)).toBe("#from=sainte-foy&to=agen&legs=1.20261019.2.8,715.20261019.0.8&trip=all&parts=1");
+    // the journey so far keeps returning to the connections, now from the new end (the onward scope was the old end's)
+    expect(toHash(jnet, ext("#from=bordeaux&to=marmande&legs=715.20261019.0.4&trip=sofar&onward=city", "last", 8, 3)!)).toBe("#from=bordeaux&to=agen&legs=715.20261019.0.8&trip=sofar");
+  });
+  it("boards the first leg earlier: the origin and its date follow", () => {
+    const s = ext("#from=bordeaux&station=st-jean&to=agen&legs=715.20261019.3.8&trip=1", "first", 1, 0, "2026-10-18")!;
+    expect(s.legs[0]!.from).toBe(0);
+    expect(toHash(jnet, s)).toBe("#from=sainte-foy&to=agen&date=2026-10-18&legs=715.20261019.1.8&trip=1");
+  });
+  it("only extends: not to an earlier stop, the origin, the destination or without a schedule", () => {
+    expect(ext("#from=bordeaux&to=agen&legs=715.20261019.0.4&trip=1", "last", 3, 2)).toBeNull();
+    expect(ext("#from=bordeaux&to=agen&legs=715.20261019.0.4&trip=1", "last", 6, 1)).toBeNull();
+    expect(ext("#from=bordeaux&to=agen&legs=715.20261019.2.4&trip=1", "first", 1, 3)).toBeNull();
+    expect(ext("#from=bordeaux&to=agen&legs=715.20261019.2.4&trip=1", "first", 3, 0)).toBeNull();
+    expect(ext("#from=bordeaux&to=agen&legs=715.20261019.0.4", "last", 6, 3)).toBeNull();
+  });
+  it("finds the trip of a leg in the CityFile of an earlier stop (boarding there)", () => {
+    const pat = (stations: number[], start = 0) => ({ route: 0, stations, arr: stations.map((_, i) => start + i * 10), dep: stations.map((_, i) => start + i * 10), corridors: [], headsign: "" });
+    const file = (patterns: ReturnType<typeof pat>[], trips: [number, number, number][]) => ({ patterns, trips, routes: [{ name: "IC", agency: "", cat: 1, flags: 0 }] }) as unknown as CityFile;
+    const src = file([pat([1, 2, 3])], [[0, 480, 0]]);
+    const dst = file([pat([0, 1, 2]), pat([1, 2, 3])], [[0, 480, 0], [1, 420, 0], [1, 480, 1], [1, 480, 0]]);
+    expect(tripIn(src, { from: 2, trip: 0, date: "2026-10-19", board: 1, alight: 2 }, dst)).toBe(3);
+    expect(tripIn(src, { from: 2, trip: 0, date: "2026-10-19", board: 1, alight: 2 }, file([pat([0, 1, 2])], [[0, 480, 0]]))).toBe(-1);
+  });
+  it("joins a continuation that stays on board into the last leg", () => {
+    const legs = [{ from: 0, trip: 1, date: "2026-10-19", board: 2, alight: 5 }, { from: 1, trip: 715, date: "2026-10-19", board: 0, alight: 4 }];
+    // stays on board to stop 8, then changes to trip 33
+    const route = [{ from: 2, trip: 90, date: "2026-10-19", board: 4, alight: 8 }, { from: 3, trip: 33, date: "2026-10-19", board: 0, alight: 2 }];
+    expect(joinStay(legs, route)).toEqual([legs[0], { ...legs[1], alight: 8 }, route[1]]);
+    expect(joinStay(legs, route.slice(0, 1))).toEqual([legs[0], { ...legs[1], alight: 8 }]);
   });
 });
