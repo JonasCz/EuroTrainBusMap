@@ -26,9 +26,13 @@ for key in $(node -e 'console.log(require(process.argv[1]).files.join("\n"))' "$
 done
 ```
 
-Gives `basemap/{borders,labels}.json`, `basemap/tiles-v2.tar` (land + lakes vector tiles, 31 MB; see the `basemap` skill), `geonames/places-europe.tsv.gz`,
-`rail/rail-graph-v1.bin` (19 MB), `road/road-graph-v1.bin` (53 MB); takes about a minute. Without the
-graphs corridors become unsnapped curves, so do not skip them (see the `refresh-geometry-assets` skill).
+Gives `basemap/{borders,labels}.json`, `basemap/tiles-v2.tar` (land + lakes vector tiles, 31 MB; see the `basemap` skill),
+`geonames/places-europe.tsv.gz` (2 MB), `geonames/villages-europe.tsv.gz` (21 MB), `rail/rail-graph-v1.bin` (27 MB),
+`rail/urbanrail-graph-v1.bin` (2 MB), `road/road-graph-v1.bin` (114 MB); takes about a minute. The README section
+"Build assets in R2" lists each key, its source and what the build does without it. Without the graphs corridors become
+unsnapped curves, so do not skip them (see the `refresh-geometry-assets` skill). Without tokens (or to test the CI from
+scratch) build them yourself with `pnpm --filter @etbm/etl run assets -- --out $PWD/work/assets --work $PWD/work --only <parts>`;
+the GeoNames and basemap files are also built by `build-data` itself when missing.
 
 ## 2. Full data build (~22 min wall clock on 4 cores)
 
@@ -317,8 +321,8 @@ data, give the build a new id: rename the directory (e.g. append a letter, `2026
 - Effect on the full build (20261016-1636 → -1811): cities 41k → 75k, stations 72k → 110k, corridors 124k → 182k, bus trips
   1.33M → 1.44M, shard 1.27 → 1.55 GB (771 → 933 files, largest still London 11.4 MB), tiles 29 → 41 MB gz (largest 904 KB),
   core.json 1.8 → 3.2 MB (gz 0.67 → 1.17 MB), out dir 13.3k → 14.1k files, build ~17 min with --reuse-db, peak RSS ~8.5 GB.
-- The villages asset is new: run refresh-assets with `only=geonames` (or upload `work/assets/geonames/villages-europe.tsv.gz`
-  and add it to the R2 `manifest.json`) so the weekly build stops downloading the dumps.
+- The villages asset is built and uploaded by refresh-assets (`only=geonames` rebuilds both GeoNames files; strict: any
+  failed country download fails the run instead of uploading a partial file). Built from scratch: ~45 s, 870k villages.
 
 ## Transit transfers ("Transit" between stations, `xfer=transit`)
 

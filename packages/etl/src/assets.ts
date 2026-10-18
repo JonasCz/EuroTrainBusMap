@@ -11,6 +11,11 @@
  *   road/road-graph-v1.bin          major-road graph for coach/bus corridor geometry (same format)
  *   manifest.json                   list of the keys above (read by the weekly build)
  *
+ * `--out` may already hold the current R2 assets (the workflow downloads them first, so the parts not rebuilt are kept).
+ * Every file in it that is not one of the current keys above (an older format version such as rail-graph-v0.bin, the
+ * retired basemap land.json / lakes.json) is deleted and left out of the manifest; the workflow then deletes the R2
+ * objects that are no longer in the manifest, so the bucket holds the current assets only.
+ *
  * Usage: node --import tsx src/assets.ts --out <assetsDir> [--work <dir>] [--only geonames,basemap,tiles,rail,urbanrail,road]
  * The weekly build reads the same directory layout via `build-data --assets <dir>`.
  */
@@ -27,6 +32,17 @@ import { log, warn } from "./util/log.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
+
+/** Every asset key the current code reads (the manifest lists exactly these, when present). */
+export const ASSET_KEYS = [
+  PLACES_ASSET,
+  VILLAGES_ASSET,
+  ...BASEMAP_FILES.map((f) => `basemap/${f}`),
+  BASEMAP_TILES_KEY,
+  RAIL_GRAPH_KEY,
+  URBAN_RAIL_GRAPH_KEY,
+  ROAD_GRAPH_KEY,
+];
 
 export interface AssetsManifest {
   generatedAt: string;
@@ -56,12 +72,18 @@ async function main() {
   let failed = false;
 
   if (only.has("geonames")) {
-    await rm(join(out, PLACES_ASSET), { force: true });
-    const places = await loadPlaces(cacheDir, cfg.userAgent, out);
-    log(`assets: ${PLACES_ASSET} (${places.length} places)`);
-    await rm(join(out, VILLAGES_ASSET), { force: true });
-    const villages = await loadVillages(cacheDir, cfg.userAgent, out);
-    log(`assets: ${VILLAGES_ASSET} (${villages.length} villages)`);
+    try {
+      // strict: a download that fails is an error here (the build's own fallback tolerates it, an asset must not)
+      await rm(join(out, PLACES_ASSET), { force: true });
+      const places = await loadPlaces(cacheDir, cfg.userAgent, out, { strict: true });
+      log(`assets: ${PLACES_ASSET} (${places.length} places)`);
+      await rm(join(out, VILLAGES_ASSET), { force: true });
+      const villages = await loadVillages(cacheDir, cfg.userAgent, out, { strict: true });
+      log(`assets: ${VILLAGES_ASSET} (${villages.length} villages)`);
+    } catch (e) {
+      warn(`assets: geonames failed: ${(e as Error).stack ?? e}`);
+      failed = true;
+    }
   }
 
   if (only.has("basemap")) {
@@ -127,7 +149,19 @@ async function main() {
     }
   }
 
-  const manifest: AssetsManifest = { generatedAt: new Date().toISOString(), files: await listFiles(out) };
+  // superseded files (older format versions, retired layers) are removed, so neither the manifest nor R2 keeps them
+  const current = new Set(ASSET_KEYS);
+  const files: string[] = [];
+  for (const f of await listFiles(out)) {
+    if (current.has(f)) files.push(f);
+    else {
+      await rm(join(out, f), { force: true });
+      log(`assets: removed superseded ${f}`);
+    }
+  }
+  const absent = ASSET_KEYS.filter((k) => !files.includes(k));
+  if (absent.length) warn(`assets: not built and not in --out: ${absent.join(", ")} (the weekly build falls back to source / runs without them)`);
+  const manifest: AssetsManifest = { generatedAt: new Date().toISOString(), files };
   await writeFile(join(out, "manifest.json"), JSON.stringify(manifest, null, 1));
   log(`assets: manifest with ${manifest.files.length} files: ${manifest.files.join(", ")}`);
   if (failed) process.exitCode = 1;

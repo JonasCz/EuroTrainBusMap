@@ -42,13 +42,17 @@ env:
 jobs:
   build-deploy:
     runs-on: ubuntu-latest
+    # full data build from scratch on a 4-core runner: feed download + load ~20 min, stages ~20 min, transit
+    # transfers ~14 min and local transport ~10 min (their per-feed caches start empty in CI), ~70 min in all
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
 
-      # Data built by different ETL/schema code is never reused (hashFiles is not allowed in workflow-level env).
+      # Data built by different ETL/schema code is never reused (hashFiles is not allowed in workflow-level env):
+      # everything the ETL reads from the repo – sources, operator adapters, data files, feed lists, the basemap
+      # script it imports, the shared schema and the lockfile (DuckDB version).
       - name: Data cache key
-        run: echo "DATA_KEY=data-out-${{ hashFiles('packages/etl/src/**', 'packages/etl/data/**', 'packages/etl/feeds.json', 'packages/shared/src/**') }}" >> "$GITHUB_ENV"
+        run: echo "DATA_KEY=data-out-${{ hashFiles('packages/etl/src/**', 'packages/etl/operators/**', 'packages/etl/data/**', 'packages/etl/feeds.json', 'packages/etl/urban-feeds.json', 'packages/etl/package.json', 'packages/web/scripts/basemap.ts', 'packages/shared/src/**', 'pnpm-lock.yaml') }}" >> "$GITHUB_ENV"
 
       # GitHub disables scheduled workflows in public repos after 60 days without activity.
       - name: Keep the schedule alive
@@ -93,9 +97,10 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
           df -h /
 
-      # Slow-changing inputs from R2 (built by refresh-assets.yml): GeoNames places, basemap,
-      # rail graph. Anything missing is computed/downloaded from source by the ETL (the rail
-      # graph is not: without it corridors are drawn as unsnapped curves).
+      # Slow-changing inputs from R2 (built by refresh-assets.yml), exactly the keys of the bucket's manifest.json:
+      # GeoNames places + villages, basemap borders / labels / tiles, rail, urban rail and road graphs. Missing GeoNames
+      # and basemap files are built from source by the ETL (villages: ~110 MB of GeoNames dumps, ~1 min); the graphs
+      # are not (~30 min of Overture extraction each): without them lines are drawn as unsnapped curves.
       - name: Download assets from R2
         if: steps.mode.outputs.rebuild == 'true'
         continue-on-error: true

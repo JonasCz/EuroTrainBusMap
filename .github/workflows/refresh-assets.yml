@@ -1,11 +1,14 @@
 name: Refresh build assets (R2)
 
-# Rebuilds the slow-changing inputs of the weekly data build and uploads them to the
-# R2 bucket `eurotrainbusmap-assets`:
-#   geonames/{places,villages}-europe.tsv.gz   basemap/{borders,labels}.json   basemap/tiles-v2.tar (land + lakes vector tiles)
-#   rail/rail-graph-v1.bin   rail/urbanrail-graph-v1.bin (tram / metro track)   road/road-graph-v1.bin
-#   manifest.json
-# Overture publishes monthly; GeoNames / Natural Earth change rarely.
+# Rebuilds the slow-changing inputs of the weekly data build from public sources and uploads them to the
+# R2 bucket `eurotrainbusmap-assets` (every asset, its source and size: README "Build assets in R2"):
+#   geonames/places-europe.tsv.gz   geonames/villages-europe.tsv.gz      (GeoNames)
+#   basemap/{borders,labels}.json   basemap/tiles-v2.tar                  (Natural Earth, OSM land polygons)
+#   rail/rail-graph-v1.bin   rail/urbanrail-graph-v1.bin   road/road-graph-v1.bin   (Overture Maps)
+#   manifest.json                   the keys above; the weekly build downloads exactly these
+# The bucket holds the current assets only: after the new manifest is uploaded, every object that is not
+# listed in it (older format versions, retired files) is deleted. No backups are kept.
+# Overture publishes monthly; GeoNames / Natural Earth / OSM land polygons change slowly.
 on:
   schedule:
     - cron: "41 1 4 * *" # 4th of each month, 01:41 UTC
@@ -30,7 +33,9 @@ env:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # all six from scratch (no Overture cache): rail ~30 + road ~30 + urbanrail ~25 min of extraction, road graph ~8 min,
+    # land polygons ~1 GB + tiles ~5 min, GeoNames ~250 MB ~3 min
+    timeout-minutes: 300
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -51,6 +56,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
       - name: Create bucket (idempotent)
         run: |
           out=$(npx -y wrangler@4 r2 bucket create "$ASSETS_BUCKET" 2>&1) && echo "$out" || {
@@ -58,19 +68,29 @@ jobs:
             echo "$out" | grep -qi "already exists" || exit 1
           }
 
+      # Strict: the parts not rebuilt are kept from R2, and objects missing from the new manifest are deleted
+      # afterwards, so a failed download must stop the run instead of silently dropping an asset.
       - name: Fetch current assets (kept for parts not rebuilt)
-        continue-on-error: true
         run: |
-          mkdir -p work/assets
-          npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/manifest.json" --file work/assets/manifest.json --remote || exit 0
-          for key in $(node -e 'console.log(require(process.argv[1]).files.join("\n"))' "$PWD/work/assets/manifest.json"); do
+          mkdir -p work/assets work/r2
+          get() { for i in 1 2 3; do npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/$1" --file "$2" --remote > work/r2/get.log 2>&1 && return 0; cat work/r2/get.log; sleep $((i * 10)); done; return 1; }
+          if ! get manifest.json work/r2/old-manifest.json; then
+            if grep -qiE "does not exist|not found|NoSuchKey" work/r2/get.log; then
+              echo "::notice::no manifest.json in R2 yet (first run)"; echo '{"files":[]}' > work/r2/old-manifest.json; : > work/r2/before.sha256; exit 0
+            fi
+            echo "::error::could not read manifest.json from R2"; exit 1
+          fi
+          cat work/r2/old-manifest.json
+          for key in $(node -e 'console.log(require(process.argv[1]).files.join("\n"))' "$PWD/work/r2/old-manifest.json"); do
             mkdir -p "work/assets/$(dirname "$key")"
-            npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/$key" --file "work/assets/$key" --remote || true
+            get "$key" "work/assets/$key" || { echo "::error::could not fetch $key from R2"; exit 1; }
           done
+          (cd work/assets && find . -type f ! -name manifest.json | sed 's#^\./##' | sort | xargs -r sha256sum) > work/r2/before.sha256
+          cat work/r2/before.sha256
 
-      # The Overture extracts (rail ~190 MB, major roads ~ROADMB) are cached, so re-runs within the same
-      # Overture release skip the slow S3 scan (a new release is detected and re-extracted). Bump the
-      # key prefix when the extract definition changes (v3: rail keeps disused/under-construction
+      # The Overture extracts (rail ~190 MB, major roads ~2 GB, urban rail ~25 MB) are cached, so re-runs within the
+      # same Overture release skip the slow S3 scan (a new release is detected and re-extracted; old extracts are
+      # deleted). Bump the key prefix when the extract definition changes (v3: rail keeps disused/under-construction
       # segments, roads include `tertiary`), otherwise a stale extract of the same release is reused.
       - name: Restore Overture extracts
         uses: actions/cache@v4
@@ -80,6 +100,9 @@ jobs:
           restore-keys: |
             overture-v3-
 
+      # Builds the parts in `only` into work/assets (deleting the old copies first), removes files that are not current
+      # asset keys and writes work/assets/manifest.json listing exactly the current keys (src/assets.ts). Any failure
+      # fails the step, and then nothing is uploaded or deleted.
       - name: Build assets
         run: |
           unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_REGION AWS_REGION
@@ -87,11 +110,42 @@ jobs:
           cat work/assets/manifest.json
           du -ah work/assets
 
-      - name: Upload to R2
+      - name: Upload to R2 and delete superseded objects
         run: |
-          for key in $(node -e 'console.log(require(process.argv[1]).files.join("\n"))' "$PWD/work/assets/manifest.json"); do
-            echo "upload $key"
-            npx -y wrangler@4 r2 object put "$ASSETS_BUCKET/$key" --file "work/assets/$key" --remote
+          put() { for i in 1 2 3; do npx -y wrangler@4 r2 object put "$ASSETS_BUCKET/$1" --file "$2" --remote "${@:3}" && return 0; sleep $((i * 10)); done; return 1; }
+          keys=$(node -e 'console.log(require(process.argv[1]).files.join("\n"))' "$PWD/work/assets/manifest.json")
+          [ -n "$keys" ] || { echo "::error::empty manifest"; exit 1; }
+          # only new or changed objects (an unchanged asset kept from R2 is not uploaded again)
+          for key in $keys; do
+            sum=$(cd work/assets && sha256sum "$key")
+            if grep -qxF "$sum" work/r2/before.sha256; then echo "unchanged $key"; continue; fi
+            echo "upload $key ($(du -h "work/assets/$key" | cut -f1))"
+            put "$key" "work/assets/$key" || { echo "::error::upload of $key failed"; exit 1; }
           done
           # manifest last, so the weekly build never sees keys that are not uploaded yet
-          npx -y wrangler@4 r2 object put "$ASSETS_BUCKET/manifest.json" --file work/assets/manifest.json --content-type application/json --remote
+          put manifest.json work/assets/manifest.json --content-type application/json || exit 1
+          # Delete what the new manifest no longer lists: the old manifest's keys, plus every other object of the
+          # bucket when it can be listed (Cloudflare API; objects uploaded by hand). Nothing old is kept.
+          node -e 'const [a, b] = process.argv.slice(1).map((f) => new Set(require(f).files)); for (const k of a) if (!b.has(k)) console.log(k)' \
+            "$PWD/work/r2/old-manifest.json" "$PWD/work/assets/manifest.json" > work/r2/stale.txt
+          cursor=""; listed=true; : > work/r2/objects.txt
+          while :; do
+            if ! curl -sSf -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -o work/r2/page.json \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$ASSETS_BUCKET/objects?per_page=1000${cursor:+&cursor=$cursor}"; then
+              listed=false; break
+            fi
+            jq -r '(.result // [])[] | .key // empty' work/r2/page.json >> work/r2/objects.txt || { listed=false; break; }
+            cursor=$(jq -r '.result_info.cursor // empty' work/r2/page.json || true)
+            [ "$(jq -r '.result_info.is_truncated // false' work/r2/page.json)" = true ] && [ -n "$cursor" ] || break
+          done
+          if [ "$listed" = true ]; then
+            echo "bucket objects:"; cat work/r2/objects.txt
+            grep -vxF -f <(echo "$keys"; echo manifest.json) work/r2/objects.txt >> work/r2/stale.txt || true
+          else
+            echo "::warning::could not list the bucket; deleting only the keys the old manifest listed"
+          fi
+          for key in $(sort -u work/r2/stale.txt); do
+            [ "$key" = manifest.json ] && continue
+            echo "delete superseded $key"
+            npx -y wrangler@4 r2 object delete "$ASSETS_BUCKET/$key" --remote || echo "::warning::could not delete $key"
+          done

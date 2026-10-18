@@ -411,11 +411,45 @@ Tests: `pnpm test`, types: `pnpm typecheck`.
     only when no compatible cached data exists (ETL/schema code changed).
   - A keepalive step re-enables the workflow, since GitHub disables schedules in repositories
     without activity for 60 days.
-- **`.github/workflows/refresh-assets.yml`** (monthly + manual): rebuilds the slow-changing inputs and
-  uploads them to the R2 bucket `eurotrainbusmap-assets`: `geonames/places-europe.tsv.gz` (pruned
-  GeoNames, ~2 MB), `basemap/{borders,labels}.json` (Natural Earth 1:10m borders, country labels), `basemap/tiles-v2.tar` (land + lake vector tiles from OSM land polygons, ~31 MB, rebuilt with `--only tiles`: ~1 GB download, ~3 min), `rail/urbanrail-graph-v1.bin` (tram / metro / light-rail track for local-transport lines without shapes, ~2 MB), `rail/rail-graph-v1.bin` (rail graph from the
-  Overture rail extract incl. disused/under-construction track at high cost and bridged gaps, ~27 MB),
-  `road/road-graph-v1.bin` (motorway…tertiary road graph, 30 m geometry, ~114 MB) and `manifest.json`.
+- **`.github/workflows/refresh-assets.yml`** (monthly + manual, input `only`): rebuilds the slow-changing inputs from
+  public sources (`packages/etl/src/assets.ts`) and uploads them to the R2 bucket `eurotrainbusmap-assets`, see the table
+  below. The parts not in `only` are downloaded from R2 and kept (a failed download stops the run). Only new or changed
+  objects are uploaded, `manifest.json` last; then every object the new manifest does not list (an older format version, a
+  retired file) is deleted, so the bucket holds the current assets only and keeps no backups.
+
+### Build assets in R2
+
+The weekly build downloads exactly the keys of the bucket's `manifest.json` into `work/assets/`. Every one of them can be
+rebuilt from public sources by refresh-assets (`only` = the part name):
+
+| key | part | what | source | size | without it the build… |
+|---|---|---|---|---|---|
+| `geonames/places-europe.tsv.gz` | `geonames` | places ≥ 1000 inhabitants with local names (cities) | GeoNames `cities1000.zip`, `countryInfo.txt`, `alternatenames/<CC>.zip` | 2 MB | builds it from GeoNames (~30 MB download) |
+| `geonames/villages-europe.tsv.gz` | `geonames` | every populated place incl. villages (bus destinations) | GeoNames per-country dumps `<CC>.zip` | 21 MB | builds it from GeoNames (~110 MB download, ~1 min) |
+| `basemap/borders.json`, `basemap/labels.json` | `basemap` | country borders, country labels | Natural Earth 10m / 50m | 0.3 MB | builds them from Natural Earth |
+| `basemap/tiles-v2.tar` | `tiles` | land + lake vector tiles z2–9, unpacked to `data/basemap-v2/` | OSM land polygons (osmdata.openstreetmap.de, ~1 GB) + Natural Earth lakes | 31 MB | draws the coarse 1:50m land (warning) |
+| `rail/rail-graph-v1.bin` | `rail` | rail routing graph | Overture Maps transportation (S3, ~30 min extraction) | 27 MB | draws rail lines as unsnapped curves (warning) |
+| `rail/urbanrail-graph-v1.bin` | `urbanrail` | tram / metro track graph | Overture Maps (~25 min extraction) | 2 MB | draws local lines without shapes as dashed chords |
+| `road/road-graph-v1.bin` | `road` | motorway…tertiary road graph | Overture Maps (~30 min extraction) | 114 MB | draws coach / bus lines as unsnapped curves (warning) |
+
+A first run of refresh-assets with all parts takes ~2 h (mostly the three Overture extractions; later runs within one
+Overture release reuse the cached extracts). Changing a format means a new key (`RAIL_FORMAT`, `BASEMAP_TILES_KEY`):
+add it to `ASSET_KEYS` in `src/assets.ts`, run refresh-assets, and the old key is deleted from R2 by that run.
+
+### Building from scratch
+
+Nothing outside the repository and the R2 bucket is needed; every input is public:
+
+1. Secrets `CLOUDFLARE_API_TOKEN` (Workers deploy + R2 read/write) and `CLOUDFLARE_ACCOUNT_ID`; optional repo variable `BASE_PATH`.
+2. Run **refresh-assets** once with all parts (creates the bucket, uploads the assets and `manifest.json`); afterwards it
+   runs monthly.
+3. Run **build-deploy** (dispatch, `rebuild` on). On a fresh runner it downloads the assets, then every GTFS feed of
+   `feeds.json`, the operator adapters' extra feeds (`packages/etl/operators/`) and `urban-feeds.json` (Transitous mirror,
+   Mobility Database / operator URLs; no feed needs a key), and runs `build-data --subset full`. No local state is used:
+   the DuckDB database, the feed cache and the per-feed local-transport / transit caches (`work/urban/`) all start empty
+   (`--reuse-db`, `db-state.json`, `LOAD_VERSION` / `EXTRACT_VERSION` only matter for local iteration). Measured
+   from-scratch on 4 cores: see the `local-build-deploy` skill; ~70 min, peak RSS ~8.5 GB, `work/` ~10 GB at its peak,
+   output ~1.7 GB / ~14k files. The job's timeout is 240 min.
 
 Secrets: `CLOUDFLARE_API_TOKEN` (Workers deploy + R2) and `CLOUDFLARE_ACCOUNT_ID`.
 
@@ -426,7 +460,7 @@ Designed to run for free:
 - **GitHub Actions** – free for public repositories (weekly ~20–30 min job, monthly asset refresh).
 - **Cloudflare Workers static assets** – requests to static assets are free; ~10k files ≈ 1.1 GB per
   build (limits: 25 MiB per file, 20k files per deployment on the free plan).
-- **Cloudflare R2** – ~80 MB stored, a handful of operations per week: well inside the free tier
+- **Cloudflare R2** – ~200 MB stored, a handful of operations per week: well inside the free tier
   (10 GB storage, 1M class A / 10M class B ops per month, no egress fees).
 - **Data sources** – free/open (Transitous mirror, Mobility Database, GeoNames, Natural Earth,
   Overture/OSM, OSM land polygons). Transitous is a community service: the pipeline downloads once a week with a

@@ -30,8 +30,12 @@ Run the **refresh-assets** workflow: Actions → "Refresh build assets (R2)" →
 also runs monthly on the 4th.
 - `only` takes a comma-separated subset of `geonames,basemap,tiles,rail,urbanrail,road`. Use `rail,road` to rebuild only the graphs.
 - It runs `packages/etl/src/assets.ts`. That calls `buildRailAsset` / `buildRoadAsset` from
-  `packages/etl/src/geometry/refresh-rail.ts`, then uploads the results and `manifest.json` (last).
-- The Overture extracts are kept in the Actions cache (`overture-v2-*`). A re-run on the same
+  `packages/etl/src/geometry/refresh-rail.ts`, then uploads the new or changed files and `manifest.json` (last), and
+  deletes every R2 object the new manifest does not list (no old versions are kept).
+- The manifest lists exactly `ASSET_KEYS` (`src/assets.ts`). After bumping `RAIL_FORMAT` the new keys must be in
+  `ASSET_KEYS` (they are, through `RAIL_GRAPH_KEY` etc.); the old `-v1` files are then removed locally and in R2 by the next run
+  with all graph parts, so run it with `only=rail,urbanrail,road` right after merging a format change, before the weekly build.
+- The Overture extracts are kept in the Actions cache. A re-run on the same
   release skips the S3 scan; a new release is detected through the STAC catalog and re-extracted.
 - The Actions cache key is `overture-v3-*`: bump it whenever the extract definition (classes, flags) changes, or an old extract of the same release is reused.
 - Check the log for these lines: `rail: wrote …`, `road: wrote … (NN MB, release …)`, and `pruned … components`.

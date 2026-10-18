@@ -65,8 +65,8 @@ export function parsePlaces(buf: Buffer): Place[] {
  * when present (downloaded from R2 in CI); otherwise builds it from download.geonames.org and
  * writes it there (so it can be uploaded as the asset).
  */
-export async function loadPlaces(cacheDir: string, ua: string, assetsDir?: string): Promise<Place[]> {
-  if (assetsDir) {
+export async function loadPlaces(cacheDir: string, ua: string, assetsDir?: string, opts: { strict?: boolean } = {}): Promise<Place[]> {
+  if (assetsDir && !opts.strict) {
     const f = join(assetsDir, PLACES_ASSET);
     if (existsSync(f)) {
       try {
@@ -81,7 +81,7 @@ export async function loadPlaces(cacheDir: string, ua: string, assetsDir?: strin
       }
     }
   }
-  const places = await loadPlacesFromSource(cacheDir, ua);
+  const places = await loadPlacesFromSource(cacheDir, ua, !!opts.strict);
   if (assetsDir) {
     await mkdir(join(assetsDir, "geonames"), { recursive: true });
     await writeFile(join(assetsDir, PLACES_ASSET), serializePlaces(places));
@@ -89,7 +89,7 @@ export async function loadPlaces(cacheDir: string, ua: string, assetsDir?: strin
   return places;
 }
 
-async function loadPlacesFromSource(cacheDir: string, ua: string): Promise<Place[]> {
+async function loadPlacesFromSource(cacheDir: string, ua: string, strict: boolean): Promise<Place[]> {
   const dir = join(cacheDir, "geonames");
   await mkdir(dir, { recursive: true });
   const get = (f: string, sub = "") => downloadCached(BASE + sub + f, join(dir, sub.replace(/\//g, "_") + f), ua, { maxAgeH: 24 * 6 });
@@ -133,13 +133,17 @@ async function loadPlacesFromSource(cacheDir: string, ua: string): Promise<Place
   // Local-language names from per-country alternate name files.
   const byId = new Map(places.map((p, i) => [p.id, i]));
   const countries = [...new Set(places.map((p) => p.country))].sort();
+  const missing: string[] = [];
   await mapLimit(countries, 3, async (cc) => {
     try {
       await get(`${cc}.zip`, "alternatenames/");
     } catch (e) {
       warn(`geonames alternatenames ${cc}: ${(e as Error).message}`);
+      missing.push(cc);
     }
   });
+  // an asset built for R2 must be complete: a missing country would lose its local names for a month
+  if (strict && missing.length) throw new Error(`geonames: alternate names missing for ${missing.sort().join(", ")}`);
   for (const cc of countries) {
     const zip = join(dir, `alternatenames_${cc}.zip`);
     if (!existsSync(zip)) continue;
@@ -193,8 +197,8 @@ const VILLAGE_MAX_ALT = 6;
  * Uses `<assetsDir>/geonames/villages-europe.tsv.gz` when present, otherwise builds it from the per-country dumps of
  * download.geonames.org (~110 MB) and writes it there.
  */
-export async function loadVillages(cacheDir: string, ua: string, assetsDir?: string): Promise<Place[]> {
-  if (assetsDir) {
+export async function loadVillages(cacheDir: string, ua: string, assetsDir?: string, opts: { strict?: boolean } = {}): Promise<Place[]> {
+  if (assetsDir && !opts.strict) {
     const f = join(assetsDir, VILLAGES_ASSET);
     if (existsSync(f)) {
       try {
@@ -257,6 +261,11 @@ export async function loadVillages(cacheDir: string, ua: string, assetsDir?: str
   });
   out.sort((a, b) => a.id - b.id);
   log(`geonames: ${out.length} villages from the country dumps`);
+  // an asset built for R2 must be complete (a missing country dump would drop its villages until the next refresh)
+  const failed = countries.filter((_, i) => !files[i]);
+  if (opts.strict && (failed.length || out.length <= 100_000)) {
+    throw new Error(`geonames villages: ${out.length} villages, country dumps missing: ${failed.join(", ") || "none"}`);
+  }
   if (assetsDir && out.length > 100_000) {
     await mkdir(join(assetsDir, "geonames"), { recursive: true });
     await writeFile(join(assetsDir, VILLAGES_ASSET), serializePlaces(out));
