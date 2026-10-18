@@ -247,8 +247,9 @@ export interface CityFile {
   trips: Trip[];
   /**
    * Walking transfer minutes between stations of this city (`walkMinutes`, packages/shared/src/walk.ts):
-   * [fromStation, toStation, minutes][], every pair within `WALK_MAX_M`; a pair missing here is too far
-   * apart to walk and has no transfer. Same-station minimum is `minTransfer`.
+   * [fromStation, toStation, minutes][], every pair within `TRANSFER_MAX_M` (walking or cycling range; the web
+   * app applies the cap of the chosen mode, `changeMinutes`, so minutes may exceed `WALK_MAX_MIN`); a pair missing
+   * here is too far apart and has no transfer. Same-station minimum is `minTransfer`.
    */
   transfers: [number, number, number][];
   minTransfer: number;

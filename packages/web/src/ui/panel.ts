@@ -1,5 +1,5 @@
 /** Side panel (desktop) / bottom sheet (mobile): search, mode chips and content views. */
-import { Cat, WALK_MAX_MIN, distanceM, walkDistanceM, walkMinutes } from "@etbm/shared";
+import { CYCLE_BUFFER_MIN, CYCLE_MAX_MIN, CYCLE_M_PER_MIN, Cat, WALK_MAX_MIN, changeOf, distanceM, walkDistanceM, walkMinutes, type ChangeBy } from "@etbm/shared";
 import { cityTz, slugify, stationName, type Net } from "../data/net.ts";
 import { addDays, formatDateShort, lastDate } from "../logic/calendar.ts";
 import type { Connection, OnwardStop } from "../logic/connections.ts";
@@ -121,8 +121,8 @@ export interface XferView {
 /** A journey with changes; `route` is set when every leg was found in the boarding city's timetable. */
 export interface JourneyRow {
   journey: Journey;
-  /** `walk`: minutes walked between the two stations of the change before this leg */
-  legs: { raw: JourneyLeg; info?: LegInfo; walk?: number }[];
+  /** `walk`: minutes walked (or cycled, `by` "bike") between the two stations of the change before this leg */
+  legs: { raw: JourneyLeg; info?: LegInfo; walk?: number; by?: ChangeBy }[];
   route?: Leg[];
 }
 
@@ -161,6 +161,8 @@ export class Panel {
   private matches: number[] = [];
   private active = -1;
   onLayout?: () => void;
+  /** How changes between stations are made (the transfer settings), for the changes shown without a search result. */
+  changeBy: ChangeBy = "walk";
 
   constructor(
     private net: Net,
@@ -576,7 +578,7 @@ export class Panel {
     const k = x.settings.transfers;
     const edit = h(
       "button",
-      { type: "button", class: "icon-btn xfer-edit", "aria-label": "Connections with changes: settings", title: "Connections, minimum transfer time and maximum wait", onclick: () => this.openTransfers(x.settings) },
+      { type: "button", class: "icon-btn xfer-edit", "aria-label": "Connections with changes: settings", title: "Connections, minimum transfer time, maximum wait and walking or cycling between stations", onclick: () => this.openTransfers(x.settings) },
       icon("edit", 16),
     );
     const kind = x.settings.maxWait === null ? "same-day " : "";
@@ -603,7 +605,7 @@ export class Panel {
         : h(
             "span",
             { class: "xfer-rules muted small" },
-            `min. ${x.settings.minTransfer} min to change${x.settings.maxWait === null ? ", same day" : `, max. ${fmtWait(x.settings.maxWait)} wait`}`,
+            `min. ${x.settings.minTransfer} min to change${x.settings.maxWait === null ? ", same day" : `, max. ${fmtWait(x.settings.maxWait)} wait`}${x.settings.changeBy === "bike" ? ", cycling between stations" : ""}`,
           );
     return h(
       "div",
@@ -629,6 +631,19 @@ export class Panel {
         i === 0 ? "Direct only" : connWord(i),
       ),
     );
+    let by: ChangeBy = cur.changeBy ?? "walk";
+    const byOpts: [ChangeBy, string][] = [["walk", "Walk"], ["bike", "Cycle"]];
+    const byBtns = byOpts.map(([v, label]) =>
+      h(
+        "button",
+        { type: "button", class: "scope-opt", "aria-pressed": String(v === by), onclick: () => {
+          by = v;
+          byBtns.forEach((b, i) => b.setAttribute("aria-pressed", String(byOpts[i]![0] === by)));
+        } },
+        icon(v, 14),
+        ` ${label}`,
+      ),
+    );
     const note = h("p", { class: "small muted xfer-note", hidden: k < 2 }, "Two connections reach most of Europe from a big city and take a few seconds to compute (and several MB of timetable data).");
     const min = h("input", { type: "number", id: "xfer-min", min: "0", max: "120", step: "1", inputmode: "numeric", value: String(cur.minTransfer) });
     const step = (d: number) => {
@@ -646,7 +661,7 @@ export class Panel {
       const m = Math.max(0, Math.min(120, Math.round(Number(min.value) || 0)));
       const w = wait.value === "day" ? null : Number(wait.value);
       close();
-      this.actions.setTransfers({ transfers: k, minTransfer: m, maxWait: w });
+      this.actions.setTransfers({ transfers: k, minTransfer: m, maxWait: w, changeBy: by });
     };
     dlg.append(
       h(
@@ -672,7 +687,18 @@ export class Panel {
               h("span", { class: "muted" }, "minutes"),
               h("button", { type: "button", class: "icon-btn", "aria-label": "1 minute more", onclick: () => step(1) }, "+"),
             ),
-            h("p", { class: "small muted" }, `At the same station. Changing between stations of a city takes at least the walk between them (estimated from the distance at a slow pace, up to ${fmtDuration(WALK_MAX_MIN)}; stations farther apart are not combined).`),
+            h("p", { class: "small muted" }, "At the same station. Changing between stations of a city takes at least the walk or ride between them."),
+          ),
+          h(
+            "div",
+            { class: "xfer-field" },
+            h("span", { class: "xfer-label", id: "xfer-by" }, "Between stations"),
+            h("div", { class: "scope", role: "group", "aria-labelledby": "xfer-by" }, byBtns),
+            h(
+              "p",
+              { class: "small muted" },
+              `Estimated from the distance: walking at a slow pace (4.5 km/h) up to ${WALK_MAX_MIN / 60} h, or cycling at ${Math.round((CYCLE_M_PER_MIN * 60) / 1000)} km/h with stops plus ${CYCLE_BUFFER_MIN} min to take and park the bike, up to ${CYCLE_MAX_MIN / 60} h (short changes are still walked). Stations farther apart are not combined.`,
+            ),
           ),
           h("div", { class: "xfer-field" }, h("label", { class: "xfer-label", for: "xfer-wait" }, "Maximum waiting time"), wait),
           h("p", { class: "small muted" }, "Destinations are searched for the travel day shown under the count; direct destinations are those served on any day."),
@@ -702,7 +728,7 @@ export class Panel {
     const title = h("span", { class: "pair" }, v.station !== undefined ? `${from} (${a.name})` : from, h("span", { class: "pair-arrow", "aria-label": "to" }, icon("arrow", 16)), b.name);
     const k = v.settings.transfers;
     const found = `${v.rows.length} journey${v.rows.length === 1 ? "" : "s"} with up to ${connWord(k)}${v.rows.length > 1 ? ` in ${countOptions(v.rows, n)}` : ""}`;
-    const rules = `min. ${v.settings.minTransfer} min to change${v.settings.maxWait === null ? ", same day" : `, max. ${fmtWait(v.settings.maxWait)} wait`}`;
+    const rules = `min. ${v.settings.minTransfer} min to change${v.settings.maxWait === null ? ", same day" : `, max. ${fmtWait(v.settings.maxWait)} wait`}${v.settings.changeBy === "bike" ? ", cycling between stations" : ""}`;
     const arrived = cont ? cont.legs[cont.legs.length - 1]! : null;
     const sub = cont
       ? v.status === "done"
@@ -764,15 +790,15 @@ export class Panel {
         const wait = Math.round((l.depUtc - p.arrUtc) / 60000);
         const at = cityName(n.ctx.stationCity[sb]!);
         const many = g.cities.length > 1 ? ` in ${at}` : "";
-        const walk = r.legs[i]?.walk, km = walkKm(n, sa, sb, "");
+        const walk = r.legs[i]?.walk, bike = r.legs[i]?.by === "bike", km = walkKm(n, sa, sb, "");
         changes.push(
           sa === sb
             ? h("span", { title: `Change at ${stationName(n, sb)}: ${fmtDuration(wait)} between the trains` }, `${fmtDuration(wait)} change${many}${g.stations[i - 1] ? "" : ` at ${shortStationName(stationName(n, sb), at)}`}`)
             : h(
                 "span",
-                { class: "jr-walk", title: `Change in ${at}: walk from ${stationName(n, sa)} to ${stationName(n, sb)}${walk !== undefined ? ` (about ${walk} min${km ? `, ${km}` : ""} on foot; ${fmtDuration(wait)} between the trains)` : ""}` },
+                { class: "jr-walk", title: `Change in ${at}: ${bike ? "cycle" : "walk"} from ${stationName(n, sa)} to ${stationName(n, sb)}${walk !== undefined ? ` (about ${walk} min${km ? `, ${km}` : ""} ${bike ? "by bike" : "on foot"}; ${fmtDuration(wait)} between the trains)` : ""}` },
                 `${fmtDuration(wait)} change${many} · `,
-                icon("walk", 13),
+                icon(bike ? "bike" : "walk", 13),
                 ` ${walk !== undefined ? `${walk} min ` : ""}${shortStationName(stationName(n, sa), at)} → ${shortStationName(stationName(n, sb), at)}`,
               ),
         );
@@ -850,7 +876,7 @@ export class Panel {
       list.append(more);
     }
     out.push(list);
-    out.push(h("p", { class: "hint" }, `Times are local. Grouped by the trains or buses taken and where to change; per option the departures not beaten by a later one arriving no later. Changes include the walk between stations. ${cont ? "Select a journey to add it." : "Select a journey for its legs and stops."}`));
+    out.push(h("p", { class: "hint" }, `Times are local. Grouped by the trains or buses taken and where to change; per option the departures not beaten by a later one arriving no later. Changes include the ${v.settings.changeBy === "bike" ? "walk or bike ride" : "walk"} between stations. ${cont ? "Select a journey to add it." : "Select a journey for its legs and stops."}`));
     return out;
   }
 
@@ -1186,7 +1212,7 @@ export class Panel {
                   ? [icon("seat", 14), ` stay on board at ${stationName(n, l.depStation)} (${fmtDuration(xfer)})`]
                   : prev!.arrStation === l.depStation
                     ? `change at ${stationName(n, l.depStation)} · ${fmtDuration(xfer)}`
-                    : [icon("walk", 14), ` ${fmtDuration(xfer)} · ${stationName(n, prev!.arrStation)} → ${stationName(n, l.depStation)}${walkNote(n, prev!.arrStation, l.depStation)}`],
+                    : [icon(changeBetween(n, prev!.arrStation, l.depStation, this.changeBy)?.change?.by === "bike" ? "bike" : "walk", 14), ` ${fmtDuration(xfer)} · ${stationName(n, prev!.arrStation)} → ${stationName(n, l.depStation)}${walkNote(n, prev!.arrStation, l.depStation, this.changeBy)}`],
               )
             : null,
           h(
@@ -1304,7 +1330,7 @@ export class Panel {
         const wel = countEl();
         const btn = h(
           "button",
-          { type: "button", class: "sched-whole", hidden: true, title: `Connections from every station of ${city}, with the walk between stations`, onclick: () => o.choose(st.stop, true) },
+          { type: "button", class: "sched-whole", hidden: true, title: `Connections from every station of ${city}, with the ${this.changeBy === "bike" ? "walk or ride" : "walk"} between stations`, onclick: () => o.choose(st.stop, true) },
           `All stations of ${city}`,
           wel,
         );
@@ -1431,20 +1457,22 @@ export class Panel {
     else if (c.arrStation !== c.depStation) {
       const sa = n.file.stations[c.arrStation], sb = n.file.stations[c.depStation];
       const d = sa && sb ? distanceM(sa.lon, sa.lat, sb.lon, sb.lat) : null;
-      const walk = c.walk ?? (d !== null ? walkMinutes(d) : null);
+      const est = d !== null ? (changeOf(walkMinutes(d), this.changeBy) ?? { min: walkMinutes(d), by: "walk" as const }) : null;
+      const walk = c.walk ?? est?.min ?? null;
+      const bike = (c.walk !== undefined ? c.by : est?.by) === "bike";
       lines.push(
         h(
           "div",
           { class: "jsched-x-main" },
-          icon("walk", 15),
-          h("span", null, h("strong", null, walk !== null ? `${fmtDuration(walk)} walk` : "Walk"), ` ${short(c.arrStation)} → ${short(c.depStation)}`, d !== null ? h("span", { class: "muted" }, ` · ${fmtKm(walkDistanceM(d) / 1000)}`) : null),
+          icon(bike ? "bike" : "walk", 15),
+          h("span", null, h("strong", null, walk !== null ? `${fmtDuration(walk)} ${bike ? "cycle" : "walk"}` : bike ? "Cycle" : "Walk"), ` ${short(c.arrStation)} → ${short(c.depStation)}`, d !== null ? h("span", { class: "muted" }, ` · ${fmtKm(walkDistanceM(d) / 1000)}`) : null),
         ),
       );
     } else lines.push(h("div", { class: "jsched-x-main" }, icon("swap", 15), h("span", null, h("strong", null, "Change"), ` at ${stationName(n, c.depStation)}`)));
     if (!c.through) {
-      // the walk taking (about) all the time between the trains needs no second line
+      // the walk (ride) taking (about) all the time between the trains needs no second line
       const spare = c.walk !== undefined ? c.wait - c.walk : null;
-      if (spare === null || spare > 2) lines.push(h("div", { class: "jsched-x-wait" }, `${fmtDuration(c.wait)} between the trains${spare !== null ? ` · ${fmtDuration(spare)} to spare after the walk` : ""}`));
+      if (spare === null || spare > 2) lines.push(h("div", { class: "jsched-x-wait" }, `${fmtDuration(c.wait)} between the trains${spare !== null ? ` · ${fmtDuration(spare)} to spare after the ${c.by === "bike" ? "ride" : "walk"}` : ""}`));
     }
     const opts = v.options[k] ?? [];
     if (opts.some((o) => !o.taken)) {
@@ -1574,7 +1602,7 @@ export class Panel {
           "div",
           { class: "scope", role: "group", "aria-label": "Departures from" },
           opt(shortStationName(arrName, city.name), !v.wholeCity, false, `Only departures from ${arrName}`),
-          opt(`All stations of ${city.name}`, v.wholeCity, true, `Departures from every station of ${city.name}, with the walk from ${arrName}`),
+          opt(`All stations of ${city.name}`, v.wholeCity, true, `Departures from every station of ${city.name}, with the ${this.changeBy === "bike" ? "walk or ride" : "walk"} from ${arrName}`),
         ),
       );
     }
@@ -1595,7 +1623,7 @@ export class Panel {
           const transferNote = c.through
             ? h("span", { class: "tag tag--through" }, icon("seat", 13), " stay on board")
             : c.depStation !== last.arrStation
-              ? h("span", { class: "walk" }, icon("walk", 13), ` ${c.transfer} min walk to ${stationName(n, c.depStation)}${walkKm(n, last.arrStation, c.depStation, " · ")}`)
+              ? h("span", { class: "walk" }, icon(c.changeBy === "bike" ? "bike" : "walk", 13), ` ${c.transfer} min ${c.changeBy === "bike" ? "cycle" : "walk"} to ${stationName(n, c.depStation)}${walkKm(n, last.arrStation, c.depStation, " · ")}`)
               : h("span", { class: "muted" }, `same station · min. ${c.transfer} min`);
           return h(
             "li",
@@ -1688,10 +1716,21 @@ function walkKm(n: Net, a: number, b: number, sep: string): string {
   return sa && sb ? `${sep}${fmtKm(walkDistanceM(distanceM(sa.lon, sa.lat, sb.lon, sb.lat)) / 1000)}` : "";
 }
 
-/** " (walk ≈ 75 min, 5.4 km)" between two (loaded) stations; "" while unknown. */
-function walkNote(n: Net, a: number, b: number): string {
+/**
+ * The change between two (loaded) stations estimated from their distance (as the search does, see walk.ts): minutes,
+ * how (walk / bike) and the straight-line distance; null while unknown, `change` undefined beyond range.
+ */
+function changeBetween(n: Net, a: number, b: number, by: ChangeBy): { change: { min: number; by: ChangeBy } | undefined; d: number } | null {
   const sa = n.file.stations[a], sb = n.file.stations[b];
-  if (!sa || !sb) return "";
+  if (!sa || !sb) return null;
   const d = distanceM(sa.lon, sa.lat, sb.lon, sb.lat);
-  return ` (walk ≈ ${fmtDuration(walkMinutes(d))}, ${fmtKm(walkDistanceM(d) / 1000)})`;
+  return { change: changeOf(walkMinutes(d), by), d };
+}
+
+/** " (walk ≈ 75 min, 5.4 km)" / " (cycle ≈ 27 min, 5.4 km)" between two (loaded) stations; "" while unknown. */
+function walkNote(n: Net, a: number, b: number, by: ChangeBy): string {
+  const x = changeBetween(n, a, b, by);
+  if (!x) return "";
+  const c = x.change ?? { min: walkMinutes(x.d), by: "walk" as const };
+  return ` (${c.by === "bike" ? "cycle" : "walk"} ≈ ${fmtDuration(c.min)}, ${fmtKm(walkDistanceM(x.d) / 1000)})`;
 }

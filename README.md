@@ -155,7 +155,8 @@ Pipeline in short:
      minimum transfer and maximum wait are also remembered in localStorage). The city panel shows "{n} direct destinations", then
      "{m} destinations with 1 same-day connection" (and with 2) with a pencil that opens the settings dialog: number of connections
      (0 = direct only, the default; 1; 2), minimum transfer time (at the same station; a change between two stations of a city takes at
-     least the walk between them, `CityFile.transfers`) and maximum waiting time (1–12 h or "same day":
+     least the walk between them, `CityFile.transfers`), walk or cycle between stations (URL `xfer=bike`, remembered too; see
+     the walking transfers below) and maximum waiting time (1–12 h or "same day":
      the connecting departure leaves before local midnight of the arrival; an arrival between midnight and 04:00 may not wait
      out the night, `NIGHT_END_MIN`). The search runs for the travel day (the view's date, else
      today, origin-local; a date bar under the count changes it), mode filters apply to every leg. Lists: "Major destinations / Other
@@ -206,6 +207,16 @@ Pipeline in short:
        chunks; the journeys view shows "75 min walk Montparnasse → Gare de Lyon (Paris) · 5.4 km". In the search, arrivals at
        stations out of walking range of a departure station are left out of that station's range maximum (a filtered copy of the
        city's arrivals, cached per excluded set).
+       With "Cycle" in the settings (`TransferSettings.changeBy = "bike"`) a change between stations is a bike ride instead:
+       the same street distance at 14 km/h including stops (233 m/min; measured urban averages are ≈ 15–15.5 km/h in
+       Copenhagen, 14.4 km/h in Amsterdam, 16.9 km/h in Arnhem, so the conservative end) + 5 min to take and park the bike,
+       rounded up, at most 1 h (≈ 9.9 km straight); a change is still walked where that is no slower (short ones).
+       Montparnasse → Gare de Lyon becomes "29 min cycle · 5.4 km", which makes e.g. the 05:39 Bordeaux → Paris TGV and the
+       09:10 to Nice (1 h 01 between them) a journey. The ride time is derived from the stored walking minutes
+       (`cycleMinutesFromWalk`: street distance ≤ (walk − 3) · 75 m, so at most a minute conservative), so the data has one
+       number per pair; the ETL stores pairs up to `TRANSFER_MAX_M` (the cycling range; walking minutes above 120 are only
+       used by bike). That is 194 k pairs instead of 156 k: +0.1 MB (1.2 %) of gzipped transfer chunks, +1.2 MB (0.1 %) of
+       city shards; search times unchanged.
      - **Data** (`packages/shared/src/tt.ts`, written by the map-data stage, `src/transfers.ts`): every pattern and trip of the
        shards deduplicated (416 k patterns (a pattern per brand), 2.19 M trips; shards repeat a pattern for every city it calls at, ~3 M times), as gzipped
        varint chunks (version 2: a brand per pattern, names in `TtIndex.brands`): chunk 0 = the *trunk* (all long-distance trains and coaches of Europe, 1.1 MB gz) and 32 regions (k-d split of

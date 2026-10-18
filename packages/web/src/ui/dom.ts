@@ -34,6 +34,8 @@ const ICONS: Record<string, string> = {
   next: "M9 5l7 7-7 7",
   swap: "M7 7h11l-3-3M17 17H6l3 3",
   walk: "M13.5 2.8a1.7 1.7 0 1 1 0 3.4 1.7 1.7 0 0 1 0-3.4zM9.5 21l2.2-6.2 2.8 2.7V21M12.5 14.5l-1-5.5M7.5 12.5l1.3-3.3 2.7-.2 2.3 3.2 2.7 1",
+  // bicycle, side view: two wheels, diamond frame, saddle and handlebar
+  bike: "M2.3 16.5a3.2 3.2 0 1 0 6.4 0 3.2 3.2 0 1 0-6.4 0zM15.3 16.5a3.2 3.2 0 1 0 6.4 0 3.2 3.2 0 1 0-6.4 0zM5.5 16.5 9 9.5h7l2.5 7M9 9.5l3 7H5.5M12 16.5l4-7M7.5 7h3M9 7v2.5M16 9.5l-1-3h2.3",
   search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4",
   info: "M12 8h.01M11 12h1v5h1M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z",
   seat: "M5 4v7a3 3 0 0 0 3 3h11M15 10l4 4-4 4",

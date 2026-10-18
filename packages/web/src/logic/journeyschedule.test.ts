@@ -45,7 +45,10 @@ describe("journey schedule", () => {
   it("describes the change: walk between stations and the time between the trains", () => {
     expect(j.changes).toHaveLength(1);
     const c = j.changes[0]!;
-    expect([c.arrStation, c.depStation, c.walk, c.through]).toEqual([0, 1, 15, false]);
+    expect([c.arrStation, c.depStation, c.walk, c.by, c.through]).toEqual([0, 1, 15, "walk", false]);
+    // a bike ride between the stations
+    const r = journeySchedule([s1, s2], () => ({ min: 9, by: "bike" }))!.changes[0]!;
+    expect([r.walk, r.by]).toEqual([9, "bike"]);
     expect(c.wait).toBe(52); // 11:40 → 12:32
     expect(j.changeCount).toBe(1);
     expect(j.minutes).toBe(210); // 10:00 → 13:30

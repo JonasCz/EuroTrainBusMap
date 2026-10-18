@@ -37,7 +37,9 @@ export interface AppState {
   wholeCity?: boolean;
   /**
    * Connections with changes (URL `changes=1&mintransfer=10&wait=180|day`, only values that differ from the defaults; the
-   * minimum transfer time and maximum wait are also remembered in localStorage as the viewer's defaults).
+   * minimum transfer time and maximum wait are also remembered in localStorage as the viewer's defaults). Changes between
+   * stations by bike (URL `xfer=bike`, also remembered) apply to the onward connections from a whole city too, so the
+   * parameter is kept without `changes`.
    */
   xfer: TransferSettings;
 }
@@ -89,7 +91,7 @@ export function storedSettings(): TransferSettings {
 
 export function storeSettings(x: TransferSettings): void {
   try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ minTransfer: x.minTransfer, maxWait: x.maxWait }));
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ minTransfer: x.minTransfer, maxWait: x.maxWait, changeBy: x.changeBy ?? "walk" }));
   } catch {
     /* no storage */
   }
@@ -101,17 +103,19 @@ function sanitize(x: TransferSettings): TransferSettings {
     transfers: int(x.transfers, 0, MAX_TRANSFERS, 0),
     minTransfer: int(x.minTransfer, 0, 120, DEFAULT_SETTINGS.minTransfer),
     maxWait: x.maxWait === null ? null : int(x.maxWait, 15, 24 * 60, 180),
+    changeBy: x.changeBy === "bike" ? "bike" : "walk",
   };
 }
 
 function parseSettings(q: URLSearchParams): TransferSettings {
   const base = storedSettings();
   const num = (k: string) => (q.get(k) !== null && /^\d{1,4}$/.test(q.get(k)!) ? Number(q.get(k)) : undefined);
-  const wait = q.get("wait");
+  const wait = q.get("wait"), by = q.get("xfer");
   return sanitize({
     transfers: num("changes") ?? 0,
     minTransfer: num("mintransfer") ?? base.minTransfer,
     maxWait: wait === "day" ? null : (num("wait") ?? base.maxWait),
+    changeBy: by === "bike" || by === "walk" ? by : base.changeBy,
   });
 }
 
@@ -175,5 +179,6 @@ export function toHash(net: Net, s: AppState): string {
     if (x.minTransfer !== DEFAULT_SETTINGS.minTransfer) q.push(`mintransfer=${x.minTransfer}`);
     if (x.maxWait !== DEFAULT_SETTINGS.maxWait) q.push(`wait=${x.maxWait === null ? "day" : x.maxWait}`);
   }
+  if (x.changeBy === "bike") q.push("xfer=bike");
   return q.length ? `#${q.join("&")}` : "";
 }

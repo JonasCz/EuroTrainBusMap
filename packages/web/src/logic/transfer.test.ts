@@ -283,4 +283,17 @@ describe("journeys: route options", () => {
     expect(search(base, { cats: Cat.LongDistance }, 75)).toEqual(["04:10-14:06 Intercités@O TGV@M", "04:46-14:06 TGV@O TGV@P"]);
     expect(search(base, { cats: Cat.LongDistance }, 80)).toEqual(["04:10-14:06 Intercités@O TGV@M", "04:40-14:30 TGV@O TGV@Q"]);
   });
+  it("cycles between stations of the change city when chosen", () => {
+    const tgv = { cats: Cat.LongDistance };
+    // an 80 min walk (5.8 km) is a 30 min ride: the 10:10 TGV from the other station is reached again
+    expect(search(base, { ...tgv, changeBy: "bike" }, 80)).toEqual(["04:10-14:06 Intercités@O TGV@M", "04:46-14:06 TGV@O TGV@P"]);
+    // beyond walking range (stored for cycling only): no walk, a 46 min ride
+    expect(search(base, { ...tgv, maxWait: 600 }, 130)).toEqual(["04:10-14:06 Intercités@O TGV@M", "04:40-14:30 TGV@O TGV@Q"]);
+    expect(search(base, { ...tgv, changeBy: "bike" }, 130)).toEqual(["04:10-14:06 Intercités@O TGV@M", "04:46-14:06 TGV@O TGV@P"]);
+    // beyond cycling range (a 69 min ride): no transfer
+    expect(search(base, { ...tgv, changeBy: "bike", minTransfer: 0 }, 200)).toEqual(["04:10-14:06 Intercités@O TGV@M", "04:40-14:30 TGV@O TGV@Q"]);
+    // the minimum transfer time still applies to a ride
+    expect(search(base, { ...tgv, changeBy: "bike", minTransfer: 50 }, 80)).toEqual(["04:10-14:06 Intercités@O TGV@M", "04:46-14:06 TGV@O TGV@P"]);
+    expect(search(base, { ...tgv, changeBy: "bike", minTransfer: 76 }, 80)).toEqual([]);
+  });
 });

@@ -80,15 +80,23 @@ describe("journeys joined end to end in the URL", () => {
 
 describe("connection settings in the URL", () => {
   it("keeps changes, minimum transfer and maximum wait only when they differ from the defaults", () => {
-    expect(parseHash(net, "#from=paris").xfer).toEqual({ transfers: 0, minTransfer: 10, maxWait: null });
+    expect(parseHash(net, "#from=paris").xfer).toEqual({ transfers: 0, minTransfer: 10, maxWait: null, changeBy: "walk" });
     const s = parseHash(net, "#from=paris&changes=1&mintransfer=15&wait=180");
-    expect(s.xfer).toEqual({ transfers: 1, minTransfer: 15, maxWait: 180 });
+    expect(s.xfer).toEqual({ transfers: 1, minTransfer: 15, maxWait: 180, changeBy: "walk" });
     expect(toHash(net, s)).toBe("#from=paris&changes=1&mintransfer=15&wait=180");
     expect(toHash(net, parseHash(net, "#from=paris&changes=2&wait=day"))).toBe("#from=paris&changes=2");
     // out of range values are clamped
-    expect(parseHash(net, "#from=paris&changes=9&mintransfer=999").xfer).toEqual({ transfers: 2, minTransfer: 120, maxWait: null });
+    expect(parseHash(net, "#from=paris&changes=9&mintransfer=999").xfer).toEqual({ transfers: 2, minTransfer: 120, maxWait: null, changeBy: "walk" });
     // settings without changes stay out of the URL
     expect(toHash(net, parseHash(net, "#from=paris&mintransfer=15"))).toBe("#from=paris");
+  });
+  it("keeps changes by bike (also without changes: onward connections from a whole city use them)", () => {
+    const s = parseHash(net, "#from=paris&changes=1&xfer=bike");
+    expect(s.xfer.changeBy).toBe("bike");
+    expect(toHash(net, s)).toBe("#from=paris&changes=1&xfer=bike");
+    expect(toHash(net, parseHash(net, "#from=paris&xfer=bike"))).toBe("#from=paris&xfer=bike");
+    expect(parseHash(net, "#from=paris&xfer=car").xfer.changeBy).toBe("walk");
+    expect(toHash(net, parseHash(net, "#from=paris&xfer=walk"))).toBe("#from=paris");
   });
 });
 

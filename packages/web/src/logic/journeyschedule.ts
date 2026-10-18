@@ -5,6 +5,7 @@
  * ("show previous / next stops"), and the change itself (same station, walk between stations or staying on
  * board) sits between the legs with the other departures one could change to.
  */
+import type { ChangeBy } from "@etbm/shared";
 import type { Departure } from "./timetable.ts";
 import type { TripSchedule } from "./schedule.ts";
 
@@ -26,8 +27,10 @@ export interface JourneyChange {
   depUtc: number;
   /** Minutes between the arrival and the departure. */
   wait: number;
-  /** Walking minutes between the two stations (when they differ and the walk is known). */
+  /** Minutes of the walk (or bike ride, `by`) between the two stations (when they differ and it is known). */
   walk?: number;
+  /** How the change between the two stations is made; set with `walk` ("walk" or "bike"). */
+  by?: ChangeBy;
   /** Same vehicle continues (same station, route and number): stay on board. */
   through: boolean;
 }
@@ -43,8 +46,14 @@ export interface JourneySchedule {
   changeCount: number;
 }
 
-/** One schedule per leg (in order); `walk(i)` gives the walking minutes of the change before leg i (i ≥ 1). */
-export function journeySchedule(scheds: TripSchedule[], walk: (i: number) => number | undefined = () => undefined): JourneySchedule | null {
+/**
+ * One schedule per leg (in order); `walk(i)` gives the change between stations before leg i (i ≥ 1): its minutes and
+ * how it is made, or just walking minutes.
+ */
+export function journeySchedule(
+  scheds: TripSchedule[],
+  walk: (i: number) => { min: number; by: ChangeBy } | number | undefined = () => undefined,
+): JourneySchedule | null {
   if (!scheds.length) return null;
   const k = scheds.length;
   const legs: JourneyLegPart[] = scheds.map((s, i) => {
@@ -58,8 +67,9 @@ export function journeySchedule(scheds: TripSchedule[], walk: (i: number) => num
     const a = p.stops[p.alight]!, b = l.stops[l.board]!;
     const arrUtc = a.arrUtc!, depUtc = b.depUtc!;
     const through = a.station === b.station && p.route.name === l.route.name && p.number !== undefined && p.number === l.number;
-    const w = a.station !== b.station ? walk(i) : undefined;
-    changes.push({ arrStation: a.station, depStation: b.station, arrUtc, depUtc, wait: Math.round((depUtc - arrUtc) / 60000), ...(w !== undefined ? { walk: w } : {}), through });
+    const x = a.station !== b.station ? walk(i) : undefined;
+    const w = typeof x === "number" ? { min: x, by: "walk" as const } : x;
+    changes.push({ arrStation: a.station, depStation: b.station, arrUtc, depUtc, wait: Math.round((depUtc - arrUtc) / 60000), ...(w ? { walk: w.min, by: w.by } : {}), through });
   }
   const s0 = scheds[0]!, sl = scheds[k - 1]!;
   const depUtc = s0.stops[s0.board]!.depUtc!, arrUtc = sl.stops[sl.alight]!.arrUtc!;
@@ -92,7 +102,7 @@ export interface ChangeOptionsIn {
   /** Departures count when this key (e.g. the brand) equals the taken one's. */
   key: (d: Departure) => string;
   takenKey: string;
-  /** Minimum minutes from the arrival station to a departure station (Infinity: out of walking range). */
+  /** Minimum minutes from the arrival station to a departure station (Infinity: out of walking / cycling range). */
   transfer: (depStation: number) => number;
   /** Departures up to this many minutes after the arrival (at least an hour past the one taken). */
   windowMin?: number;

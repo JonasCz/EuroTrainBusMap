@@ -1,6 +1,6 @@
 import { Cat } from "@etbm/shared";
 import { describe, expect, it } from "vitest";
-import { connections, transferMinutes, walkMinutesIn } from "./connections.ts";
+import { changeIn, connections, transferMinutes, walkMinutesIn } from "./connections.ts";
 import { ALL_CATS, decodeCats, encodeCats } from "./filters.ts";
 import { decodeLegs, encodeLegs, resolveLeg } from "./journey.ts";
 import { computeReach } from "./reach.ts";
@@ -150,13 +150,21 @@ describe("connections", () => {
     // stations without a walking transfer are too far apart: no transfer at all
     expect(walkMinutesIn(alpha, 0, 9)).toBeUndefined();
     expect(transferMinutes(alpha, 0, 9)).toBe(Infinity);
+    // by bike: 900 m at 14 km/h (4 min) + 5 min for the bike; the same station is unaffected
+    expect(transferMinutes(alpha, 1, 0, "bike")).toBe(9);
+    expect(changeIn(alpha, 1, 0, "bike")).toEqual({ min: 9, by: "bike" });
+    expect(transferMinutes(alpha, 0, 0, "bike")).toBe(5);
+    expect(transferMinutes(alpha, 0, 9, "bike")).toBe(Infinity);
   });
   it("respects walking transfer between stations", () => {
     const arr = { city: 0, station: 1, utc: wallToUtc("2026-10-10", 11 * 60, BER) };
     const c = connections(alpha, ctx, all, arr);
     expect(c.map((x) => fmtTime(x.depUtc, BER))).toEqual(["11:40"]);
     expect(c[0]!.transfer).toBe(15);
+    expect(c[0]!.changeBy).toBe("walk");
     expect(c[0]!.wait).toBe(40);
+    const b = connections(alpha, ctx, all, { ...arr, changeBy: "bike" });
+    expect([b[0]!.transfer, b[0]!.changeBy]).toEqual([9, "bike"]);
     expect(c[0]!.stops.map((s) => s.city)).toEqual([4]);
   });
   it("boards only at the arrival station when asked", () => {

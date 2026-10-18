@@ -13,7 +13,7 @@
  * cities where it changes. Patterns carry a global id so a pattern found in two chunks is kept once.
  *
  * Every chunk also carries the walking transfer minutes between the stations of its cities (every pair
- * within walking range, see walk.ts; pairs missing there have no transfer) and a
+ * within walking or cycling range, see walk.ts; pairs missing there have no transfer) and a
  * simplified geometry (≈ 100 m) of the corridors its patterns run on, to draw the lines reached with
  * changes on the map.
  */

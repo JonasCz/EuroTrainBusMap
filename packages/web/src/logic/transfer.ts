@@ -6,8 +6,9 @@
  * arrival event at every later stop of it – intermediate stops included, not only the last one. Round r + 1
  * boards, at every city reached in round r, every trip leaving one of the city's stations after an arrival
  * there: no earlier than the transfer time (the minimum transfer time at the same station; between two stations
- * of the city the walk between them, see packages/shared/src/walk.ts, and at least the minimum transfer time;
- * stations too far apart to walk, i.e. without a walking transfer in the chunks, have no transfer) and no later
+ * of the city the walk – or, with `changeBy` "bike", the bike ride – between them, see packages/shared/src/walk.ts,
+ * and at least the minimum transfer time; stations too far apart for the mode, or without a transfer in the chunks,
+ * have no transfer) and no later
  * than the maximum wait (or, with "same day", before local midnight of the arrival, see sameDayLimit). Mode filters
  * apply to every leg.
  *
@@ -17,7 +18,7 @@
  * The search is resumable round by round, so the caller can load the chunks of the cities where the next
  * round changes (`boardCities`) before running it.
  */
-import { Grow, type TtChunk } from "@etbm/shared";
+import { Grow, changeMinutes, type ChangeBy, type TtChunk } from "@etbm/shared";
 import { addDays, dayNumber, runsOnDay, type CalIndex } from "./calendar.ts";
 import { serviceTimeToUtc, wallToUtc } from "./tz.ts";
 
@@ -31,9 +32,11 @@ export interface TransferSettings {
   minTransfer: number;
   /** Maximum wait between arrival and the connecting departure, minutes; null = until local midnight ("same day"). */
   maxWait: number | null;
+  /** How changes between two stations of a city are made: walked, or cycled where faster (see walk.ts); default "walk". */
+  changeBy?: ChangeBy;
 }
 
-export const DEFAULT_SETTINGS: TransferSettings = { transfers: 0, minTransfer: 10, maxWait: null };
+export const DEFAULT_SETTINGS: TransferSettings = { transfers: 0, minTransfer: 10, maxWait: null, changeBy: "walk" };
 
 /** Network lookups the search needs (stations of the core file, calendars). */
 export interface TtNet {
@@ -84,7 +87,7 @@ export class TtStore {
     this.board = null;
   }
 
-  /** Walking minutes between two stations of a city, undefined beyond walking range (no transfer). */
+  /** Stored walking minutes between two stations of a city (may exceed the walking cap, see walk.ts), undefined beyond range. */
   walkMinutes(a: number, b: number): number | undefined {
     return a < b ? this.walk.get(a * 1048576 + b) : this.walk.get(b * 1048576 + a);
   }
@@ -289,12 +292,12 @@ export class TransferSearch {
     return (m & (1 << (dd + 4))) !== 0;
   }
 
-  /** Transfer minutes from station a to b of a city; Infinity when they are too far apart to walk. */
+  /** Transfer minutes from station a to b of a city; Infinity when they are too far apart (to walk / cycle). */
   private transferMin(a: number, b: number): number {
     const min = this.params.minTransfer;
     if (a === b) return min;
     const w = this.store.walkMinutes(a, b);
-    return w === undefined ? Infinity : Math.max(min, w);
+    return w === undefined ? Infinity : Math.max(min, changeMinutes(w, this.params.changeBy ?? "walk"));
   }
 
   /** Latest service-day offset of a first-leg trip: the next day too when continuing a journey (a wait across midnight). */

@@ -25,7 +25,7 @@ import {
   type Station,
   type Trip,
   type CatBit,
-  WALK_MAX_M,
+  TRANSFER_MAX_M,
 } from "@etbm/shared";
 import type { Db } from "./db.ts";
 import type { FeedsConfig, ResolvedFeed } from "./feeds.ts";
@@ -986,9 +986,10 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const fill = tStartIdx.slice();
   for (let t = 0; t < tripP.length; t++) tOrder[fill[tripP[t]!]!++] = t;
 
-  // every station pair of a city within walking range gets a walking transfer (up to WALK_MAX_MIN ≈ 2 h);
-  // farther pairs have none, i.e. no change between them is offered
-  const maxWalk = WALK_MAX_M;
+  // every station pair of a city within walking or cycling range (TRANSFER_MAX_M ≈ 9.9 km: a 1 h ride; a walk is
+  // offered up to WALK_MAX_MIN ≈ 2 h) gets a transfer, stored as walking minutes (the web app derives the cycling
+  // minutes and applies the cap of the chosen mode, see packages/shared/src/walk.ts); farther pairs have none
+  const maxWalk = TRANSFER_MAX_M;
   let totalBytes = 0;
   const sizes: { city: string; bytes: number }[] = [];
   let fileCount = 0;

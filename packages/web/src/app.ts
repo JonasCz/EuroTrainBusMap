@@ -3,7 +3,7 @@ import type { CityFile, Route } from "@etbm/shared";
 import { loadCity, loadSchedule } from "./data/load.ts";
 import { cityTz, ensureDetail, stationBySlug, stationName, stationSlug, type Net } from "./data/net.ts";
 import { addDays, inHorizon } from "./logic/calendar.ts";
-import { connections, journeyCities, transferMinutes, usefulConnections, walkMinutesIn, type Arrival, type Connection, type OnwardStop } from "./logic/connections.ts";
+import { changeIn, connections, journeyCities, transferMinutes, usefulConnections, type Arrival, type Connection, type OnwardStop } from "./logic/connections.ts";
 import { localOn, sameFilters, type Filters } from "./logic/filters.ts";
 import { encodeLegs, resolveLeg, type Leg, type LegInfo } from "./logic/journey.ts";
 import { computeReach } from "./logic/reach.ts";
@@ -168,6 +168,7 @@ export class App {
       void this.map.setFilters(s.filters); // base network builds in a worker; UI does not wait
     }
     this.panel.setFilters(s.filters);
+    this.panel.changeBy = s.xfer.changeBy ?? "walk";
     const stale = () => tok !== this.token;
     const empty: Highlight = { emphasis: { focus: new Set(), active: false }, corridors: new Map() };
 
@@ -385,7 +386,7 @@ export class App {
         bcf,
         net.ctx,
         s.filters,
-        { ...arrivalOf(last), onlyStation: !s.wholeCity },
+        { ...arrivalOf(last), onlyStation: !s.wholeCity, changeBy: s.xfer.changeBy },
         CONNECTION_WINDOW_MIN,
       );
       conns = usefulConnections(all, known);
@@ -427,7 +428,7 @@ export class App {
       this.set({ schedule: undefined }, { replace: true });
       return;
     }
-    const js = journeySchedule(scheds, (i) => walkMinutesIn(files[i]!, infos[i - 1]!.arrStation, infos[i]!.depStation))!;
+    const js = journeySchedule(scheds, (i) => changeIn(files[i]!, infos[i - 1]!.arrStation, infos[i]!.depStation, s.xfer.changeBy))!;
     // departures one could change to: same kind of service from the change city towards the next leg's end
     const options: ChangeOption[][] = js.changes.map((c, k) => {
       const next = infos[k + 1]!;
@@ -445,7 +446,7 @@ export class App {
           taken: { trip: next.leg.trip, date: next.leg.date, depUtc: next.depUtc },
           key: (d) => brand(d.route),
           takenKey: brand(next.route),
-          transfer: (st) => transferMinutes(ccf, c.arrStation, st),
+          transfer: (st) => transferMinutes(ccf, c.arrStation, st, s.xfer.changeBy),
           windowMin: CONNECTION_WINDOW_MIN,
         });
       } catch {
@@ -624,16 +625,16 @@ export class App {
     for (const [i, jl] of j.legs.entries()) {
       const from = ctx.stationCity[jl.stations[jl.board]!]!;
       const lcf = await fileOf(from);
-      // a change between two stations of the city: the walk the search assumed (shown with the change)
+      // a change between two stations of the city: the walk (or ride) the search assumed (shown with the change)
       const prev = j.legs[i - 1];
       const sa = prev?.stations[prev.alight], sb = jl.stations[jl.board]!;
-      const walk = prev && sa !== sb && lcf ? walkMinutesIn(lcf, sa!, sb) : undefined;
+      const change = prev && sa !== sb && lcf ? changeIn(lcf, sa!, sb, this.state.xfer.changeBy) : undefined;
       const leg = lcf ? matchLeg(lcf, jl, from) : null;
       const info = leg && lcf ? resolveLeg(lcf, ctx, leg) : null;
       if (!info) ok = false;
       const corr = info ? info.corridors : this.transfers.legCorridors(jl);
       addTraffic(traffic, corr, jl.cat, 1);
-      legs.push({ raw: jl, ...(info ? { info } : {}), ...(walk !== undefined ? { walk } : {}) });
+      legs.push({ raw: jl, ...(info ? { info } : {}), ...(change ? { walk: change.min, by: change.by } : {}) });
     }
     return { journey: j, legs, ...(ok ? { route: legs.map((l) => l.info!.leg) } : {}) };
   }
@@ -698,10 +699,11 @@ export class App {
     const st = sched.stops[stop];
     if (!st || st.arrUtc === null) return Promise.resolve(0);
     const f = this.state.filters;
-    const key = `${sched.leg.from}|${sched.leg.trip}|${sched.leg.date}|${stop}|${whole ? 1 : 0}|${f.cats}|${localOn(f) ? 1 : 0}|${[...known].sort((a, b) => a - b).join(",")}`;
+    const by = this.state.xfer.changeBy ?? "walk";
+    const key = `${sched.leg.from}|${sched.leg.trip}|${sched.leg.date}|${stop}|${whole ? 1 : 0}|${by}|${f.cats}|${localOn(f) ? 1 : 0}|${[...known].sort((a, b) => a - b).join(",")}`;
     let p = this.onward.get(key);
     if (!p) {
-      const arrival = { city: st.city, station: st.station, utc: st.arrUtc, routeName: sched.route.name, ...(sched.number !== undefined ? { number: sched.number } : {}), onlyStation: !whole };
+      const arrival = { city: st.city, station: st.station, utc: st.arrUtc, routeName: sched.route.name, ...(sched.number !== undefined ? { number: sched.number } : {}), onlyStation: !whole, changeBy: by };
       p = loadCity(this.net.ds, st.city).then((bcf) => usefulConnections(connections(bcf, this.net.ctx, f, arrival, CONNECTION_WINDOW_MIN), known).filter((c) => !c.through).length);
       p.catch(() => this.onward.delete(key));
       this.onward.set(key, p);

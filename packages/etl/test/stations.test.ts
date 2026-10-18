@@ -1,4 +1,4 @@
-import { WALK_MAX_M, WALK_MAX_MIN, distanceM } from "@etbm/shared";
+import { CYCLE_MAX_M, CYCLE_MAX_MIN, TRANSFER_MAX_M, WALK_MAX_M, WALK_MAX_MIN, changeMinutes, changeOf, cycleMinutes, cycleMinutesFromWalk, distanceM } from "@etbm/shared";
 import { describe, expect, it } from "vitest";
 import { isTerminalName, nameSimilarity, normalizeStopName, prettifyName, sanitizeName, stripPlatform } from "../src/core/names.ts";
 import { classifyPair, cleanStationName, describeStation, mergeStations, walkMinutes, type PairInfo, type StopIn } from "../src/core/stations.ts";
@@ -109,6 +109,40 @@ describe("station merging", () => {
     // the longest walk offered (farther pairs have no transfer)
     expect(walkMinutes(WALK_MAX_M)).toBe(WALK_MAX_MIN);
     expect(WALK_MAX_M).toBe(6750);
+  });
+  it("cycling time", () => {
+    // Montparnasse → Gare de Lyon: 5.4 km at 14 km/h (23.1 min) + 5 min for the bike
+    const mg = distanceM(2.31901, 48.84017, 2.37497, 48.84388);
+    expect(cycleMinutes(mg)).toBe(29);
+    expect(cycleMinutesFromWalk(75)).toBe(29);
+    expect(cycleMinutesFromWalk(3)).toBe(5);
+    // derived from the rounded walk: never faster than from the exact distance, at most a minute slower
+    for (let d = 0; d <= CYCLE_MAX_M; d += 37) {
+      const exact = Math.ceil((d * 1.3) / (14000 / 60)) + 5;
+      expect(cycleMinutes(d) - exact).toBeGreaterThanOrEqual(0);
+      expect(cycleMinutes(d) - exact).toBeLessThanOrEqual(1);
+    }
+    // the longest ride offered: 1 h, ≈ 9.9 km straight line (every pair within the hour lies within it, the derived
+    // time being no faster); pairs are stored up to the larger of the two caps
+    expect(cycleMinutes(CYCLE_MAX_M - 60)).toBe(CYCLE_MAX_MIN);
+    expect(cycleMinutes(CYCLE_MAX_M + 1)).toBeGreaterThan(CYCLE_MAX_MIN);
+    expect(Math.round(CYCLE_MAX_M)).toBe(9872);
+    expect(TRANSFER_MAX_M).toBe(CYCLE_MAX_M);
+  });
+  it("change between stations by the chosen mode", () => {
+    expect(changeOf(75, "walk")).toEqual({ min: 75, by: "walk" });
+    expect(changeOf(75, "bike")).toEqual({ min: 29, by: "bike" });
+    // short changes are walked (no bike for 100 m)
+    expect(changeOf(5, "bike")).toEqual({ min: 5, by: "walk" });
+    expect(changeOf(7, "bike")).toEqual({ min: 7, by: "walk" });
+    expect(changeOf(12, "bike")).toEqual({ min: 8, by: "bike" });
+    // beyond walking range: only by bike; beyond cycling range: none
+    expect(changeOf(130, "walk")).toBeUndefined();
+    expect(changeMinutes(130, "walk")).toBe(Infinity);
+    expect(changeOf(130, "bike")).toEqual({ min: 46, by: "bike" });
+    expect(changeOf(200, "bike")).toBeUndefined();
+    expect(changeMinutes(200, "bike")).toBe(Infinity);
+    expect(changeMinutes(120, "walk")).toBe(120);
   });
 });
 
