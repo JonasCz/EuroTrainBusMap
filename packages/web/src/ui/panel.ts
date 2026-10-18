@@ -85,7 +85,16 @@ export type View =
       /** onward departures from stop `stop` of leg `leg`'s trip (see the schedule view) */
       onward: (leg: number, stop: number, whole: boolean) => Promise<number>;
     }
-  | { kind: "connections"; legs: LegInfo[]; conns: Connection[]; windowMin: number; wholeCity: boolean };
+  | {
+      kind: "connections";
+      legs: LegInfo[];
+      /** the useful ones: places the journey does not already cover */
+      conns: Connection[];
+      /** departures left out because they only serve places along the journey so far (the same line, back) */
+      hidden: number;
+      windowMin: number;
+      wholeCity: boolean;
+    };
 
 /** A place reached only with changes. */
 export interface XferDest {
@@ -1570,8 +1579,12 @@ export class Panel {
       );
     }
     out.push(h("h3", { class: "section" }, `Departures within ${v.windowMin / 60} h of arrival`));
+    const hiddenNote = v.hidden
+      ? `${v.hidden} departure${v.hidden > 1 ? "s" : ""} only serving places along this journey (the same line, or back) ${v.hidden > 1 ? "are" : "is"} not listed.`
+      : "";
     if (!v.conns.length) {
-      out.push(h("p", { class: "pad muted" }, `No onward departures in this window with the selected modes${multi && !v.wholeCity ? ` from ${arrName} – try all stations of ${city.name}` : ""}.`));
+      const none = v.hidden ? "No onward departures to other places in this window" : "No onward departures in this window";
+      out.push(h("p", { class: "pad muted" }, `${none} with the selected modes${multi && !v.wholeCity ? ` from ${arrName} – try all stations of ${city.name}` : ""}.${hiddenNote ? ` ${hiddenNote}` : ""}`));
       return out;
     }
     out.push(
@@ -1619,6 +1632,7 @@ export class Panel {
         }),
       ),
     );
+    if (hiddenNote) out.push(h("p", { class: "pad muted small" }, hiddenNote));
     return out;
   }
 

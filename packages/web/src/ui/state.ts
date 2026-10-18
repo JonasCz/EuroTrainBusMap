@@ -42,6 +42,38 @@ export interface AppState {
   xfer: TransferSettings;
 }
 
+/**
+ * The state after `patch`: keys set to undefined are dropped, and what belongs to a changed part goes with it (a
+ * station with its origin city, legs with the destination, the schedule / onward scope / continuation with the legs).
+ */
+export function applyPatch(state: AppState, patch: Partial<AppState>): AppState {
+  const next: AppState = { ...state, ...patch };
+  for (const k of Object.keys(patch) as (keyof AppState)[]) if (patch[k] === undefined) delete next[k];
+  // a station belongs to its city: another origin city (or none) drops it, unless the patch names one
+  if ("city" in patch && patch.city !== state.city && !("station" in patch)) delete next.station;
+  if (next.city === undefined) {
+    delete next.dest;
+    delete next.station;
+    next.legs = [];
+  }
+  if (next.dest === undefined) next.legs = [];
+  // the trip schedule and the onward scope belong to the last leg: a new leg (or step) resets them unless named
+  if ("legs" in patch && !("schedule" in patch)) delete next.schedule;
+  if (("legs" in patch || "schedule" in patch) && !("journey" in patch)) delete next.journey;
+  if (("legs" in patch || "schedule" in patch) && !("wholeCity" in patch)) delete next.wholeCity;
+  if (!next.legs.length) {
+    delete next.schedule;
+    delete next.wholeCity;
+  }
+  if (!next.schedule) delete next.journey;
+  // the continuation search and the joined parts belong to the legs: other legs drop them unless named
+  if (("legs" in patch || "dest" in patch) && !("extend" in patch)) delete next.extend;
+  if ("legs" in patch && !("parts" in patch) && next.parts) next.parts = next.parts.filter((n) => n < next.legs.length);
+  if (!next.legs.length) delete next.extend;
+  if (!next.legs.length || !next.parts?.length) delete next.parts;
+  return next;
+}
+
 const PREFS_KEY = "etbm.transfers";
 
 /** The viewer's remembered minimum transfer time / maximum wait (defaults when the URL names none). */

@@ -7,6 +7,7 @@ import { ServiceDays, mergeRows, serviceKey } from "./merge.ts";
 import { bestStop, prepare, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
 import { localDate, serviceTimeToUtc } from "./tz.ts";
+import type { TripSchedule } from "./schedule.ts";
 
 export interface Arrival {
   city: number;
@@ -166,4 +167,36 @@ export function connections(cf: CityFile, ctx: NetCtx, f: Filters, arrival: Arri
       }
     if (added) keep.stops.sort((a, b) => a.arrUtc - b.arrUtc);
   });
+}
+
+/**
+ * The places a journey already covers, which onward connections need not offer: the origin, the cities ridden
+ * through on the earlier legs (boarding to alighting) and every city of the current (last) vehicle's run – those
+ * before the stop were passed, those after it are reached by staying on board.
+ */
+export function journeyCities(origin: number, scheds: readonly TripSchedule[]): Set<number> {
+  const out = new Set<number>([origin]);
+  scheds.forEach((sc, k) => {
+    const last = k === scheds.length - 1;
+    const from = last ? 0 : sc.board, to = last ? sc.stops.length - 1 : sc.alight;
+    for (let i = from; i <= to; i++) {
+      const c = sc.stops[i]!.city;
+      if (c >= 0) out.add(c);
+    }
+  });
+  return out;
+}
+
+/**
+ * The onward connections that lead somewhere new: stops in `known` (see journeyCities) are left out of each row,
+ * and a row with none left (another train along the same line, or back the way one came) is dropped.
+ */
+export function usefulConnections(conns: readonly Connection[], known: ReadonlySet<number>): Connection[] {
+  const out: Connection[] = [];
+  for (const c of conns) {
+    const stops = c.stops.filter((s) => !known.has(s.city));
+    if (stops.length === c.stops.length) out.push(c);
+    else if (stops.length) out.push({ ...c, stops });
+  }
+  return out;
 }

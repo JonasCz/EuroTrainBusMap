@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { City, Station } from "@etbm/shared";
 import { stationBySlug, stationSlug, type Net } from "../data/net.ts";
-import { parseHash, toHash } from "./state.ts";
+import { applyPatch, parseHash, toHash } from "./state.ts";
 
 const city = (id: number, name: string, stations: number[]): City => ({ id, name, country: "FR", lon: 0, lat: 0, population: 1, importance: 0.5, cats: 3, stations, tz: 0 });
 const st = (id: number, c: number, name: string): Station => ({ id, city: c, name, lon: 0, lat: 0, cats: 3 });
@@ -89,5 +89,23 @@ describe("connection settings in the URL", () => {
     expect(parseHash(net, "#from=paris&changes=9&mintransfer=999").xfer).toEqual({ transfers: 2, minTransfer: 120, maxWait: null });
     // settings without changes stay out of the URL
     expect(toHash(net, parseHash(net, "#from=paris&mintransfer=15"))).toBe("#from=paris");
+  });
+});
+
+describe("state changes", () => {
+  const base = parseHash(net, "#from=paris&station=bercy");
+  it("keeps the origin station when the destination or the date changes", () => {
+    expect(base.station).toBe("bercy");
+    const withDest = applyPatch(base, { dest: 1, legs: [] });
+    expect(withDest.station).toBe("bercy");
+    expect(applyPatch(withDest, { date: "2026-10-20" }).station).toBe("bercy");
+    expect(applyPatch(withDest, { dest: undefined }).station).toBe("bercy");
+  });
+  it("drops the station with its city", () => {
+    expect(applyPatch(base, { city: 1, dest: undefined, legs: [] }).station).toBeUndefined();
+    expect(applyPatch(base, { city: undefined }).station).toBeUndefined();
+    // the same city again, or a station named with it: kept / replaced
+    expect(applyPatch(base, { city: 0, dest: undefined, legs: [] }).station).toBe("bercy");
+    expect(applyPatch(base, { city: 1, station: "part-dieu" }).station).toBe("part-dieu");
   });
 });

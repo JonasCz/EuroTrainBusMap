@@ -3,8 +3,8 @@ import type { CityFile, Route } from "@etbm/shared";
 import { loadCity, loadSchedule } from "./data/load.ts";
 import { cityTz, ensureDetail, stationBySlug, stationName, stationSlug, type Net } from "./data/net.ts";
 import { addDays, inHorizon } from "./logic/calendar.ts";
-import { connections, transferMinutes, walkMinutesIn, type Arrival, type Connection, type OnwardStop } from "./logic/connections.ts";
-import { sameFilters, type Filters } from "./logic/filters.ts";
+import { connections, journeyCities, transferMinutes, usefulConnections, walkMinutesIn, type Arrival, type Connection, type OnwardStop } from "./logic/connections.ts";
+import { localOn, sameFilters, type Filters } from "./logic/filters.ts";
 import { encodeLegs, resolveLeg, type Leg, type LegInfo } from "./logic/journey.ts";
 import { computeReach } from "./logic/reach.ts";
 import { addTraffic, trafficCats, type CorridorTraffic } from "./logic/context.ts";
@@ -17,7 +17,7 @@ import { localDate } from "./logic/tz.ts";
 import { STATION_ZOOM } from "./map/lod.ts";
 import type { MapView, Highlight } from "./map/mapview.ts";
 import { Panel, type View } from "./ui/panel.ts";
-import { parseHash, storeSettings, toHash, type AppState } from "./ui/state.ts";
+import { applyPatch, parseHash, storeSettings, toHash, type AppState } from "./ui/state.ts";
 import { groupJourneys } from "./logic/journeygroups.ts";
 import { TransferClient, matchLeg, type ReachLines, type ReachRound } from "./data/transfer.ts";
 import type { Journey, SearchParams, TransferSettings } from "./logic/transfer.ts";
@@ -73,30 +73,7 @@ export class App {
 
   /** Update state; push a history entry unless `replace`. */
   set(patch: Partial<AppState>, opts: { replace?: boolean } = {}): void {
-    const next: AppState = { ...this.state, ...patch };
-    for (const k of Object.keys(patch) as (keyof AppState)[]) if (patch[k] === undefined) delete next[k];
-    // a station belongs to its city: another origin city (or none) drops it, unless the patch names one
-    if (patch.city !== this.state.city && !("station" in patch)) delete next.station;
-    if (next.city === undefined) {
-      delete next.dest;
-      delete next.station;
-      next.legs = [];
-    }
-    if (next.dest === undefined) next.legs = [];
-    // the trip schedule and the onward scope belong to the last leg: a new leg (or step) resets them unless named
-    if ("legs" in patch && !("schedule" in patch)) delete next.schedule;
-    if (("legs" in patch || "schedule" in patch) && !("journey" in patch)) delete next.journey;
-    if (("legs" in patch || "schedule" in patch) && !("wholeCity" in patch)) delete next.wholeCity;
-    if (!next.legs.length) {
-      delete next.schedule;
-      delete next.wholeCity;
-    }
-    if (!next.schedule) delete next.journey;
-    // the continuation search and the joined parts belong to the legs: other legs drop them unless named
-    if (("legs" in patch || "dest" in patch) && !("extend" in patch)) delete next.extend;
-    if ("legs" in patch && !("parts" in patch) && next.parts) next.parts = next.parts.filter((n) => n < next.legs.length);
-    if (!next.legs.length) delete next.extend;
-    if (!next.legs.length || !next.parts?.length) delete next.parts;
+    const next = applyPatch(this.state, patch);
     this.state = next;
     const hash = toHash(this.net, next);
     const url = `${location.pathname}${location.search}${hash}`;
@@ -391,22 +368,28 @@ export class App {
       if (stale()) return;
       const tag = [last.route.name, last.number].filter(Boolean).join(" ");
       document.title = `${tag} → ${last.headsign} – EuroTrainBusMap`;
-      this.panel.show({ kind: "schedule", legs: infos, sched, windowMin: CONNECTION_WINDOW_MIN, onward: (stop, whole) => this.onwardCount(sched, stop, whole) });
+      const known = journeyCities(origin, [sched]);
+      this.panel.show({ kind: "schedule", legs: infos, sched, windowMin: CONNECTION_WINDOW_MIN, onward: (stop, whole) => this.onwardCount(sched, stop, whole, known) });
       this.frame([...new Set([origin, ...sched.stops.flatMap((x) => (x.city >= 0 ? [x.city] : []))])], `t${encodeLegs(s.legs)}`);
       return;
     }
 
     let conns: Connection[] = [];
+    let hidden = 0;
     try {
-      const bcf = await loadCity(net.ds, last.to);
+      // places the journey already covers (the vehicle's run, the earlier legs): no onward connection to them
+      const [bcf, scheds] = await Promise.all([loadCity(net.ds, last.to), this.legSchedules(infos, legFiles)]);
       if (stale()) return;
-      conns = connections(
+      const known = scheds ? journeyCities(origin, scheds) : new Set([origin, ...infos.map((i) => i.to)]);
+      const all = connections(
         bcf,
         net.ctx,
         s.filters,
         { ...arrivalOf(last), onlyStation: !s.wholeCity },
         CONNECTION_WINDOW_MIN,
       );
+      conns = usefulConnections(all, known);
+      hidden = all.length - conns.length;
     } catch (e) {
       if (!stale()) this.panel.show({ kind: "error", message: `Could not load ${net.cities[last.to]!.name}. ${(e as Error).message}` });
       return;
@@ -415,7 +398,7 @@ export class App {
     await this.map.setHighlight({ emphasis: { focus: this.withCorridorEnds(focus, corridors), active: true, origin, dest: last.to }, corridors, traffic, context });
     if (stale()) return;
     document.title = `Connections from ${s.wholeCity ? net.cities[last.to]!.name : stationName(net, last.arrStation)} – EuroTrainBusMap`;
-    this.panel.show({ kind: "connections", legs: infos, conns, windowMin: CONNECTION_WINDOW_MIN, wholeCity: !!s.wholeCity });
+    this.panel.show({ kind: "connections", legs: infos, conns, hidden, windowMin: CONNECTION_WINDOW_MIN, wholeCity: !!s.wholeCity });
     this.frame(
       [origin, ...infos.map((i) => i.to)],
       `j${infos.map((i) => i.to).join("-")}`,
@@ -438,18 +421,11 @@ export class App {
   ): Promise<void> {
     const net = this.net;
     const s = this.state;
-    const scheds: TripSchedule[] = [];
-    for (const [i, info] of infos.entries()) {
-      const lcf = files[i]!;
-      const pat = lcf.patterns[lcf.trips[info.leg.trip]?.[0] ?? -1];
-      const sf = pat?.run !== undefined ? await loadSchedule(net.ds, info.leg.from).catch(() => null) : null;
-      if (stale()) return;
-      const sc = tripSchedule(lcf, net.ctx, info.leg, sf);
-      if (!sc) {
-        this.set({ schedule: undefined }, { replace: true });
-        return;
-      }
-      scheds.push(sc);
+    const scheds = await this.legSchedules(infos, files);
+    if (stale()) return;
+    if (!scheds) {
+      this.set({ schedule: undefined }, { replace: true });
+      return;
     }
     const js = journeySchedule(scheds, (i) => walkMinutesIn(files[i]!, infos[i - 1]!.arrStation, infos[i]!.depStation))!;
     // departures one could change to: same kind of service from the change city towards the next leg's end
@@ -477,6 +453,8 @@ export class App {
       }
     });
     for (const sc of scheds) for (const st of sc.stops) if (st.city >= 0) focus.add(st.city);
+    // a stop of leg k: the journey up to it is covered (the earlier legs' rides, leg k's whole run)
+    const known = scheds.map((_, k) => journeyCities(origin, scheds.slice(0, k + 1)));
     const walks: [number, number][][] = [];
     for (const c of js.changes) {
       const a = net.file.stations[c.arrStation], b = net.file.stations[c.depStation];
@@ -491,10 +469,25 @@ export class App {
       js,
       options,
       windowMin: CONNECTION_WINDOW_MIN,
-      onward: (leg, stop, whole) => this.onwardCount(scheds[leg]!, stop, whole),
+      onward: (leg, stop, whole) => this.onwardCount(scheds[leg]!, stop, whole, known[leg]!),
     });
     const shown = js.legs.flatMap((l) => l.sched.stops.slice(l.from, l.to + 1).flatMap((x) => (x.city >= 0 ? [x.city] : [])));
     this.frame([...new Set([origin, ...shown])], `J${encodeLegs(s.legs)}`);
+  }
+
+  /** The schedule of each leg's trip (stop lists loaded where a pattern leaves stops out); null if one cannot be built. */
+  private async legSchedules(infos: LegInfo[], files: CityFile[]): Promise<TripSchedule[] | null> {
+    const net = this.net;
+    const scheds: TripSchedule[] = [];
+    for (const [i, info] of infos.entries()) {
+      const lcf = files[i]!;
+      const pat = lcf.patterns[lcf.trips[info.leg.trip]?.[0] ?? -1];
+      const sf = pat?.run !== undefined ? await loadSchedule(net.ds, info.leg.from).catch(() => null) : null;
+      const sc = tripSchedule(lcf, net.ctx, info.leg, sf);
+      if (!sc) return null;
+      scheds.push(sc);
+    }
+    return scheds;
   }
 
   /** The panel / map state of a reach-with-changes round. */
@@ -697,18 +690,19 @@ export class App {
 
   private onward = new Map<string, Promise<number>>();
   /**
-   * Number of onward departures (CONNECTION_WINDOW_MIN after arriving, the trip itself excluded) from stop `stop`
-   * of a schedule; loads that city's shard on first use. Cached per trip, stop, scope and mode filter.
+   * Number of useful onward departures (CONNECTION_WINDOW_MIN after arriving) from stop `stop` of a schedule: the
+   * trip itself excluded, and those only serving places in `known` (see journeyCities). Loads that city's shard on
+   * first use. Cached per trip, stop, scope, known places and mode filter.
    */
-  onwardCount(sched: TripSchedule, stop: number, whole: boolean): Promise<number> {
+  onwardCount(sched: TripSchedule, stop: number, whole: boolean, known: ReadonlySet<number>): Promise<number> {
     const st = sched.stops[stop];
     if (!st || st.arrUtc === null) return Promise.resolve(0);
     const f = this.state.filters;
-    const key = `${sched.leg.from}|${sched.leg.trip}|${sched.leg.date}|${stop}|${whole ? 1 : 0}|${f.cats}`;
+    const key = `${sched.leg.from}|${sched.leg.trip}|${sched.leg.date}|${stop}|${whole ? 1 : 0}|${f.cats}|${localOn(f) ? 1 : 0}|${[...known].sort((a, b) => a - b).join(",")}`;
     let p = this.onward.get(key);
     if (!p) {
       const arrival = { city: st.city, station: st.station, utc: st.arrUtc, routeName: sched.route.name, ...(sched.number !== undefined ? { number: sched.number } : {}), onlyStation: !whole };
-      p = loadCity(this.net.ds, st.city).then((bcf) => connections(bcf, this.net.ctx, f, arrival, CONNECTION_WINDOW_MIN).filter((c) => !c.through).length);
+      p = loadCity(this.net.ds, st.city).then((bcf) => usefulConnections(connections(bcf, this.net.ctx, f, arrival, CONNECTION_WINDOW_MIN), known).filter((c) => !c.through).length);
       p.catch(() => this.onward.delete(key));
       this.onward.set(key, p);
     }
