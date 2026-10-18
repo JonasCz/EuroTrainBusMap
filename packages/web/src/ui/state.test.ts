@@ -118,6 +118,9 @@ describe("connection settings in the URL", () => {
     expect(toHash(net, s)).toBe("#from=paris&changes=1&xfer=bike");
     expect(toHash(net, parseHash(net, "#from=paris&xfer=bike"))).toBe("#from=paris&xfer=bike");
     expect(parseHash(net, "#from=paris&xfer=car").xfer.changeBy).toBe("walk");
+    const t = parseHash(net, "#from=paris&changes=1&xfer=transit");
+    expect(t.xfer.changeBy).toBe("transit");
+    expect(toHash(net, t)).toBe("#from=paris&changes=1&xfer=transit");
     expect(toHash(net, parseHash(net, "#from=paris&xfer=walk"))).toBe("#from=paris");
   });
 });

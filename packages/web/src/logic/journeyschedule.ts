@@ -29,8 +29,10 @@ export interface JourneyChange {
   wait: number;
   /** Minutes of the walk (or bike ride, `by`) between the two stations (when they differ and it is known). */
   walk?: number;
-  /** How the change between the two stations is made; set with `walk` ("walk" or "bike"). */
+  /** How the change between the two stations is made; set with `walk` ("walk", "bike" or "transit"). */
   by?: ChangeBy;
+  /** TransitMode bits of a change by transit */
+  modes?: number;
   /** Same vehicle continues (same station, route and number): stay on board. */
   through: boolean;
 }
@@ -47,12 +49,12 @@ export interface JourneySchedule {
 }
 
 /**
- * One schedule per leg (in order); `walk(i)` gives the change between stations before leg i (i ≥ 1): its minutes and
- * how it is made, or just walking minutes.
+ * One schedule per leg (in order); `walk(i, arrUtc)` gives the change between stations before leg i (i ≥ 1), the
+ * previous leg arriving at `arrUtc`: its minutes and how it is made, or just walking minutes.
  */
 export function journeySchedule(
   scheds: TripSchedule[],
-  walk: (i: number) => { min: number; by: ChangeBy } | number | undefined = () => undefined,
+  walk: (i: number, arrUtc: number) => { min: number; by: ChangeBy; modes?: number } | number | undefined = () => undefined,
 ): JourneySchedule | null {
   if (!scheds.length) return null;
   const k = scheds.length;
@@ -67,9 +69,9 @@ export function journeySchedule(
     const a = p.stops[p.alight]!, b = l.stops[l.board]!;
     const arrUtc = a.arrUtc!, depUtc = b.depUtc!;
     const through = a.station === b.station && p.route.name === l.route.name && p.number !== undefined && p.number === l.number;
-    const x = a.station !== b.station ? walk(i) : undefined;
-    const w = typeof x === "number" ? { min: x, by: "walk" as const } : x;
-    changes.push({ arrStation: a.station, depStation: b.station, arrUtc, depUtc, wait: Math.round((depUtc - arrUtc) / 60000), ...(w ? { walk: w.min, by: w.by } : {}), through });
+    const x = a.station !== b.station ? walk(i, arrUtc) : undefined;
+    const w: { min: number; by: ChangeBy; modes?: number } | undefined = typeof x === "number" ? { min: x, by: "walk" } : x;
+    changes.push({ arrStation: a.station, depStation: b.station, arrUtc, depUtc, wait: Math.round((depUtc - arrUtc) / 60000), ...(w ? { walk: w.min, by: w.by } : {}), ...(w?.modes !== undefined ? { modes: w.modes } : {}), through });
   }
   const s0 = scheds[0]!, sl = scheds[k - 1]!;
   const depUtc = s0.stops[s0.board]!.depUtc!, arrUtc = sl.stops[sl.alight]!.arrUtc!;

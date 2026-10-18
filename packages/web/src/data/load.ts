@@ -139,13 +139,23 @@ export function loadCity(ds: DataSet, id: number): Promise<CityFile> {
     const shard = ds.cities[id]?.shard;
     if (shard === undefined) {
       const [cf] = await Promise.all([getJson<CityFile>(ds.url(`city/${id}.json`)), loadGeo(ds, `geo/c${id}.json`)]);
+      transitLoaded.set(id, cf.transit ?? []);
       return cf;
     }
     const [f] = await Promise.all([cached(`shard:${shard}`, () => getJson<CityShardFile>(ds.url(`shard/${shard}.json`))), loadGeo(ds, `geo/${shard}.json`)]);
     const cf = f.cities[String(id)];
     if (!cf) throw new Error(`city ${id} missing in shard ${shard}`);
+    transitLoaded.set(id, cf.transit ?? []);
     return cf;
   });
+}
+
+/** Transit transfers (CityFile.transit) of the cities loaded so far. */
+const transitLoaded = new Map<number, number[][]>();
+
+/** The transit transfers of a city whose file is loaded (CityFile.transit, [] without any), undefined before. */
+export function cityTransit(id: number): number[][] | undefined {
+  return transitLoaded.get(id);
 }
 
 /**

@@ -174,8 +174,8 @@ Pipeline in short:
      minimum transfer and maximum wait are also remembered in localStorage). The city panel shows "{n} direct destinations", then
      "{m} destinations with 1 same-day connection" (and with 2) with a pencil that opens the settings dialog: number of connections
      (0 = direct only, the default; 1; 2), minimum transfer time (at the same station; a change between two stations of a city takes at
-     least the walk between them, `CityFile.transfers`), walk or cycle between stations (URL `xfer=bike`, remembered too; see
-     the walking transfers below) and maximum waiting time (1–12 h or "same day":
+     least the walk between them, `CityFile.transfers`), walk, cycle or local transport between stations (URL `xfer=bike` /
+     `xfer=transit`, remembered too; see the walking and transit transfers below) and maximum waiting time (1–12 h or "same day":
      the connecting departure leaves before local midnight of the arrival; an arrival between midnight and 04:00 may not wait
      out the night, `NIGHT_END_MIN`). The search runs for the travel day (the view's date, else
      today, origin-local; a date bar under the count changes it), mode filters apply to every leg. Lists: "Major destinations / Other
@@ -218,7 +218,7 @@ Pipeline in short:
        all modes 0.75 s, Paris → Nice rail 0.5 s, London → Edinburgh 3.5 s (old: 0.4 / 2.8 / 2.0 / 5.1 s); in the browser
        (dev build, headless Chromium, chunks not cached) Bordeaux → Nice 2.1 s, of which 1 s loading.
      - **Walking transfers** (`packages/shared/src/walk.ts`, used by the ETL and the web app): a change between two stations of a
-       city is always a walk, never a metro / bus ride (local transport is not in the timetable), so its time is a conservative
+       city is a walk (with "Walk"; see the transit transfers below for metro / tram rides), so its time is a conservative
        estimate for every station pair: straight-line distance × 1.3 (street detour) at 75 m/min (4.5 km/h) + 3 min, rounded up,
        and at least the minimum transfer time; e.g. Paris Montparnasse → Gare de Lyon (4.1 km straight) is 75 min, 5.4 km.
        Pairs farther apart than a 2 h walk (6.75 km straight, ≈ 8.8 km on foot) get no walking transfer, i.e. no change between them
@@ -236,6 +236,40 @@ Pipeline in short:
        number per pair; the ETL stores pairs up to `TRANSFER_MAX_M` (the cycling range; walking minutes above 120 are only
        used by bike). That is 194 k pairs instead of 156 k: +0.1 MB (1.2 %) of gzipped transfer chunks, +1.2 MB (0.1 %) of
        city shards; search times unchanged.
+     - **Transit transfers** ("Transit" in the settings, URL `xfer=transit`; `packages/shared/src/transit.ts`, ETL
+       `packages/etl/src/urban/transit.ts` + `transit-extract.ts`): a change between stations by metro, tram, light rail or
+       suburban rail (RER, S-Bahn, Overground) where that beats walking, timed from the local timetables. City buses are not
+       used (bigger timetables, slower than the rail lines where those exist, harder to find for a visitor). An estimate from
+       frequencies would not say whether a change works at 23:40 with a train every 15 min, so the ETL stores, per station pair
+       and *hour of the day* (local time of the moment the traveller is ready to leave the arrival station), the **worst case**
+       over every minute of that hour and over a Wednesday, a Saturday and a Sunday of a reference week (the first whole week
+       of the timetable window; feeds that end earlier are read for their last whole week): walk from the station to the stop
+       (`walkMinutes` of the distance: 1.3 detour, 4.5 km/h, +3 min), wait (the full headway: the worst moment is just after a
+       departure), ride, change lines (stops within 400 m: the walk + 3 min, 3 min at the same stop), walk to the other station
+       (+3 min). It comes from a backward profile connection scan per target station over the city's connections of the day
+       (plus the previous service day's trips past midnight and the next day's first trains); an hour in which the last train
+       leaves counts the wait for the first one, beyond 5 h it has no value. In the app a change starting at minute m of hour h
+       takes the best of that hour's value and of waiting for a later hour (`transitMinutes`; so the ready time at the other
+       station never gets earlier for a later arrival, which the search's range maximum relies on: per departure station the
+       arrivals' ready times are computed and a running maximum bounds the range that surely makes the departure), and the
+       walk where that is faster (`changeAt`): at night, without service, the change is walked as with "Walk". Stations: per
+       city up to 40 (long-distance first, then regional rail, then coach stations, by departures), pairs up to 15 km apart,
+       local stops within 600 m of a station; a pair is stored only when transit beats walking in some hour, as
+       [a, b, modes, 24 × minutes] in `CityFile.transit` (onward connections, journey details) and the transfer chunks (search;
+       `TT_VERSION` 4). Paris Montparnasse → Gare de Lyon: 39 min by metro all day (walk 75 min), walked at 01:00; Euston →
+       Paddington 30 min (Underground), Berlin Hbf → Ostkreuz 29–35 min (S-Bahn); Bordeaux → Nice via Paris gets the 05:39 and
+       07:12 TGVs (arriving 15:04 / 16:06 instead of 16:06 / 17:05 with walking). Rows show "≈39 min metro Montparnasse →
+       Gare de Lyon" with a tooltip on how it is estimated. The timetables come from every intercity and local feed (trams,
+       metros, funiculars of any feed; suburban rail (type 109) of any feed; heavy rail only from a city authority's feed of
+       `urban-feeds.json`, e.g. RER / Transilien in Île-de-France, so no TGV counts as a transfer), cached per feed in
+       `work/urban/transit/` (`TRANSIT_EXTRACT_VERSION`); `--no-transit` skips the stage.
+       Coverage (build 20261016-2021): 12 313 pairs in 320 cities from 76 feeds, e.g. Paris, London, Berlin, Hamburg, München,
+       Wien, Praha, Budapest, Warszawa, Bruxelles, Amsterdam, København, Stockholm, Oslo, Helsinki, Madrid, Barcelona, Lisboa,
+       Roma, Milano, Napoli, Athína; not (yet) Kyiv or Marseille; cities without transit pairs keep walking. Cost: transfer chunks
+       9.75 → 9.89 MB gz (+1.4 %), city shards +1.1 MB raw / +0.2 MB gz (0.1 %); build stage 14 min on the first run (extraction
+       of every feed, gb-great-britain ≈ 1.5 min) and ≈ 4 min with the per-feed cache (profile scans ≈ 4 min, Paris and Berlin
+       ≈ 25 s each); search (Node, all chunks loaded): reach with 1 change and journeys between a pair unchanged
+       (Bordeaux → Nice 0.08–0.14 s), reach with 2 changes ≈ 17–20 % slower (Paris 5.9 → 6.9 s, Berlin 4.6 → 5.5 s).
      - **Data** (`packages/shared/src/tt.ts`, written by the map-data stage, `src/transfers.ts`): every pattern and trip of the
        shards deduplicated (416 k patterns (a pattern per brand), 2.19 M trips; shards repeat a pattern for every city it calls at, ~3 M times), as gzipped
        varint chunks (version 2: a brand per pattern, names in `TtIndex.brands`): chunk 0 = the *trunk* (all long-distance trains and coaches of Europe, 1.1 MB gz) and 32 regions (k-d split of

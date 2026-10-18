@@ -21,6 +21,8 @@ export class TransferCollector {
   private byKey = new Map<string, Pat>();
   private list: Pat[] = [];
   private walk = new Map<number, Map<string, [number, number, number]>>();
+  /** transit pairs (TransitPair) per city */
+  private transit = new Map<number, number[][]>();
   /** brand names (routeBrand) → index */
   private brands = new Map<string, number>();
 
@@ -61,6 +63,7 @@ export class TransferCollector {
       const old = w.get(k);
       if (!old || m < old[2]) w.set(k, [lo, hi, m]);
     }
+    if (cf.transit?.length) this.transit.set(cf.city, cf.transit);
   }
 
   get patterns(): number {
@@ -137,7 +140,7 @@ export class TransferCollector {
       return s;
     };
     const index: TtIndex = { version: TT_VERSION, chunks: [], cityChunk: "", brands: [...this.brands.keys()] };
-    let bytes = 0;
+    let bytes = 0, transitPairs = 0;
     for (let k = 0; k < nChunks; k++) {
       const pats = chunkPats[k]!;
       const cids = new Set<number>();
@@ -151,8 +154,15 @@ export class TransferCollector {
         for (const code of c.segs ?? []) sids.add(segId(code));
       }
       const walk: [number, number, number][] = [];
-      if (k > 0) for (const c of cities) if (chunkOf[c.id] === k) for (const t of this.walk.get(c.id)?.values() ?? []) walk.push(t);
-      const data = gzipSync(encodeTtChunk({ patterns: pats, walk }), { level: 9 });
+      const transit: number[][] = [];
+      if (k > 0)
+        for (const c of cities) {
+          if (chunkOf[c.id] !== k) continue;
+          for (const t of this.walk.get(c.id)?.values() ?? []) walk.push(t);
+          for (const t of this.transit.get(c.id) ?? []) transit.push(t);
+        }
+      transitPairs += transit.length;
+      const data = gzipSync(encodeTtChunk({ patterns: pats, walk, transit }), { level: 9 });
       const lines = gzipSync(encodeTtLines({ corridors: cors, segments: [...sids].map((id) => ({ id, coords: segCoords(id) })) }), { level: 9 });
       const file = `tt/${k}.bin.gz`, lfile = `tt/${k}.lines.gz`;
       await write(file, data);
@@ -166,7 +176,8 @@ export class TransferCollector {
     const tb = index.chunks.reduce((s, c) => s + c.bytes, 0);
     log(
       `mapdata: transfer timetable ${this.list.length} patterns in ${nChunks} chunks, ${mb(tb)} MB gz + lines ${mb(bytes - tb)} MB ` +
-        `(trunk ${mb(index.chunks[0]!.bytes)} + ${mb(index.chunks[0]!.lineBytes)} MB, regions ${index.chunks.slice(1).map((c) => mb(c.bytes)).join(" ")})`,
+        `(trunk ${mb(index.chunks[0]!.bytes)} + ${mb(index.chunks[0]!.lineBytes)} MB, regions ${index.chunks.slice(1).map((c) => mb(c.bytes)).join(" ")}), ` +
+        `${transitPairs} transit pairs`,
     );
     return { index, files: 2 * nChunks + 1, bytes };
   }

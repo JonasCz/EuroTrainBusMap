@@ -7,8 +7,9 @@
  * boards, at every city reached in round r, every trip leaving one of the city's stations after an arrival
  * there: no earlier than the transfer time (the minimum transfer time at the same station; between two stations
  * of the city the walk – or, with `changeBy` "bike", the bike ride – between them, see packages/shared/src/walk.ts,
- * and at least the minimum transfer time; stations too far apart for the mode, or without a transfer in the chunks,
- * have no transfer) and no later
+ * and at least the minimum transfer time; with "transit" the walk or, where faster at the hour of the arrival, the
+ * ride by metro / tram / suburban rail, see packages/shared/src/transit.ts; stations too far apart for the mode, or
+ * without a transfer in the chunks, have no transfer) and no later
  * than the maximum wait (or, with "same day", before local midnight of the arrival, see sameDayLimit). Mode filters
  * apply to every leg.
  *
@@ -18,7 +19,7 @@
  * The search is resumable round by round, so the caller can load the chunks of the cities where the next
  * round changes (`boardCities`) before running it.
  */
-import { Grow, StopLimit, changeMinutes, type ChangeBy, type TtChunk } from "@etbm/shared";
+import { Grow, StopLimit, TRANSIT_STRIDE, changeAt, changeMinutes, transitMinutes, type ChangeBy, type TtChunk } from "@etbm/shared";
 import { addDays, dayNumber, runsOnDay, type CalIndex } from "./calendar.ts";
 import { serviceTimeToUtc, wallToUtc } from "./tz.ts";
 
@@ -32,7 +33,10 @@ export interface TransferSettings {
   minTransfer: number;
   /** Maximum wait between arrival and the connecting departure, minutes; null = until local midnight ("same day"). */
   maxWait: number | null;
-  /** How changes between two stations of a city are made: walked, or cycled where faster (see walk.ts); default "walk". */
+  /**
+   * How changes between two stations of a city are made: walked, cycled where faster (see walk.ts), or by local
+   * transport where faster at that hour (transit.ts); default "walk".
+   */
   changeBy?: ChangeBy;
 }
 
@@ -62,6 +66,8 @@ export class TtStore {
   readonly refTripBase = new Grow();
   private nTrips = 0;
   private walk = new Map<number, number>();
+  /** transit pairs: key → chunk index * 2^24 + offset of the pair in that chunk's `transit` */
+  private transit = new Map<number, number>();
   private board: { start: Int32Array; ref: Int32Array; stop: Int32Array } | null = null;
 
   constructor(readonly nStations: number) {}
@@ -84,12 +90,35 @@ export class TtStore {
     for (let i = 0; i < c.walk.length; i += 3) {
       this.walk.set(c.walk[i]! * 1048576 + c.walk[i + 1]!, c.walk[i + 2]!);
     }
+    const tr = c.transit ?? new Int32Array(0);
+    for (let i = 0; i < tr.length; i += TRANSIT_STRIDE) this.transit.set(tr[i]! * 1048576 + tr[i + 1]!, ci * 16777216 + i);
     this.board = null;
   }
 
   /** Stored walking minutes between two stations of a city (may exceed the walking cap, see walk.ts), undefined beyond range. */
   walkMinutes(a: number, b: number): number | undefined {
     return a < b ? this.walk.get(a * 1048576 + b) : this.walk.get(b * 1048576 + a);
+  }
+
+  /**
+   * Stored transit transfer of two stations (either order): the chunk's `transit` array with the offset of the pair
+   * (modes at off + 2, hourly minutes from off + 3, see TRANSIT_STRIDE), undefined without one.
+   */
+  transitOf(a: number, b: number): { arr: Int32Array; off: number } | undefined {
+    const v = a < b ? this.transit.get(a * 1048576 + b) : this.transit.get(b * 1048576 + a);
+    return v === undefined ? undefined : { arr: this.chunks[Math.floor(v / 16777216)]!.transit, off: v % 16777216 };
+  }
+
+  /**
+   * The change from station a to b of a city starting at `minuteOfDay` (local): minutes and how (`changeAt`), the
+   * transit modes for a ride by transit; undefined beyond range. Same station: undefined.
+   */
+  changeAt(a: number, b: number, by: ChangeBy, minuteOfDay: number): { min: number; by: ChangeBy; modes?: number } | undefined {
+    if (a === b) return undefined;
+    const w = this.walkMinutes(a, b);
+    const t = by === "transit" ? this.transitOf(a, b) : undefined;
+    const c = changeAt(w, t?.arr, (t?.off ?? 0) + 3, by, minuteOfDay);
+    return c && c.by === "transit" ? { ...c, modes: t!.arr[t!.off + 2]! } : c;
   }
 
   ref(r: number): { c: TtChunk; p: number; tripBase: number } {
@@ -294,12 +323,29 @@ export class TransferSearch {
     return (m & (1 << (dd + 4))) !== 0;
   }
 
-  /** Transfer minutes from station a to b of a city; Infinity when they are too far apart (to walk / cycle). */
+  /**
+   * Transfer minutes from station a to b of a city that do not depend on the time: the minimum transfer time, the walk
+   * or bike ride (with "transit": the walk); Infinity when they are too far apart for that.
+   */
   private transferMin(a: number, b: number): number {
     const min = this.params.minTransfer;
     if (a === b) return min;
     const w = this.store.walkMinutes(a, b);
     return w === undefined ? Infinity : Math.max(min, changeMinutes(w, this.params.changeBy ?? "walk"));
+  }
+
+  /** With "transit": the stored transit transfer from station a to b (hourly minutes from `off`), else undefined. */
+  private transitOf(a: number, b: number): { arr: Int32Array; off: number } | undefined {
+    if (a === b || this.params.changeBy !== "transit") return undefined;
+    const t = this.store.transitOf(a, b);
+    return t ? { arr: t.arr, off: t.off + 3 } : undefined;
+  }
+
+  /** Transfer minutes from station a to b starting at time t (relative minutes) in a city with local midnights `mids`. */
+  private transferAt(a: number, b: number, t: number, mids: number[]): number {
+    const x = this.transferMin(a, b);
+    const tr = this.transitOf(a, b);
+    return tr ? Math.min(x, Math.max(this.params.minTransfer, transitMinutes(tr.arr, tr.off, minuteOfDay(mids, t)))) : x;
   }
 
   /** Latest service-day offset of a first-leg trip: the next day too when continuing a journey (a wait across midnight). */
@@ -316,7 +362,7 @@ export class TransferSearch {
     const a = this.params.after;
     if (!a) return [0, this.dayLen - 1];
     const t = Math.round(a.utc / 60000) - this.t0;
-    const x = this.transferMin(a.station, s);
+    const x = this.transferAt(a.station, s, t, this.midnightsOf(this.params.origin));
     if (x === Infinity) return [1, 0];
     const W = this.params.maxWait;
     return [t + x, W === null ? sameDayLimit(this.midnightsOf(this.params.origin), t) : t + W];
@@ -424,15 +470,23 @@ export class TransferSearch {
         // arrivals without the stations too far from a departure station to walk (cached by the excluded set)
         const views = new Map<string, Arrivals>();
         const stations = this.net.cityStations(city);
-        // transfer minutes from each group's station to the departure station (Infinity: too far to walk)
+        // transfer minutes from each group's station to the departure station (Infinity: too far to walk), and with
+        // "transit" the transit transfer of the pair (its minutes depend on the time of the arrival)
         const xg = new Float64Array(groups.length);
+        const tg: ({ arr: Int32Array; off: number } | undefined)[] = new Array(groups.length);
         for (let si = 0; si < stations.length; si++) {
           const s2 = stations[si]!;
           if (s2 >= store.nStations || B.start[s2] === B.start[s2 + 1]) continue;
-          let maxX = P.minTransfer, far = "", near = 0;
+          let maxX = P.minTransfer, far = "", near = 0, timed = false;
           for (let gi = 0; gi < groups.length; gi++) {
             const x = (xg[gi] = this.transferMin(groups[gi]!.station, s2));
-            if (x === Infinity) far += `${gi},`;
+            const tr = (tg[gi] = this.transitOf(groups[gi]!.station, s2));
+            if (tr) {
+              timed = true;
+              near++;
+              // reachable by transit only: kept in the view (the per-arrival times below decide)
+              if (x === Infinity) xg[gi] = -1;
+            } else if (x === Infinity) far += `${gi},`;
             else {
               near++;
               // arrivals at least this long before a departure make it whatever their station
@@ -447,6 +501,24 @@ export class TransferSearch {
             A = v;
           }
           const { time, dep0, lim, evs, eg, rmq } = A;
+          // time-dependent transfers: per arrival the time it is ready at s2 (y) and the running maximum (Y): the
+          // arrivals up to the last with Y ≤ d all make departure d, the later ones are checked one by one
+          let y: Int32Array | null = null, Y: Int32Array | null = null;
+          if (timed) {
+            const n = time.length;
+            y = new Int32Array(n);
+            Y = new Int32Array(n);
+            let mx = -2147483647;
+            for (let k = 0; k < n; k++) {
+              const gi = eg[k]!, tr = tg[gi];
+              let x = xg[gi]! < 0 ? Infinity : xg[gi]!;
+              if (tr) x = Math.min(x, Math.max(P.minTransfer, transitMinutes(tr.arr, tr.off, minuteOfDay(mids, time[k]!))));
+              const v = x === Infinity ? 2147483647 : time[k]! + x;
+              y[k] = v;
+              if (v > mx) mx = v;
+              Y[k] = mx;
+            }
+          }
           const lo = time[0]! + P.minTransfer, hi = lim[lim.length - 1]!;
           for (let e = B.start[s2]!; e < B.start[s2 + 1]!; e++) {
             const ref = B.ref[e]!, i = B.stop[e]!;
@@ -470,10 +542,10 @@ export class TransferSearch {
                 const hiK = upperBound(time, d - P.minTransfer) - 1;
                 if (hiK < 0 || lim[hiK]! < d) continue;
                 const kLo = lowerBound(lim, 0, hiK + 1, d);
-                const hiAll = Math.min(hiK, upperBound(time, d - maxX) - 1);
+                const hiAll = Math.min(hiK, Y ? upperBound(Y, d) - 1 : upperBound(time, d - maxX) - 1);
                 let best = hiAll >= kLo ? rmq.argmax(kLo, hiAll) : -1;
                 for (let k = Math.max(kLo, hiAll + 1); k <= hiK; k++) {
-                  if ((best < 0 || dep0[k]! > dep0[best]!) && time[k]! + xg[eg[k]!]! <= d) best = k;
+                  if ((best < 0 || dep0[k]! > dep0[best]!) && (y ? y[k]! : time[k]! + xg[eg[k]!]!) <= d) best = k;
                 }
                 if (best < 0) continue;
                 const bd = dep0[best]!, bx = evs[best]!;
@@ -782,12 +854,17 @@ export class TransferSearch {
             cityHi = Math.max(cityHi, lim[lim.length - 1]!);
           }
           const xg = new Float64Array(groups.length);
+          const tg: ({ arr: Int32Array; off: number } | undefined)[] = new Array(groups.length);
           const stations = this.net.cityStations(city);
           for (let si = 0; si < stations.length; si++) {
             const s2 = stations[si]!;
             if (s2 >= store.nStations || B.start[s2] === B.start[s2 + 1]) continue;
             let near = 0;
-            for (let gi = 0; gi < groups.length; gi++) if ((xg[gi] = this.transferMin(groups[gi]!.station, s2)) !== Infinity) near++;
+            for (let gi = 0; gi < groups.length; gi++) {
+              xg[gi] = this.transferMin(groups[gi]!.station, s2);
+              tg[gi] = this.transitOf(groups[gi]!.station, s2);
+              if (xg[gi] !== Infinity || tg[gi]) near++;
+            }
             if (!near) continue;
             for (let e = B.start[s2]!; e < B.start[s2 + 1]!; e++) {
               const ref = B.ref[e]!, i = B.stop[e]!;
@@ -808,11 +885,27 @@ export class TransferSearch {
                   if (d > cityHi) break;
                   if (!(days[t]! & bit)) continue;
                   for (let gi = 0; gi < groups.length; gi++) {
-                    const x = xg[gi]!;
-                    if (x === Infinity) continue;
+                    const x = xg[gi]!, tr = tg[gi];
+                    if (x === Infinity && !tr) continue;
                     const g = groups[gi]!;
-                    if (d < g.time[0]! + x) continue;
-                    const hiK = upperBound(g.time, d - x) - 1;
+                    let hiK: number;
+                    if (tr) {
+                      // ready at s2 (arrival + transfer) never earlier for a later arrival: binary search
+                      const ready = (k: number) => {
+                        const t = g.time[k]!;
+                        return t + Math.min(x, Math.max(P.minTransfer, transitMinutes(tr.arr, tr.off, minuteOfDay(mids, t))));
+                      };
+                      let lo = 0, hi = g.time.length;
+                      while (lo < hi) {
+                        const mid = (lo + hi) >> 1;
+                        if (ready(mid) <= d) lo = mid + 1;
+                        else hi = mid;
+                      }
+                      hiK = lo - 1;
+                    } else {
+                      if (d < g.time[0]! + x) continue;
+                      hiK = upperBound(g.time, d - x) - 1;
+                    }
                     if (hiK < 0 || g.lim[hiK]! < d) continue;
                     const best = g.rmq.argmax(lowerBound(g.lim, 0, hiK + 1, d), hiK);
                     add(ref, t, t0, dd, i, g.dep0[best]!, g.evs[best]!, keyOf(g.key, ref));
@@ -1009,6 +1102,13 @@ interface Arrivals {
   evs: Int32Array;
   eg: Int32Array;
   rmq: RangeMax;
+}
+
+/** Local minute of the day (0 … 1439) of time t (relative minutes) given the local midnights around it. */
+export function minuteOfDay(mids: number[], t: number): number {
+  let k = 0;
+  while (k + 1 < mids.length && mids[k + 1]! <= t) k++;
+  return Math.min(1439, Math.max(0, t - mids[k]!));
 }
 
 /** The arrivals of the groups with a finite transfer time `xg` (a subsequence, so still sorted by time and by limit). */

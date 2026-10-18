@@ -278,6 +278,12 @@ export interface CityFile {
    * here is too far apart and has no transfer. Same-station minimum is `minTransfer`.
    */
   transfers: [number, number, number][];
+  /**
+   * Transit transfers between stations of this city (packages/shared/src/transit.ts): [stationA, stationB, modes,
+   * 24 hourly worst-case minutes (0 = no service)][] with stationA < stationB, for pairs where metro / tram /
+   * suburban rail beats walking in some hour. Missing when the city has none.
+   */
+  transit?: number[][];
   minTransfer: number;
 }
 

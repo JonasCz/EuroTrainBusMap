@@ -1,6 +1,7 @@
 /**
  * Transfers between two stations of a city. Every change between stations is a walk or, if the traveller
- * chooses so ("Cycle" in the transfer settings), a bike ride – never a metro / bus ride we do not model –
+ * chooses so ("Cycle" in the transfer settings), a bike ride, or ("Transit") a metro / tram / suburban rail ride
+ * timed from the local timetables where that is faster (transit.ts); walks and bike rides are
  * estimated conservatively from the straight-line distance: a detour factor for the street network, a slow
  * pace and a fixed buffer, rounded up. The ETL stores the walking minutes per station pair (`CityFile.transfers`,
  * the transfer timetable chunks) for every pair within `TRANSFER_MAX_M`; the web app derives the cycling minutes
@@ -8,8 +9,12 @@
  * functions for the distance it shows. Pairs beyond the cap are not offered.
  */
 
-/** How changes between two stations of a city are made. */
-export type ChangeBy = "walk" | "bike";
+/**
+ * How changes between two stations of a city are made: walked, cycled where faster, or by local public transport
+ * (metro, tram, suburban rail) where faster and running at that hour (see transit.ts); "transit" without transit data
+ * for a pair is walked.
+ */
+export type ChangeBy = "walk" | "bike" | "transit";
 
 /** Street-network detour over the straight line (walking and cycling alike, so both show the same distance). */
 export const WALK_DETOUR = 1.3;

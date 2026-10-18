@@ -1,12 +1,12 @@
 /**
  * Onward connections from a city after arriving there at a given instant.
  */
-import { canBoard, changeOf, type ChangeBy, type CityFile, type Route } from "@etbm/shared";
+import { canBoard, changeAt, type ChangeBy, type CityFile, type Route } from "@etbm/shared";
 import { addDays, runsOnDate } from "./calendar.ts";
 import { ServiceDays, mergeRows, serviceKey } from "./merge.ts";
 import { bestAlight, prepare, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
-import { localDate, serviceTimeToUtc } from "./tz.ts";
+import { localDate, serviceTimeToUtc, toLocal } from "./tz.ts";
 import type { TripSchedule } from "./schedule.ts";
 
 export interface Arrival {
@@ -18,7 +18,10 @@ export interface Arrival {
   number?: string;
   /** Board only at the arrival station (default: any station of the city, with the walking transfer time). */
   onlyStation?: boolean;
-  /** How changes to another station are made (default "walk"; "bike": cycled where faster, see walk.ts). */
+  /**
+   * How changes to another station are made (default "walk"; "bike": cycled where faster, see walk.ts; "transit": by
+   * metro / tram / suburban rail where faster at the hour of the arrival, see transit.ts).
+   */
   changeBy?: ChangeBy;
 }
 
@@ -42,8 +45,10 @@ export interface Connection {
   depStation: number;
   /** Required transfer minutes (walk or ride / min transfer); 0 for a through service. */
   transfer: number;
-  /** How the change to another station is made ("bike": cycled); unset at the arrival station. */
+  /** How the change to another station is made ("bike": cycled, "transit": local transport); unset at the arrival station. */
   changeBy?: ChangeBy;
+  /** TransitMode bits of the lines of a change by transit */
+  transitModes?: number;
   /** Time between arrival and departure, minutes. */
   wait: number;
   /** Same vehicle continues (stay on board). */
@@ -69,19 +74,36 @@ export function walkMinutesIn(cf: CityFile, from: number, to: number): number | 
   return Number.isFinite(best) ? best : undefined;
 }
 
-/** The change between two different stations of the city: minutes and how (walk / bike), undefined beyond range. */
-export function changeIn(cf: CityFile, from: number, to: number, by: ChangeBy = "walk"): { min: number; by: ChangeBy } | undefined {
+/** The moment a change starts (arrival), to pick the transit times of its hour: UTC ms and the city's timezone. */
+export interface ChangeTime {
+  utc: number;
+  tz: string;
+}
+
+/** Stored transit transfer of two stations of the city described by `cf` (TransitPair), or undefined. */
+export function transitIn(cf: CityFile, from: number, to: number): number[] | undefined {
+  const a = Math.min(from, to), b = Math.max(from, to);
+  return cf.transit?.find((t) => t[0] === a && t[1] === b);
+}
+
+/**
+ * The change between two different stations of the city: minutes and how (walk / bike / transit, with the transit
+ * line modes), undefined beyond range. A change by transit needs `at` (its hour); without it the change is walked.
+ */
+export function changeIn(cf: CityFile, from: number, to: number, by: ChangeBy = "walk", at?: ChangeTime): { min: number; by: ChangeBy; modes?: number } | undefined {
   const w = walkMinutesIn(cf, from, to);
-  return w === undefined ? undefined : changeOf(w, by);
+  const tr = by === "transit" && at ? transitIn(cf, from, to) : undefined;
+  const c = changeAt(w, tr, 3, by, at ? toLocal(at.utc, at.tz).minutes : 720);
+  return c && c.by === "transit" ? { ...c, modes: tr![2]! } : c;
 }
 
 /**
  * Transfer minutes between two stations of the city described by `cf`: the same-station minimum, or the walk (or
- * bike ride) between them (at least that minimum); Infinity when they are beyond range (no transfer).
+ * bike / transit ride, `at` the arrival) between them (at least that minimum); Infinity when they are beyond range.
  */
-export function transferMinutes(cf: CityFile, from: number, to: number, by: ChangeBy = "walk"): number {
+export function transferMinutes(cf: CityFile, from: number, to: number, by: ChangeBy = "walk", at?: ChangeTime): number {
   if (from === to) return cf.minTransfer;
-  const c = changeIn(cf, from, to, by);
+  const c = changeIn(cf, from, to, by, at);
   return c === undefined ? Infinity : Math.max(c.min, cf.minTransfer);
 }
 
@@ -91,6 +113,18 @@ export function connections(cf: CityFile, ctx: NetCtx, f: Filters, arrival: Arri
   const keys: string[] = [];
   const services = new ServiceDays();
   const limit = arrival.utc + windowMin * 60000;
+  // transfer minutes and change kind per departure station (the transit time depends on the hour of the arrival)
+  const at: ChangeTime = { utc: arrival.utc, tz: ctx.cityTz[cf.city] ?? "UTC" };
+  const xfers = new Map<number, number>();
+  const xferTo = (station: number) => {
+    let x = xfers.get(station);
+    if (x === undefined) xfers.set(station, (x = transferMinutes(cf, arrival.station, station, arrival.changeBy, at)));
+    return x;
+  };
+  const changeFields = (station: number): Pick<Connection, "changeBy" | "transitModes"> => {
+    const c = changeIn(cf, arrival.station, station, arrival.changeBy, at);
+    return c?.modes !== undefined ? { changeBy: c.by, transitModes: c.modes } : { changeBy: c?.by ?? "walk" };
+  };
   cf.patterns.forEach((p, pi) => {
     const route = cf.routes[p.route];
     if (!route || !routeAllowed(route, f)) return;
@@ -126,7 +160,7 @@ export function connections(cf: CityFile, ctx: NetCtx, f: Filters, arrival: Arri
               dep - arrival.utc <= 120 * 60000;
             // a stop where the vehicle takes no passengers (drop-off only) can only be stayed on board at
             if (!through && !canBoard(p, i)) continue;
-            const transfer = through ? 0 : transferMinutes(cf, arrival.station, station, arrival.changeBy);
+            const transfer = through ? 0 : xferTo(station);
             if (dep < arrival.utc + transfer * 60000) continue;
             if (!chosen || (through && !chosen.through) || (!chosen.through && transfer < chosen.transfer) || (transfer === chosen.transfer && dep < chosen.dep)) {
               chosen = { stop: i, dep, transfer, through };
@@ -157,7 +191,7 @@ export function connections(cf: CityFile, ctx: NetCtx, f: Filters, arrival: Arri
             depUtc: chosen.dep,
             depStation: p.stations[chosen.stop]!,
             transfer: chosen.transfer,
-            ...(p.stations[chosen.stop] !== arrival.station && !chosen.through ? { changeBy: changeIn(cf, arrival.station, p.stations[chosen.stop]!, arrival.changeBy)?.by ?? "walk" } : {}),
+            ...(p.stations[chosen.stop] !== arrival.station && !chosen.through ? changeFields(p.stations[chosen.stop]!) : {}),
             wait: Math.round((chosen.dep - arrival.utc) / 60000),
             through: chosen.through,
             route,

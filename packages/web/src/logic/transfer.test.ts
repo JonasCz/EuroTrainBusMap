@@ -243,9 +243,9 @@ describe("journeys: route options", () => {
     b(TGV, pat(Cat.LongDistance, [[0, 0], [4, 140]], [h(6, 40)])), // O 06:40 → Q 09:00
     b(TGV, pat(Cat.LongDistance, [[4, 0], [5, 420]], [h(9, 30)])), // Q 09:30 → N 16:30
   ];
-  const search = (pats: TtPatternIn[], over: Partial<SearchParams> = {}, walkMin = 25) => {
+  const search = (pats: TtPatternIn[], over: Partial<SearchParams> = {}, walkMin: number | null = 25, transit?: number[]) => {
     const st = new TtStore(6);
-    st.addChunk(decodeTtChunk(encodeTtChunk({ patterns: pats, walk: [[1, 2, walkMin]] })));
+    st.addChunk(decodeTtChunk(encodeTtChunk({ patterns: pats, walk: walkMin === null ? [] : [[1, 2, walkMin]], transit: transit ? [[1, 2, 2, ...transit]] : [] })));
     const s = new TransferSearch(st, net2, { origin: id("O"), target: id("N"), date: DATE, cats: 15, transfers: 1, minTransfer: 10, maxWait: null, ...over });
     while (!s.done) s.round();
     const fmt = (u: number) => new Date(u).toISOString().slice(11, 16);
@@ -295,5 +295,39 @@ describe("journeys: route options", () => {
     // the minimum transfer time still applies to a ride
     expect(search(base, { ...tgv, changeBy: "bike", minTransfer: 50 }, 80)).toEqual(["04:10-14:06 Intercités@O TGV@M", "04:46-14:06 TGV@O TGV@P"]);
     expect(search(base, { ...tgv, changeBy: "bike", minTransfer: 76 }, 80)).toEqual([]);
+  });
+  it("changes by transit at the hour of the arrival when chosen", () => {
+    const tgv = { cats: Cat.LongDistance };
+    const hours = (f: (h: number) => number) => Array.from({ length: 24 }, (_, k) => f(k));
+    // P 08:55 (local), the 10:10 TGV from the other station: an 80 min walk misses it, 40 min by metro make it
+    const via = ["04:10-14:06 Intercités@O TGV@M", "04:46-14:06 TGV@O TGV@P"], viaQ = ["04:10-14:06 Intercités@O TGV@M", "04:40-14:30 TGV@O TGV@Q"];
+    expect(search(base, { ...tgv, changeBy: "transit" }, 80, hours(() => 40))).toEqual(via);
+    expect(search(base, { ...tgv, changeBy: "walk" }, 80, hours(() => 40))).toEqual(viaQ);
+    // the worst case of the hour of the arrival counts: 80 min at 8 h is too slow …
+    expect(search(base, { ...tgv, changeBy: "transit" }, 80, hours((k) => (k === 8 ? 80 : 90)))).toEqual(viaQ);
+    // … unless waiting for the next hour is faster (09:00 + 30 min)
+    expect(search(base, { ...tgv, changeBy: "transit" }, 80, hours((k) => (k === 8 ? 80 : 30)))).toEqual(via);
+    // no service at 8 h and later in the morning: walked (too slow)
+    expect(search(base, { ...tgv, changeBy: "transit" }, 80, hours((k) => (k >= 8 && k < 12 ? 0 : 20)))).toEqual(viaQ);
+    // beyond walking range: by transit only
+    expect(search(base, { ...tgv, changeBy: "transit", maxWait: 600 }, null, hours(() => 40))).toEqual(via);
+    expect(search(base, { ...tgv, changeBy: "transit", maxWait: 600 }, null)).toEqual(viaQ);
+    // the minimum transfer time still applies
+    expect(search(base, { ...tgv, changeBy: "transit", minTransfer: 50 }, 80, hours(() => 40))).toEqual(via);
+    expect(search(base, { ...tgv, changeBy: "transit", minTransfer: 76 }, 80, hours(() => 40))).toEqual([]);
+  });
+  it("reaches cities by transit changes in the reach search too", () => {
+    const reach = (by: "walk" | "transit", transit: number[]) => {
+      const st = new TtStore(6);
+      st.addChunk(decodeTtChunk(encodeTtChunk({ patterns: [base[1]!, base[2]!], walk: [[1, 2, 80]], transit: [[1, 2, 2, ...transit]] })));
+      const s = new TransferSearch(st, net2, { origin: id("O"), date: DATE, cats: Cat.LongDistance, transfers: 1, minTransfer: 10, maxWait: null, changeBy: by });
+      while (!s.done) s.round();
+      return s.out.level[id("N")];
+    };
+    const all40 = Array.from({ length: 24 }, () => 40);
+    // N only via the TGV O → P and the TGV P 10:10 → M → N from the other station of P
+    expect(reach("walk", all40)).toBe(0);
+    expect(reach("transit", all40)).toBe(2);
+    expect(reach("transit", Array.from({ length: 24 }, (_, k) => (k === 8 ? 80 : 90)))).toBe(0);
   });
 });

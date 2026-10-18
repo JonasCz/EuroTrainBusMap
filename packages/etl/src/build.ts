@@ -53,7 +53,8 @@ import { GridIndex, fastDist, greatCircle, haversine, round5, simplifyLine, type
 import { log, warn, type StageTimer } from "./util/log.ts";
 import { runSanity } from "./sanity.ts";
 import { writeMapData } from "./mapdata.ts";
-import { writeUrbanLayer } from "./urban/index.ts";
+import { loadUrbanFeedDefs, writeUrbanLayer } from "./urban/index.ts";
+import { computeTransit, gatherTransitFeeds } from "./urban/transit.ts";
 import { BASEMAP_DIR, BASEMAP_MAXZOOM, BASEMAP_MINZOOM, BASEMAP_TILES_KEY, BASEMAP_VERSION, EUROPE_BBOX, installBasemapTiles } from "./basemap/tiles.ts";
 
 export interface BuildCtx {
@@ -1169,6 +1170,22 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const network: NetworkFile = { schema: SCHEMA_VERSION, build, timezones, cities: outCities, stations: outStations, corridors: outCorr, segments: outSegs };
   const calendars: CalendarsFile = { startDate: args.startDate, days: D, masks: masks.masks };
 
+  // transit transfers between the stations of a city (metro / tram / suburban rail timetables, urban/transit.ts)
+  let transitByCity = new Map<number, number[][]>();
+  const transitStats: Record<string, number> = {};
+  if (args.transit) {
+    timer.start("transit");
+    try {
+      const tfeeds = await gatherTransitFeeds({ cfg, urbanFeeds: await loadUrbanFeedDefs(), workDir: args.work, assetsDir: args.assets, startDate: args.startDate, download: true, log });
+      const tr = computeTransit(tfeeds, outCities, outStations, log);
+      transitByCity = tr.byCity;
+      Object.assign(transitStats, tr.stats);
+    } catch (e) {
+      warn(`transit: transfer times by local transport failed, building without them: ${(e as Error).stack ?? e}`);
+    }
+    timer.start("output");
+  }
+
   // city files
   const patternsByCity: number[][] = cityOrder.map(() => []);
   for (let p = 0; p < patterns.length; p++) {
@@ -1306,6 +1323,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       }
     const anyRail = stIds.some((s) => stations[s]!.rail);
     const cf: CityFile = { city: c, routes: rOut, patterns: pOut, patternTz: pTz, trips: tOut, transfers, minTransfer: anyRail ? 5 : 3 };
+    const transit = transitByCity.get(c);
+    if (transit) cf.transit = transit;
     let json = JSON.stringify(cf);
     const bytes = Buffer.byteLength(json);
     sizes.push({ city: `${outCities[c]!.name} (${c})`, bytes });
@@ -1447,7 +1466,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     files: fileCount,
     outputBytes: totalBytes,
   });
-  Object.assign(stats, urbanStats);
+  Object.assign(stats, urbanStats, transitStats);
   for (const [k, v] of Object.entries(catTrips)) stats[`trips${k}`] = v;
   for (const [k, v] of Object.entries(catRoutes)) stats[`routes${k}`] = v;
 

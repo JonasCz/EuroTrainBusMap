@@ -315,3 +315,17 @@ data, give the build a new id: rename the directory (e.g. append a letter, `2026
   core.json 1.8 → 3.2 MB (gz 0.67 → 1.17 MB), out dir 13.3k → 14.1k files, build ~17 min with --reuse-db, peak RSS ~8.5 GB.
 - The villages asset is new: run refresh-assets with `only=geonames` (or upload `work/assets/geonames/villages-europe.tsv.gz`
   and add it to the R2 `manifest.json`) so the weekly build stops downloading the dumps.
+
+## Transit transfers ("Transit" between stations, `xfer=transit`)
+
+- Stage `transit` of `build-data` (inside the output stage, before the city files; skip with `--no-transit`): per feed the
+  rail-bound local timetables of a reference week (first Monday after `--start`) are extracted from the cached zips into
+  `work/urban/transit/<feed>.json.gz` (`TRANSIT_EXTRACT_VERSION` in `urban/transit-extract.ts` + zip size + week in the stamp),
+  then a profile scan per city (`urban/transit.ts`). First run ~10.5 min extraction (gb-great-britain 5.3 GB stop_times ~1.5–2 min,
+  de-delfi ~1.5 min) + ~3.5 min compute; with a warm cache ~4 min. A new `--start` week re-extracts everything.
+- Debug a city without a build: load the cached feeds of the city (`JSON.parse(gunzip(file)).feed`), `cityTransit(new TransitIndex(feeds),
+  { city, stations })` with the network's stations (`cats & TRANSIT_STATION_CATS`) and print the pair's 24 values; values around the
+  route headway + access/egress are right, ~2 h everywhere means the metro is missing (wrong week / route types / calendar).
+- Pitfalls found: list aggregates (`list(... ORDER BY seq)`) over IDFM's 1 GB stop_times run DuckDB out of memory (stream sorted rows
+  instead); feeds published for two weeks only (PID trams / metro) or expired (Metro de Madrid, ATM Milano) need the per-feed week shift,
+  else a missing Sunday turned every worst case into "no service".

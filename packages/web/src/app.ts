@@ -465,7 +465,7 @@ export class App {
       this.set({ schedule: undefined }, { replace: true });
       return;
     }
-    const js = journeySchedule(scheds, (i) => changeIn(files[i]!, infos[i - 1]!.arrStation, infos[i]!.depStation, s.xfer.changeBy))!;
+    const js = journeySchedule(scheds, (i, utc) => changeIn(files[i]!, infos[i - 1]!.arrStation, infos[i]!.depStation, s.xfer.changeBy, { utc, tz: cityTz(net, infos[i]!.leg.from) }))!;
     // departures one could change to: same kind of service from the change city towards the next leg's end
     const options: ChangeOption[][] = js.changes.map((c, k) => {
       const next = infos[k + 1]!;
@@ -483,7 +483,7 @@ export class App {
           taken: { trip: next.leg.trip, date: next.leg.date, depUtc: next.depUtc },
           key: (d) => brand(d.route),
           takenKey: brand(next.route),
-          transfer: (st) => transferMinutes(ccf, c.arrStation, st, s.xfer.changeBy),
+          transfer: (st) => transferMinutes(ccf, c.arrStation, st, s.xfer.changeBy, { utc: c.arrUtc, tz }),
           windowMin: CONNECTION_WINDOW_MIN,
         });
       } catch {
@@ -668,13 +668,13 @@ export class App {
       // a change between two stations of the city: the walk (or ride) the search assumed (shown with the change)
       const prev = j.legs[i - 1];
       const sa = prev?.stations[prev.alight], sb = jl.stations[jl.board]!;
-      const change = prev && sa !== sb && lcf ? changeIn(lcf, sa!, sb, this.state.xfer.changeBy) : undefined;
+      const change = prev && sa !== sb && lcf ? changeIn(lcf, sa!, sb, this.state.xfer.changeBy, { utc: prev.arrUtc, tz: ctx.cityTz[from] ?? "UTC" }) : undefined;
       const leg = lcf ? matchLeg(lcf, jl, from) : null;
       const info = leg && lcf ? resolveLeg(lcf, ctx, leg) : null;
       if (!info) ok = false;
       const corr = info ? info.corridors : this.transfers.legCorridors(jl);
       addTraffic(traffic, corr, jl.cat, 1);
-      legs.push({ raw: jl, ...(info ? { info } : {}), ...(change ? { walk: change.min, by: change.by } : {}), corridors: [...corr] });
+      legs.push({ raw: jl, ...(info ? { info } : {}), ...(change ? { walk: change.min, by: change.by, ...(change.modes !== undefined ? { modes: change.modes } : {}) } : {}), corridors: [...corr] });
     }
     return { journey: j, legs, ...(ok ? { route: legs.map((l) => l.info!.leg) } : {}) };
   }
