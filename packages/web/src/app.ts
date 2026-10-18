@@ -1,9 +1,9 @@
 /** Application controller: state → data → map highlight + panel. */
-import type { CityFile } from "@etbm/shared";
+import type { CityFile, Route } from "@etbm/shared";
 import { loadCity, loadSchedule } from "./data/load.ts";
 import { cityTz, ensureDetail, stationBySlug, stationName, stationSlug, type Net } from "./data/net.ts";
 import { addDays, inHorizon } from "./logic/calendar.ts";
-import { connections, walkMinutesIn, type Arrival, type Connection, type OnwardStop } from "./logic/connections.ts";
+import { connections, transferMinutes, walkMinutesIn, type Arrival, type Connection, type OnwardStop } from "./logic/connections.ts";
 import { sameFilters, type Filters } from "./logic/filters.ts";
 import { encodeLegs, resolveLeg, type Leg, type LegInfo } from "./logic/journey.ts";
 import { computeReach } from "./logic/reach.ts";
@@ -11,6 +11,8 @@ import { addTraffic, trafficCats, type CorridorTraffic } from "./logic/context.t
 import { nextServiceDates, pairCandidates, pairTraffic, serviceDates, timetable, type Departure } from "./logic/timetable.ts";
 import { stationDepartures } from "./logic/stations.ts";
 import { tripSchedule, type TripSchedule } from "./logic/schedule.ts";
+import { changeOptions, journeySchedule, type ChangeOption } from "./logic/journeyschedule.ts";
+import { legBrand } from "./logic/journeygroups.ts";
 import { localDate } from "./logic/tz.ts";
 import { STATION_ZOOM } from "./map/lod.ts";
 import type { MapView, Highlight } from "./map/mapview.ts";
@@ -83,11 +85,13 @@ export class App {
     if (next.dest === undefined) next.legs = [];
     // the trip schedule and the onward scope belong to the last leg: a new leg (or step) resets them unless named
     if ("legs" in patch && !("schedule" in patch)) delete next.schedule;
+    if (("legs" in patch || "schedule" in patch) && !("journey" in patch)) delete next.journey;
     if (("legs" in patch || "schedule" in patch) && !("wholeCity" in patch)) delete next.wholeCity;
     if (!next.legs.length) {
       delete next.schedule;
       delete next.wholeCity;
     }
+    if (!next.schedule) delete next.journey;
     this.state = next;
     const hash = toHash(this.net, next);
     const url = `${location.pathname}${location.search}${hash}`;
@@ -131,8 +135,10 @@ export class App {
 
   back(): void {
     const s = this.state;
-    // connections → the schedule of the trip that got there → the previous step (departures list / connections)
+    // connections → the schedule of the trip that got there → the previous step (departures list / connections);
+    // a journey picked from the journeys list goes back to the list
     if (s.legs.length && !s.schedule) this.set({ schedule: true });
+    else if (s.journey) this.set({ legs: [] });
     else if (s.legs.length) this.set({ legs: s.legs.slice(0, -1) });
     else if (s.dest !== undefined) this.set({ dest: undefined });
     else if (s.station !== undefined) this.set({ station: undefined });
@@ -290,6 +296,7 @@ export class App {
 
     // ---- journey: resolve legs, then connections from the last arrival
     const infos: LegInfo[] = [];
+    const legFiles: CityFile[] = [];
     let from = origin;
     let lastCf: CityFile = cf;
     for (const leg of s.legs) {
@@ -299,6 +306,7 @@ export class App {
       const info = lcf ? resolveLeg(lcf, net.ctx, l) : null;
       if (!info) break;
       infos.push(info);
+      legFiles.push(lcf!);
       lastCf = lcf!;
       from = info.to;
     }
@@ -321,6 +329,12 @@ export class App {
       focus.add(i.to);
     }
     const corridors = trafficCats(traffic);
+
+    // ---- a journey with changes: every leg's stops in one list, with the changes between them
+    if (s.schedule && infos.length > 1) {
+      await this.renderJourney(infos, legFiles, origin, focus, corridors, traffic, context, stale);
+      return;
+    }
 
     // ---- the schedule of the last leg's trip: every stop, each with its onward connections
     if (s.schedule) {
@@ -367,6 +381,81 @@ export class App {
       [origin, ...infos.map((i) => i.to)],
       `j${infos.map((i) => i.to).join("-")}`,
     );
+  }
+
+  /**
+   * The schedule of a whole journey: each leg's trip (stop lists loaded where a pattern leaves stops out), the
+   * changes between them with the other departures of the same kind one could change to, the walks on the map.
+   */
+  private async renderJourney(
+    infos: LegInfo[],
+    files: CityFile[],
+    origin: number,
+    focus: Set<number>,
+    corridors: Map<number, number>,
+    traffic: CorridorTraffic,
+    context: Map<number, number>,
+    stale: () => boolean,
+  ): Promise<void> {
+    const net = this.net;
+    const s = this.state;
+    const scheds: TripSchedule[] = [];
+    for (const [i, info] of infos.entries()) {
+      const lcf = files[i]!;
+      const pat = lcf.patterns[lcf.trips[info.leg.trip]?.[0] ?? -1];
+      const sf = pat?.run !== undefined ? await loadSchedule(net.ds, info.leg.from).catch(() => null) : null;
+      if (stale()) return;
+      const sc = tripSchedule(lcf, net.ctx, info.leg, sf);
+      if (!sc) {
+        this.set({ schedule: undefined }, { replace: true });
+        return;
+      }
+      scheds.push(sc);
+    }
+    const js = journeySchedule(scheds, (i) => walkMinutesIn(files[i]!, infos[i - 1]!.arrStation, infos[i]!.depStation))!;
+    // departures one could change to: same kind of service from the change city towards the next leg's end
+    const options: ChangeOption[][] = js.changes.map((c, k) => {
+      const next = infos[k + 1]!;
+      if (c.through) return [];
+      const ccf = files[k + 1]!;
+      const tz = cityTz(net, next.leg.from);
+      const end = c.arrUtc + Math.max(CONNECTION_WINDOW_MIN, c.wait + 60) * 60000;
+      const dates = [...new Set([localDate(c.arrUtc, tz), localDate(end, tz)])];
+      const brand = (r: Route) => `${r.cat}|${legBrand("", r.cat, r) || r.name}`;
+      try {
+        const deps = dates.flatMap((d) => timetable(ccf, net.ctx, s.filters, next.to, d));
+        return changeOptions(deps, {
+          arrUtc: c.arrUtc,
+          arrStation: c.arrStation,
+          taken: { trip: next.leg.trip, date: next.leg.date, depUtc: next.depUtc },
+          key: (d) => brand(d.route),
+          takenKey: brand(next.route),
+          transfer: (st) => transferMinutes(ccf, c.arrStation, st),
+          windowMin: CONNECTION_WINDOW_MIN,
+        });
+      } catch {
+        return [];
+      }
+    });
+    for (const sc of scheds) for (const st of sc.stops) if (st.city >= 0) focus.add(st.city);
+    const walks: [number, number][][] = [];
+    for (const c of js.changes) {
+      const a = net.file.stations[c.arrStation], b = net.file.stations[c.depStation];
+      if (c.arrStation !== c.depStation && a && b) walks.push([[a.lon, a.lat], [b.lon, b.lat]]);
+    }
+    await this.map.setHighlight({ emphasis: { focus: this.withCorridorEnds(focus, corridors), active: true, origin, dest: infos[infos.length - 1]!.to }, corridors, traffic, context, walks });
+    if (stale()) return;
+    document.title = `${net.cities[origin]!.name} → ${net.cities[infos[infos.length - 1]!.to]!.name} – EuroTrainBusMap`;
+    this.panel.show({
+      kind: "journey",
+      legs: infos,
+      js,
+      options,
+      windowMin: CONNECTION_WINDOW_MIN,
+      onward: (leg, stop, whole) => this.onwardCount(scheds[leg]!, stop, whole),
+    });
+    const shown = js.legs.flatMap((l) => l.sched.stops.slice(l.from, l.to + 1).flatMap((x) => (x.city >= 0 ? [x.city] : [])));
+    this.frame([...new Set([origin, ...shown])], `J${encodeLegs(s.legs)}`);
   }
 
   /** The panel / map state of a reach-with-changes round. */
@@ -490,11 +579,18 @@ export class App {
    * A stop of the schedule view: ride the last leg's trip to stop `stop` (pattern index) and show the onward
    * connections from there – from that station only, or with `wholeCity` from every station of its city.
    */
-  chooseStop(stop: number, wholeCity: boolean): void {
+  chooseStop(stop: number, wholeCity: boolean, leg = this.state.legs.length - 1): void {
     const legs = this.state.legs;
-    const last = legs[legs.length - 1];
-    if (!last || stop <= last.board) return;
-    this.set({ legs: [...legs.slice(0, -1), { ...last, alight: stop }], schedule: undefined, wholeCity: wholeCity || undefined });
+    const l = legs[leg];
+    if (!l || stop <= l.board) return;
+    this.set({ legs: [...legs.slice(0, leg), { ...l, alight: stop }], schedule: undefined, wholeCity: wholeCity || undefined });
+  }
+
+  /** Another departure at the change before leg `leg` (the journey's last leg): the journey with it instead. */
+  chooseOption(leg: number, o: ChangeOption): void {
+    const legs = this.state.legs;
+    if (leg !== legs.length - 1 || leg < 1) return;
+    this.set({ legs: [...legs.slice(0, leg), { from: -1, trip: o.trip, date: o.serviceDate, board: o.board, alight: o.alight }], schedule: true, journey: this.state.journey });
   }
 
   /** Show the schedule of leg `i` (dropping the legs after it). */
@@ -530,7 +626,7 @@ export class App {
 
   /** A journey with changes (journeys view): its legs, showing the last leg's schedule. */
   chooseJourney(legs: Leg[]): void {
-    if (legs.length) this.set({ legs, schedule: true });
+    if (legs.length) this.set({ legs, schedule: true, journey: legs.length > 1 || undefined });
   }
 
   /** New settings for connections with changes (the dialog); the minimum transfer and maximum wait are remembered. */

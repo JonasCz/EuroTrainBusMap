@@ -18,6 +18,11 @@ export interface AppState {
   legs: Leg[];
   /** Show the schedule (all stops) of the last leg's trip instead of the connections from its end (URL `trip=1`). */
   schedule?: boolean;
+  /**
+   * The legs are one journey picked from the journeys list (URL `trip=all` instead of `trip=1`): its schedule lists
+   * every leg, and back returns to the list instead of the connections from the previous leg.
+   */
+  journey?: boolean;
   /** Onward connections from every station of the last leg's arrival city, not only the arrival station (URL `onward=city`). */
   wholeCity?: boolean;
   /**
@@ -84,7 +89,8 @@ export function parseHash(net: Net, hash: string): AppState {
     ...(isValidDate(date) ? { date } : {}),
     filters: { cats: f === null ? ALL_CATS : decodeCats(f), ...(local ? {} : { local: false }) },
     legs,
-    ...(legs.length && q.get("trip") === "1" ? { schedule: true } : {}),
+    ...(legs.length && (q.get("trip") === "1" || q.get("trip") === "all") ? { schedule: true } : {}),
+    ...(legs.length && q.get("trip") === "all" ? { journey: true } : {}),
     ...(legs.length && q.get("onward") === "city" ? { wholeCity: true } : {}),
     xfer: parseSettings(q),
   };
@@ -98,7 +104,7 @@ export function toHash(net: Net, s: AppState): string {
   if (s.date && s.city !== undefined) q.push(`date=${s.date}`);
   if (s.legs.length && s.dest !== undefined) {
     q.push(`legs=${encodeLegs(s.legs)}`);
-    if (s.schedule) q.push("trip=1");
+    if (s.schedule) q.push(s.journey ? "trip=all" : "trip=1");
     else if (s.wholeCity) q.push("onward=city");
   }
   if (s.filters.cats !== ALL_CATS) q.push(`modes=${encodeCats(s.filters.cats) || "none"}`);

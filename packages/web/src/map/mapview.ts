@@ -44,6 +44,8 @@ export interface Highlight {
   xfer?: Map<number, { level: number; cats: number }>;
   /** the same, prebuilt as GeoJSON text (by the transfer worker) */
   xferJson?: string;
+  /** walks between stations at the changes of a journey ([lon, lat] pairs), drawn dotted */
+  walks?: [number, number][][];
 }
 
 const EUROPE: [[number, number], [number, number]] = [
@@ -392,6 +394,7 @@ export class MapView {
     this.setData("hl-ctx", contextData(net.geo, h.context ?? new Map()));
     this.setData("hl-casing", d.casing);
     this.setData("hl", d.lines);
+    this.setData("hl-walk", { type: "FeatureCollection", features: (h.walks ?? []).map((coordinates) => ({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates } })) });
     this.setData("focus", focusCityData(net.cities, em));
     const sel = new Set([em.origin, em.dest].filter((x): x is number => x !== undefined));
     this.setData("focus-stations", stationData(net.cities, net.file.stations, sel, em.originStation));

@@ -164,7 +164,7 @@ function scaled(prop: string, zf: [number, number][], add = 0): Expr {
 
 const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
-export const GEOJSON_SOURCES = ["hl-xfer", "hl-ctx", "hl-casing", "hl", "focus", "focus-stations"] as const;
+export const GEOJSON_SOURCES = ["hl-xfer", "hl-ctx", "hl-casing", "hl", "hl-walk", "focus", "focus-stations"] as const;
 
 /** Opacity of the lines reached with one / two changes (light, dark theme). */
 export const XFER_OPACITY: Record<number, [number, number]> = { 2: [0.5, 0.45], 3: [0.26, 0.24] };
@@ -342,6 +342,14 @@ export function networkLayers(t: Theme, st: LayerState): LayerSpecification[] {
     filter: ["==", ["get", "hop"], 1],
     layout: { "line-cap": "round" },
     paint: { "line-color": catColor(t), "line-width": ["interpolate", ["linear"], ["zoom"], 3, 1.2, 10, 2.2], "line-dasharray": [2, 2], "line-opacity": 0.75 },
+  });
+  // walks between two stations at a change of a journey: dotted, in the text colour
+  layers.push({
+    id: "hl-walk",
+    type: "line",
+    source: "hl-walk",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": t.text, "line-width": ["interpolate", ["linear"], ["zoom"], 5, 2, 12, 3.5], "line-dasharray": [0.1, 2], "line-opacity": 0.85 },
   });
 
   // ---- city markers (base, from tiles)

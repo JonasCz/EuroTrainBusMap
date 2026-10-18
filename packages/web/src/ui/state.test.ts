@@ -51,6 +51,14 @@ describe("journey steps in the URL", () => {
     expect(toHash(net, w)).toBe(`#from=paris&to=lyon&${legs}&onward=city`);
     expect(parseHash(net, "#from=paris&to=lyon&trip=1").schedule).toBeUndefined(); // no legs, no trip
   });
+
+  it("keeps a journey picked from the journeys list (trip=all)", () => {
+    const legs = "legs=4.20261019.1.3,7.20261019.0.2";
+    const t = parseHash(net, `#from=paris&to=lyon&${legs}&trip=all`);
+    expect([t.schedule, t.journey]).toEqual([true, true]);
+    expect(toHash(net, t)).toBe(`#from=paris&to=lyon&${legs}&trip=all`);
+    expect(parseHash(net, `#from=paris&to=lyon&${legs}&trip=1`).journey).toBeUndefined();
+  });
 });
 
 describe("connection settings in the URL", () => {
