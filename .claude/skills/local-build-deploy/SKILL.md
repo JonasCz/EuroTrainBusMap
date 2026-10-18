@@ -176,6 +176,10 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
 - `--reuse-db` also reloads when `LOAD_VERSION` (`packages/etl/src/gtfs/load.ts`, part of the db-state key) changed, i.e.
   after a change to what the loader stores (v2: stop_times `pd`, pickup / drop-off restrictions). Add `--max-age-h 100000`
   so the reload uses the cached feed zips instead of downloading them again (~17 min load on 4 cores).
+- Operator adapters (`packages/etl/operators/*.ts`): the source of every adapter with a load-time part (`feedOptions`,
+  `extraFeeds`, `exclusive`, `classify`, `onLoad`) is part of the `--reuse-db` key (`ops` in `work/db-state.json`), so
+  editing one reloads all feeds (add `--max-age-h 100000`); adapters with only a `route` hook are build-time only. The build
+  log ends with one `operator <id>: field@feed n, …` line per adapter (also `operators` in `work/build-report.json`).
 - `node --import tsx ...` fails ("Cannot find package 'tsx'") outside `packages/etl`.
 - The workflow's cleanup step (`rm -rf work/etl.duckdb ...`) defeat `--reuse-db`; skip it locally.
 - Measured full build (147 feeds, 0 failed): download+load 742 s, cities 35 s, stations 99 s, calendars 13 s, dedup 26 s, patterns 87 s,

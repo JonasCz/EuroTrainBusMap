@@ -30,7 +30,7 @@ export interface JourneyGroup<T> {
 /** Brand of a journey leg: from the transfer timetable, else from the matched route; "" for regional buses (the mode is enough). */
 export function legBrand(brand: string, cat: number, route?: Route): string {
   if (cat === Cat.Bus) return "";
-  return brand || (route ? routeBrand(route.name, route.agency, cat) : "");
+  return brand || (route ? routeBrand(route.name, route.agency, cat, route.brand) : "");
 }
 
 /**

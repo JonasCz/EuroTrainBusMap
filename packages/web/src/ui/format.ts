@@ -45,10 +45,10 @@ export function routeColor(r: Route): string {
 
 /**
  * The name a route is shown with: its own, except a train named only by where it runs
- * ("Paris-Gare-de-Lyon/Marseille-St-Charles"), which shows its operator's brand ("Frecciarossa").
+ * ("Paris-Gare-de-Lyon/Marseille-St-Charles"), which shows its brand (Route.brand: "Frecciarossa") or operator.
  */
 export function routeDisplayName(r: Route): string {
-  return r.cat !== Cat.Bus && r.cat !== Cat.Coach && r.agency && endpointsName(r.name) ? routeBrand(r.name, r.agency, r.cat) : r.name;
+  return r.cat !== Cat.Bus && r.cat !== Cat.Coach && r.agency && endpointsName(r.name) ? routeBrand(r.name, r.agency, r.cat, r.brand) : r.name;
 }
 
 /** Coloured pill: "ICE 597" */

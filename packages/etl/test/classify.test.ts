@@ -46,7 +46,7 @@ describe("rail category", () => {
     expect(classifyRoute(r(2, "Os 5403"), ctx())?.cat).toBe(Cat.Regional);
     expect(classifyRoute(r(2, "LNER", "", "LNER"), ctx({ country: "GB" }))?.cat).toBe(Cat.LongDistance);
     expect(classifyRoute(r(2, "Northern", "", "Northern Rail"), ctx({ country: "GB" }))?.cat).toBe(Cat.Regional);
-    expect(classifyRoute(r(2, "GWR", "", "GWR"), ctx({ country: "GB" }))?.cat).toBeNull(); // mixed → per-trip heuristic
+    // mixed GB operators (GWR …) are left to the per-trip heuristic by an operator adapter: operators.test.ts
     const nj = classifyRoute(r(2, "NJ 40490"), ctx())!;
     expect(nj.flags & Flag.Night).toBeTruthy();
   });
@@ -77,20 +77,24 @@ describe("bus & coach", () => {
     expect(classifyRoute(r(3, "13A", "", "Wiener Linien"), ctx())).toBeNull();
     expect(classifyRoute(r(3, "800", "", "RVO"), ctx({ country: "DE" }))?.cls).toBe("bus");
   });
-  it("treats coach trips on rail routes as buses (SNCF Car TER / car à réservation, Irish Rail BUS)", () => {
-    expect(classifyRoute(r(2, "560D", "CRE", "SNCF VOYAGEURS", "Paris - Cahors"), ctx({ country: "FR" }))).toEqual({ cls: "bus", cat: Cat.Bus, flags: Flag.ReservationOnly });
-    expect(classifyRoute(r(2, "P15", "CTE", "SNCF VOYAGEURS", "Colmar - Metzeral"), ctx({ country: "FR" }))?.flags).toBe(0);
-    expect(classifyRoute(r(2, "P15", "CTE", "SNCF VOYAGEURS", "Colmar - Metzeral"), ctx({ country: "FR" }))?.cat).toBe(Cat.Bus);
+  it("treats bus / coach trip categories on rail routes as buses (Irish Rail BUS, Car)", () => {
     expect(classifyRoute(r(2, "rail", "BUS", "Iarnród Éireann / Irish Rail", "Dublin - Limerick"), ctx({ country: "IE" }))?.cat).toBe(Cat.Bus);
-    expect(classifyRoute(r(2, "560D", "CRE"), ctx({ keep: ["rail"] }))).toBeNull();
+    expect(classifyRoute(r(2, "rail", "Car", "X"), ctx({ country: "FR" }))).toEqual({ cls: "bus", cat: Cat.Bus, flags: 0 });
+    expect(classifyRoute(r(2, "rail", "BUS"), ctx({ keep: ["rail"] }))).toBeNull();
     expect(classifyRoute(r(2, "560A", "IC", "SNCF VOYAGEURS"), ctx({ country: "FR" }))?.cls).toBe("rail");
+    // operator-specific categories (SNCF CTE / CRE) need the operator adapter (operators.test.ts)
+    expect(classifyRoute(r(2, "P15", "CTE", "SNCF VOYAGEURS", "Colmar - Metzeral"), ctx({ country: "FR" }))?.cls).toBe("rail");
   });
-  it("flags reservation-only coaches (SNCF CRE) on rail routes only", () => {
-    const cre = classifyRoute(r(2, "180A", "CRE", "SNCF VOYAGEURS", "Bordeaux - Marseille"), ctx({ country: "FR" }))!;
-    expect(cre.flags & Flag.ReservationOnly).toBeTruthy();
-    expect(cre.flags & Flag.Night).toBe(0);
-    // CRE trips on bus routes (TGV station shuttles "Navettes Lorraine TGV") are sold with the train: no caveat
-    expect(classifyRoute(r(3, "E02", "CRE", "SNCF VOYAGEURS", "Navettes Lorraine TGV - Nancy"), ctx({ country: "FR" }))?.flags).toBe(0);
+  it("applies operator hooks around the generic rules", () => {
+    const hooks = { before: () => ({ mode: "bus" as const, flags: Flag.ReservationOnly }) };
+    expect(classifyRoute(r(2, "X", "ZZ"), ctx({ hooks }))).toEqual({ cls: "bus", cat: Cat.Bus, flags: Flag.ReservationOnly });
+    // the forced mode still goes through the feed's keep list and the replacement filter
+    expect(classifyRoute(r(2, "X", "ZZ"), ctx({ hooks, keep: ["rail"] }))).toBeNull();
+    expect(classifyRoute(r(2, "SEV", "ZZ"), ctx({ hooks }))).toBeNull();
+    // after: replace, drop (null) or keep (undefined); railCatDefault applies after it
+    expect(classifyRoute(r(2, "RE1"), ctx({ hooks: { after: (_r, cl) => ({ ...cl, cat: null }) }, opts: { railCatDefault: "LongDistance" } }))?.cat).toBe(Cat.LongDistance);
+    expect(classifyRoute(r(2, "RE1"), ctx({ hooks: { after: () => null } }))).toBeNull();
+    expect(classifyRoute(r(2, "RE1"), ctx({ hooks: { after: () => undefined } }))?.cat).toBe(Cat.Regional);
   });
 });
 
@@ -148,8 +152,10 @@ describe("isHighSpeedService", () => {
     expect(hs(["AVE"], "RENFE OPERADORA")).toBe(true);
     expect(hs(["FR", "Frecciarossa"], "TRENITALIA")).toBe(true);
     expect(hs([""], "SBB", 101)).toBe(true);
-    expect(hs(["Paris-Gare-de-Lyon/Lyon-Perrache"], "Trenitalia")).toBe(true);
-    expect(hs(["FRPNO -> GBSPX"], "Eurostar")).toBe(true);
+    // unbranded routes are high-speed only when an operator adapter says so (trenitalia.ts, eurostar.ts)
+    expect(hs(["Paris-Gare-de-Lyon/Lyon-Perrache"], "Trenitalia")).toBe(false);
+    expect(isHighSpeedService({ routeType: 2, agency: "Trenitalia", names: ["Paris-Gare-de-Lyon/Lyon-Perrache"], highSpeed: true })).toBe(true);
+    expect(isHighSpeedService({ routeType: 2, agency: "X", names: ["OUIGO Train Classique"], highSpeed: true })).toBe(false);
   });
   it("leaves conventional trains out", () => {
     expect(hs(["Intercités de nuit", "Paris - Nice"], "SNCF VOYAGEURS")).toBe(false);

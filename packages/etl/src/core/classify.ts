@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Cat, Flag } from "@etbm/shared";
 import type { FeedOptions, ModeClass } from "../feeds.ts";
 
@@ -24,65 +27,72 @@ export interface ClassifyContext {
   country: string;
   coachRe: RegExp;
   urbanRe: RegExp | null;
+  /** Operator adapters for this route (operators/registry.ts FeedOperators.classifyHooks). */
+  hooks?: RouteHooks;
+}
+
+/** Operator-adapter hooks around the generic rules (see operators/types.ts ClassifyHooks). */
+export interface RouteHooks {
+  /** Before the generic rules: force the mode class and add flags. */
+  before?(r: RouteInfo, mode: ModeClass): { mode?: ModeClass; flags?: number } | undefined;
+  /** After the generic rules (before railCatDefault): a new classification, null = drop, undefined = keep. */
+  after?(r: RouteInfo, cl: Classification): Classification | null | undefined;
+}
+
+/** A keyword pattern of data/classify-keywords.json: {words} = \b(a|b|…)\b, {any} = (a|b|…), {regex} = as written. */
+interface KeywordPattern {
+  words?: string[];
+  any?: string[];
+  regex?: string;
+  flags?: string;
+}
+interface Keywords {
+  trainCategories: { longDistance: string[]; longDistanceCaseSensitive: string[]; regional: string[]; night: string[] };
+  roadTripCategories: { list: string[] };
+  nightNames: KeywordPattern;
+  longDistanceOperators: KeywordPattern;
+  regionalOperators: KeywordPattern;
+  replacementNames: KeywordPattern;
+  replacementNamesCaseSensitive: KeywordPattern;
+  replacementHeadsigns: KeywordPattern;
+  railLineCode: KeywordPattern;
+  highSpeedBrands: KeywordPattern;
+  notHighSpeed: KeywordPattern;
+}
+
+/** Generic multilingual keyword lists (train categories, brands, rail-replacement wording): data, not code. */
+const KW = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../data/classify-keywords.json"), "utf8")) as Keywords;
+
+function kwRe(p: KeywordPattern): RegExp {
+  const src = p.regex ?? (p.words ? `\\b(${p.words.join("|")})\\b` : `(${p.any!.join("|")})`);
+  return new RegExp(src, p.flags ?? "");
 }
 
 // Train category tokens (case-insensitive unless noted).
-const LD_TOKENS = new Set(
-  [
-    "ice", "ic", "ec", "oui", "ogo", "lyr", "ece", "en", "nj", "ej", "rj", "rjx", "tgv", "inoui", "ouigo", "est", "eurostar", "thalys", "tha",
-    "ave", "avlo", "alvia", "av", "avant", "euromed", "iryo", "fr", "fa", "fb", "ita", "italo", "frecciarossa", "frecciargento",
-    "frecciabianca", "icn", "ir", "yht", "eic", "eip", "tlk", "ex", "exp", "express", "sc", "le", "d", "flx", "flixtrain",
-    "intercity", "eurocity", "eurocity-express", "nightjet", "euronight", "railjet", "ics", "icd", "es",
-    "x2000", "sj", "snabbtag", "snabbtåg", "icl", "pendolino", "westbahn", "wb", "rjc", "mtx", "ic-bus",
-    "intercites", "intercités", "ter-ic", "lyria", "ecm", "icm", "iry", "ic2",
-    "regiojet", "leo", "arenaways", "lumo", "ecr", "fernverkehr",
-    "icp", "ice-l",
-  ].map((s) => s.toLowerCase()),
-);
-const LD_CASE_SENSITIVE = new Set(["rj", "RJ", "RJX"]); // regiojet "rj" (CZ) and railjet "RJ" are both long distance
-const REG_TOKENS = new Set(
-  [
-    "re", "rb", "ire", "s", "ter", "r", "rx", "os", "sp", "mex", "rex", "cjx", "regio", "rs", "rer", "tl", "tlx", "er", "rr",
-    "tt", "trn", "skm", "km", "kd", "lka", "ska", "pr", "reg", "regional", "regionalzug", "regionalexpress", "regionalbahn", "sbahn",
-    "s-bahn", "sprinter", "stoptrein", "sneltrein", "local", "l", "lt", "trn", "rgt", "slp", "p", "ag", "erx", "brb", "alx",
-    "vias", "nwb", "mrb", "rbx", "rt", "rex", "cjx", "atb", "rv", "rf", "rg", "ir-reg", "ter200", "transilien", "train-ter",
-    "rgx", "kml", "ks", "osobni", "hex", "fex", "rpx", "cityjet", "pe",
-    "regionale", "suburbano", "cercanias", "cercanías", "c", "md", "rodalies", "elron",
-  ].map((s) => s.toLowerCase()),
-);
-const NIGHT_TOKENS = new Set(["nj", "en", "ej", "nightjet", "euronight", "sleeper", "cn"]);
-const NIGHT_RE = /\b(nightjet|night\s*train|nachtzug|sleeper|euronight|intercit[eé]s de nuit|nattåg|natttog|nocny|nočný|nočni|lehátkový|cuccette|tren hotel|european sleeper|snälltåget.*natt|caledonian sleeper|night riviera)\b/i;
+const LD_TOKENS = new Set(KW.trainCategories.longDistance.map((s) => s.toLowerCase()));
+const LD_CASE_SENSITIVE = new Set(KW.trainCategories.longDistanceCaseSensitive); // regiojet "rj" (CZ) and railjet "RJ" are both long distance
+const REG_TOKENS = new Set(KW.trainCategories.regional.map((s) => s.toLowerCase()));
+const NIGHT_TOKENS = new Set(KW.trainCategories.night);
+const NIGHT_RE = kwRe(KW.nightNames);
 
 /** Operators whose rail services are long distance whatever the route_type. */
-const LD_OPERATORS = /\b(lner|avanti|crosscountry|cross country|grand central|hull trains|lumo|transpennine|caledonian sleeper|eurostar|thalys|ouigo|italo|iryo|westbahn|regiojet|leo express|flixtrain|european sleeper|nightjet|snälltåget|sj\b|vy tog.*fjern|ns international|ic\b|intercity|pkp intercity|db fernverkehr|öbb.*fern|renfe viajeros.*ave|ave\b|trenitalia france|tgv|alstom)\b/i;
-const REG_OPERATORS = /\b(northern|southern|southeastern|thameslink|great northern|c2c|merseyrail|london overground|elizabeth line|island line|scotrail|transport for wales|tfw rail|west midlands|london northwestern|chiltern|greater anglia|south western|gwr|emr|heathrow express|gatwick express|stansted express|s-bahn|regionalverkehr|regio\b|transilien|ter\b|koleje|przewozy regionalne|polregio|skm|elron|pågatåg|øresundståg|go-ahead)\b/i;
+const LD_OPERATORS = kwRe(KW.longDistanceOperators);
+const REG_OPERATORS = kwRe(KW.regionalOperators);
 
 /**
- * Trip categories that are road vehicles even when the route is a rail route (route_type 2): SNCF puts its
- * TER coaches ("CTE", Car TER) and reservation coaches ("CRE", Car à réservation, e.g. an Intercités line
- * run by coach during engineering works) on the train lines they serve, Irish Rail numbers its buses on
- * rail routes "BUS123". Such trips are classified as buses, not as trains.
+ * Trip categories that are road vehicles even when the route is a rail route (route_type 2): a trip category "BUS"
+ * (Irish Rail numbers its buses on rail routes "BUS123"), "Car", "Autocar", "Autobus". Such trips are classified as
+ * buses, not as trains. Operator-specific categories (SNCF CTE / CRE) are in the operator adapters.
  */
-const ROAD_TRIP_PREFIXES = new Set(["bus", "car", "cte", "cre", "autocar", "autobus"]);
-
-/**
- * Trip categories of reservation-only services: SNCF's "car à réservation" (CRE) is sold on request and is
- * often missing from the usual booking sites (e.g. "Car 60003" Paris – Cahors on a holiday weekend while the
- * Intercités trains of the line run as usual). They are kept, with a booking caveat (Flag.ReservationOnly).
- */
-const RESERVATION_TRIP_PREFIXES = new Set(["cre"]);
+const ROAD_TRIP_PREFIXES = new Set(KW.roadTripCategories.list);
 
 /**
  * Rail-replacement / special buses we never want, by route name, route description or agency (DELFI "DB SEV GmbH",
- * "Bus SEV, nur Abellio …"): DE/AT/CH SEV, Schienenersatzverkehr, EV, Bahnersatz; NL "(Snel/Stop)bus ipv trein",
- * treinvervangend vervoer; DK togbus; NO buss for tog; SE ersättningsbuss / tågersättning; CZ / SK náhradní /
- * náhradná (autobusová) doprava; PL ZKA (zastępcza komunikacja autobusowa); HU (vonat)pótló busz; IT bus / autobus
- * sostitutivo; FR / BE bus de substitution / de remplacement; ES autobús sustitutorio / de sustitución.
+ * "Bus SEV, nur Abellio …"), in every country's wording (data/classify-keywords.json, replacementNames).
  */
-const REPLACEMENT_RE =
-  /(\bsev\b(?!\.)|schienenersatz|ersatzverkehr|bahnersatz|\bev\d*\b|rail replacement|replacement bus|bus replacement|treinvervangend|\bipv\.? trein|in plaats van (de )?trein|\btogbus|buss for tog|ersättningsbuss|tågersättning|\bnáhradní|\bnáhradná|\bnahradna|\bzka\b|zastępcza|pótlóbusz|pótló busz|vonatpótló|bus de substitution|bus de remplacement|car de substitution|car de remplacement|bus sostitutivo|autobus sostitutivo|autobús sustitutorio|de sustitución|substitution|ersatzbus|\bsv\s?\d)/i;
+const REPLACEMENT_RE = kwRe(KW.replacementNames);
 /** Case-sensitive markers: CZ / SK "NAD" (náhradní autobusová doprava; "nad" is also the Czech "above"), PL "ZKA". */
-const REPLACEMENT_CS_RE = /(^|[\s(/,-])(NAD|ZKA|SEV)($|[\s)/,.-])/;
+const REPLACEMENT_CS_RE = kwRe(KW.replacementNamesCaseSensitive);
 
 /** True for route names / descriptions / agency names that mark a rail-replacement bus. */
 export function isReplacementName(...texts: string[]): boolean {
@@ -94,15 +104,14 @@ export function isReplacementName(...texts: string[]): boolean {
  * SEV, Weilerswist", Rejseplanen "Nykøbing F St. (togbus)"). Stricter than the route-name test: headsigns are place
  * names, so "Ev. Kirche" (evangelische) or a Slovenian "Planina/Sev." must not match.
  */
-export const REPLACEMENT_HEADSIGN_RE =
-  /(\bSEV\b|\(EV\)|\bSEV-|[Ss]chienenersatz|SCHIENENERSATZ|[Ee]rsatzverkehr|[Bb]ahnersatz|\btogbus\b|\bbuss for tog\b|\bipv trein\b|[Tt]reinvervangend|[Ee]rsättningsbuss|\bNAD\b|\bZKA\b|vonatpótló|pótlóbusz)/;
+export const REPLACEMENT_HEADSIGN_RE = kwRe(KW.replacementHeadsigns);
 
 /**
  * Line codes of trains (German / Austrian / Swiss style: RE 7, RB81X, S1EV, MEX17E, IRE3): a bus route with such a
  * name whose agency runs trains in the same country is a rail-replacement bus (DELFI publishes SEV buses as bus
  * routes "RE1" of the railway's agency, or of "Nahreisezug"). See build.ts (replacement buses).
  */
-export const RAIL_LINE_CODE_RE = /^(RE|RB|RS|S|MEX|IRE|RBX|HBX|ERB)\s?\d{1,3}[A-Za-z]{0,3}$/;
+export const RAIL_LINE_CODE_RE = kwRe(KW.railLineCode);
 
 export function tokenOf(s: string): string {
   const m = /^\s*([A-Za-zÀ-ž][A-Za-zÀ-ž\-]{0,15})/.exec(s);
@@ -137,14 +146,22 @@ export function modeOfRouteType(t: number): ModeClass | null {
  * Returns null if the route should be dropped.
  */
 export function classifyRoute(r: RouteInfo, ctx: ClassifyContext): Classification | null {
+  const cl = classifyGeneric(r, ctx);
+  if (!cl) return null;
+  const out = ctx.hooks?.after ? ctx.hooks.after(r, cl) : undefined;
+  const res = out === undefined ? cl : out;
+  if (res && res.cls === "rail" && res.cat == null && ctx.opts.railCatDefault) return { ...res, cat: Cat[ctx.opts.railCatDefault] };
+  return res;
+}
+
+function classifyGeneric(r: RouteInfo, ctx: ClassifyContext): Classification | null {
   let mode = modeOfRouteType(r.routeType);
   if (!mode) return null;
   const prefix = r.tripPrefix.toLowerCase();
-  let roadFlags = 0;
-  if (mode === "rail" && ROAD_TRIP_PREFIXES.has(prefix)) {
-    mode = "bus";
-    if (RESERVATION_TRIP_PREFIXES.has(prefix)) roadFlags |= Flag.ReservationOnly;
-  }
+  const ov = ctx.hooks?.before?.(r, mode);
+  let roadFlags = ov?.flags ?? 0;
+  if (ov?.mode) mode = ov.mode;
+  else if (mode === "rail" && ROAD_TRIP_PREFIXES.has(prefix)) mode = "bus";
   const allNames = `${r.shortName} ${r.longName} ${r.desc}`;
   const { opts } = ctx;
   // replacement buses, also when published as a train (ŽSR "Os 14281" with the long name "NAD")
@@ -164,7 +181,7 @@ export function classifyRoute(r: RouteInfo, ctx: ClassifyContext): Classificatio
   if (mode === "bus") return { cls: "bus", cat: Cat.Bus, flags: roadFlags };
 
   // ---- rail ----
-  let flags = 0;
+  let flags = roadFlags;
   const tokTrip = r.tripPrefix;
   const tokShort = tokenOf(r.shortName);
   const tokDesc = tokenOf(r.desc);
@@ -208,10 +225,6 @@ export function classifyRoute(r: RouteInfo, ctx: ClassifyContext): Classificatio
     if (REG_OPERATORS.test(r.agency) || REG_OPERATORS.test(allNames)) cat = Cat.Regional;
     else if (LD_OPERATORS.test(r.agency) || LD_OPERATORS.test(allNames)) cat = Cat.LongDistance;
   }
-  // Mixed operators (GWR, EMR, ScotRail…) are left ambiguous when only matched by operator name in GB.
-  if (cat === Cat.Regional && ctx.country === "GB" && /\b(gwr|emr|scotrail|transport for wales|tfw)\b/i.test(r.agency + " " + allNames)) cat = null;
-
-  if (cat == null && opts.railCatDefault) cat = Cat[opts.railCatDefault];
   return { cls: "rail", cat, flags };
 }
 
@@ -220,16 +233,19 @@ export function classifyRoute(r: RouteInfo, ctx: ClassifyContext): Classificatio
  * HSL, HS1), or GTFS route_type 101. Used only to steer rail geometry (geometry/guide.ts): other
  * trains are kept off the lines named as high-speed lines unless their timetable needs them.
  */
-const HS_RE = /\b(tgv|inoui|ouigo|lyria|ice|eurostar|thalys|ave|avlo|alvia|avant|euromed|iryo|frecciarossa|frecciargento|italo|intercity direct|eurocity direct|railjet|rjx)\b/i;
+const HS_RE = kwRe(KW.highSpeedBrands);
 /** Brand names that look high-speed but are not ("OUIGO Train Classique" runs on classic lines). */
-const NOT_HS_RE = /\b(train classique|intercit[ée]s|ter)\b/i;
+const NOT_HS_RE = kwRe(KW.notHighSpeed);
 
-export function isHighSpeedService(r: { routeType?: number | null; agency: string; names: string[] }): boolean {
+/**
+ * `highSpeed`: an operator adapter says the route is a high-speed service although its names carry no brand
+ * (operators/*.ts route hook, e.g. an operator that names its routes after the end stations only).
+ */
+export function isHighSpeedService(r: { routeType?: number | null; agency: string; names: string[]; highSpeed?: boolean }): boolean {
   const text = r.names.filter(Boolean).join(" ");
   if (NOT_HS_RE.test(text)) return false;
   if (r.routeType === 101) return true;
-  // Trenitalia France (Paris – Lyon – Milano Frecciarossa) names its routes after the end stations only
-  if (r.agency === "Trenitalia" || /^eurostar\b/i.test(r.agency)) return true;
+  if (r.highSpeed) return true;
   return HS_RE.test(text);
 }
 

@@ -1,0 +1,115 @@
+{
+  "$comment": [
+    "Generic, multilingual keyword lists of the route classifier (src/core/classify.ts). They apply to every feed:",
+    "train category tokens, brand and operator names that say long distance / regional / night / high speed, and the",
+    "wording of rail-replacement buses in each language. Rules for one operator or feed belong in an operator adapter",
+    "(packages/etl/operators/), not here. Patterns: {words} = \\b(a|b|…)\\b, {any} = (a|b|…), {regex} = as written."
+  ],
+  "trainCategories": {
+    "$comment": "Alphabetic train category tokens (trip_short_name prefix, first word of route names), case-insensitive except longDistanceCaseSensitive.",
+    "longDistance": [
+      "ice", "ic", "ec", "oui", "ogo", "lyr", "ece", "en", "nj", "ej", "rj", "rjx", "tgv", "inoui", "ouigo", "est",
+      "eurostar", "thalys", "tha", "ave", "avlo", "alvia", "av", "avant", "euromed", "iryo", "fr", "fa", "fb", "ita",
+      "italo", "frecciarossa", "frecciargento", "frecciabianca", "icn", "ir", "yht", "eic", "eip", "tlk", "ex",
+      "exp", "express", "sc", "le", "d", "flx", "flixtrain", "intercity", "eurocity", "eurocity-express", "nightjet",
+      "euronight", "railjet", "ics", "icd", "es", "x2000", "sj", "snabbtag", "snabbtåg", "icl", "pendolino",
+      "westbahn", "wb", "rjc", "mtx", "ic-bus", "intercites", "intercités", "ter-ic", "lyria", "ecm", "icm", "iry",
+      "ic2", "regiojet", "leo", "arenaways", "lumo", "ecr", "fernverkehr", "icp", "ice-l"
+    ],
+    "longDistanceCaseSensitive": [
+      "rj", "RJ", "RJX"
+    ],
+    "regional": [
+      "re", "rb", "ire", "s", "ter", "r", "rx", "os", "sp", "mex", "rex", "cjx", "regio", "rs", "rer", "tl", "tlx",
+      "er", "rr", "tt", "trn", "skm", "km", "kd", "lka", "ska", "pr", "reg", "regional", "regionalzug",
+      "regionalexpress", "regionalbahn", "sbahn", "s-bahn", "sprinter", "stoptrein", "sneltrein", "local", "l", "lt",
+      "trn", "rgt", "slp", "p", "ag", "erx", "brb", "alx", "vias", "nwb", "mrb", "rbx", "rt", "rex", "cjx", "atb",
+      "rv", "rf", "rg", "ir-reg", "ter200", "transilien", "train-ter", "rgx", "kml", "ks", "osobni", "hex", "fex",
+      "rpx", "cityjet", "pe", "regionale", "suburbano", "cercanias", "cercanías", "c", "md", "rodalies", "elron"
+    ],
+    "night": [
+      "nj", "en", "ej", "nightjet", "euronight", "sleeper", "cn"
+    ]
+  },
+  "roadTripCategories": {
+    "$comment": "Trip categories that mean a road vehicle even on a rail route (route_type 2): bus / coach in any language (Irish Rail 'BUS123', French 'Car').",
+    "list": [
+      "bus", "car", "autocar", "autobus"
+    ]
+  },
+  "nightNames": {
+    "$comment": "Night trains by name or agency.",
+    "words": [
+      "nightjet", "night\\s*train", "nachtzug", "sleeper", "euronight", "intercit[eé]s de nuit", "nattåg", "natttog",
+      "nocny", "nočný", "nočni", "lehátkový", "cuccette", "tren hotel", "european sleeper", "snälltåget.*natt",
+      "caledonian sleeper", "night riviera"
+    ],
+    "flags": "i"
+  },
+  "longDistanceOperators": {
+    "$comment": "Operators whose rail services are long distance whatever the route_type.",
+    "words": [
+      "lner", "avanti", "crosscountry", "cross country", "grand central", "hull trains", "lumo", "transpennine",
+      "caledonian sleeper", "eurostar", "thalys", "ouigo", "italo", "iryo", "westbahn", "regiojet", "leo express",
+      "flixtrain", "european sleeper", "nightjet", "snälltåget", "sj\\b", "vy tog.*fjern", "ns international",
+      "ic\\b", "intercity", "pkp intercity", "db fernverkehr", "öbb.*fern", "renfe viajeros.*ave", "ave\\b",
+      "trenitalia france", "tgv", "alstom"
+    ],
+    "flags": "i"
+  },
+  "regionalOperators": {
+    "$comment": "Operators whose rail services are regional.",
+    "words": [
+      "northern", "southern", "southeastern", "thameslink", "great northern", "c2c", "merseyrail",
+      "london overground", "elizabeth line", "island line", "scotrail", "transport for wales", "tfw rail",
+      "west midlands", "london northwestern", "chiltern", "greater anglia", "south western", "gwr", "emr",
+      "heathrow express", "gatwick express", "stansted express", "s-bahn", "regionalverkehr", "regio\\b",
+      "transilien", "ter\\b", "koleje", "przewozy regionalne", "polregio", "skm", "elron", "pågatåg", "øresundståg",
+      "go-ahead"
+    ],
+    "flags": "i"
+  },
+  "replacementNames": {
+    "$comment": "Rail-replacement / special buses by route name, description or agency: DE/AT/CH SEV, Schienenersatzverkehr, EV, Bahnersatz; NL (Snel/Stop)bus ipv trein, treinvervangend vervoer; DK togbus; NO buss for tog; SE ersättningsbuss / tågersättning; CZ / SK náhradní / náhradná doprava; PL ZKA; HU (vonat)pótló busz; IT bus / autobus sostitutivo; FR / BE bus de substitution / de remplacement; ES autobús sustitutorio / de sustitución.",
+    "any": [
+      "\\bsev\\b(?!\\.)", "schienenersatz", "ersatzverkehr", "bahnersatz", "\\bev\\d*\\b", "rail replacement",
+      "replacement bus", "bus replacement", "treinvervangend", "\\bipv\\.? trein", "in plaats van (de )?trein",
+      "\\btogbus", "buss for tog", "ersättningsbuss", "tågersättning", "\\bnáhradní", "\\bnáhradná", "\\bnahradna",
+      "\\bzka\\b", "zastępcza", "pótlóbusz", "pótló busz", "vonatpótló", "bus de substitution",
+      "bus de remplacement", "car de substitution", "car de remplacement", "bus sostitutivo", "autobus sostitutivo",
+      "autobús sustitutorio", "de sustitución", "substitution", "ersatzbus", "\\bsv\\s?\\d"
+    ],
+    "flags": "i"
+  },
+  "replacementNamesCaseSensitive": {
+    "$comment": "Case-sensitive markers: CZ / SK NAD (náhradní autobusová doprava; 'nad' is also Czech 'above'), PL ZKA, SEV.",
+    "regex": "(^|[\\s(/,-])(NAD|ZKA|SEV)($|[\\s)/,.-])"
+  },
+  "replacementHeadsigns": {
+    "$comment": "Trip headsigns of rail-replacement buses under an ordinary line ('Gera Hbf (SEV)', 'Nykøbing F St. (togbus)'). Stricter than the names: headsigns are place names ('Ev. Kirche', 'Planina/Sev.' must not match). Used in DuckDB regexp_matches, so no flags.",
+    "any": [
+      "\\bSEV\\b", "\\(EV\\)", "\\bSEV-", "[Ss]chienenersatz", "SCHIENENERSATZ", "[Ee]rsatzverkehr", "[Bb]ahnersatz",
+      "\\btogbus\\b", "\\bbuss for tog\\b", "\\bipv trein\\b", "[Tt]reinvervangend", "[Ee]rsättningsbuss",
+      "\\bNAD\\b", "\\bZKA\\b", "vonatpótló", "pótlóbusz"
+    ]
+  },
+  "railLineCode": {
+    "$comment": "Line codes of trains (RE 7, RB81X, S1EV, MEX17E, IRE3): a bus route with such a name whose agency runs trains in the same country is a rail-replacement bus.",
+    "regex": "^(RE|RB|RS|S|MEX|IRE|RBX|HBX|ERB)\\s?\\d{1,3}[A-Za-z]{0,3}$"
+  },
+  "highSpeedBrands": {
+    "$comment": "Train brands built for high-speed lines (steer rail geometry only).",
+    "words": [
+      "tgv", "inoui", "ouigo", "lyria", "ice", "eurostar", "thalys", "ave", "avlo", "alvia", "avant", "euromed",
+      "iryo", "frecciarossa", "frecciargento", "italo", "intercity direct", "eurocity direct", "railjet", "rjx"
+    ],
+    "flags": "i"
+  },
+  "notHighSpeed": {
+    "$comment": "Brand names that look high-speed but are not ('OUIGO Train Classique').",
+    "words": [
+      "train classique", "intercit[ée]s", "ter"
+    ],
+    "flags": "i"
+  }
+}

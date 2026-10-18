@@ -87,8 +87,10 @@ describe("routeBrand", () => {
     expect(routeBrand("AVLO", "Renfe", Cat.LongDistance)).toBe("AVLO");
   });
   it("gives the operator (or its brand) for a route named only by where it runs", () => {
-    expect(routeBrand("Paris-Gare-de-Lyon/Marseille-St-Charles", "Trenitalia", Cat.LongDistance)).toBe("Frecciarossa");
-    expect(routeBrand("Milano Centrale/Paris-Gare-de-Lyon", "Trenitalia France", Cat.LongDistance)).toBe("Frecciarossa");
+    // the brand of such a route comes from an operator adapter (Route.brand), else the agency
+    expect(routeBrand("Paris-Gare-de-Lyon/Marseille-St-Charles", "Trenitalia", Cat.LongDistance, "Frecciarossa")).toBe("Frecciarossa");
+    expect(routeBrand("Milano Centrale/Paris-Gare-de-Lyon", "Trenitalia France", Cat.LongDistance)).toBe("Trenitalia France");
+    expect(routeBrand("FR 9541", "Trenitalia", Cat.LongDistance, "Frecciarossa")).toBe("FR");
     expect(routeBrand("Belfast Great Central - Portrush", "Translink Northern Ireland Rail", Cat.Regional)).toBe("Translink Northern Ireland Rail");
     expect(routeBrand("ANKARA GAR - KARS (ANAHAT)", "TCDD Taşımacılık A.Ş.", Cat.LongDistance)).toBe("TCDD Taşımacılık A.Ş.");
     // a brand before the route description stays; names with numbers are not "where it runs"

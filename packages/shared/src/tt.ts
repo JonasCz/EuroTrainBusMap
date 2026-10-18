@@ -46,14 +46,14 @@ export interface TtIndex {
  * "FlixBus", "IC 850 TÓPART" → "IC", "RE 7" → "RE") and before a route description ("ALSA - Irun-Tuy" → "ALSA");
  * a name that is only a line code ("S1", "C2", "7"), regional rail named by a mission code ("QIWI"), or a name that only
  * says where the route runs ("Paris-Gare-de-Lyon/Marseille-St-Charles", "Belfast Great Central - Portrush") gives the
- * agency (or its brand: Trenitalia's high-speed trains are "Frecciarossa").
+ * route's brand (Route.brand, from an operator adapter of the ETL: Trenitalia's "Frecciarossa") or else its agency.
  */
-export function routeBrand(name: string, agency = "", cat = 0): string {
+export function routeBrand(name: string, agency = "", cat = 0, brand = ""): string {
   // regional rail named by its mission code (RER / Transilien "QIWI", "KALI"): the agency
   if (cat === 2 && /^[A-Z]{4}$/.test(name.trim())) return agency.trim() || name.trim();
   // a route named only by where it runs ("Paris-Gare-de-Lyon/Marseille-St-Charles"): the operator's brand
   const ends = endpointsName(name);
-  if (ends && agency.trim() && !related(ends[0], agency)) return agencyBrand(agency, cat);
+  if (ends && agency.trim() && !related(ends[0], agency)) return brand.trim() || agency.trim();
   const words = name.trim().split(/\s+/);
   const i = words.findIndex((w) => /\d/.test(w));
   let b = (i >= 0 ? words.slice(0, i) : words).join(" ");
@@ -81,14 +81,6 @@ export function endpointsName(name: string): [string, string] | null {
 function related(part: string, agency: string): boolean {
   const a = part.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim(), b = agency.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   return !!a && !!b && (` ${b} `.includes(` ${a} `) || ` ${a} `.includes(` ${b} `));
-}
-
-/** Brands of operators whose services are only named by their ends (Trenitalia France runs only Frecciarossa trains). */
-const AGENCY_BRANDS: { agency: RegExp; cat: number; brand: string }[] = [{ agency: /^trenitalia(\s+france)?$/i, cat: 1, brand: "Frecciarossa" }];
-
-function agencyBrand(agency: string, cat: number): string {
-  const a = agency.trim();
-  return AGENCY_BRANDS.find((x) => x.cat === cat && x.agency.test(a))?.brand ?? a;
 }
 
 export const TT_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-";

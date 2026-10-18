@@ -104,7 +104,7 @@ async function main() {
   const failed: string[] = [];
   const stateFile = join(args.work, "db-state.json");
   const cfgText = await readFile(join(here, "..", "feeds.json"), "utf8");
-  const stateKey = JSON.stringify({ feeds: feeds.map((f) => f.key), start: args.startDate, days: args.days, tiers: args.tiers, load: LOAD_VERSION, cfgLen: cfgText.length, cfgHash: cfgText.split("").reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7) });
+  const stateKey = JSON.stringify({ feeds: feeds.map((f) => f.key), start: args.startDate, days: args.days, tiers: args.tiers, load: LOAD_VERSION, cfgLen: cfgText.length, cfgHash: cfgText.split("").reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7), ops: cfg.operators?.loadFingerprint() ?? 0 });
   let reuse = false;
   if (args.reuseDb && existsSync(dbPath) && existsSync(stateFile)) {
     const st = JSON.parse(await readFile(stateFile, "utf8"));
@@ -176,6 +176,9 @@ async function main() {
       if (st) feedStats.push(st);
       if (!st) failed.push(rf.key);
     }
+    // what the operator adapters changed while loading (kept with the database for --reuse-db runs)
+    const opRows = cfg.operators?.summaryRows() ?? [];
+    if (opRows.length) await db.insertRows("operator_log", [{ name: "adapter", type: "VARCHAR" }, { name: "feed", type: "VARCHAR" }, { name: "field", type: "VARCHAR" }, { name: "n", type: "INTEGER" }], opRows, join(tmpDir, "operator_log.csv"));
     await db.run("CHECKPOINT");
     await writeFile(stateFile, JSON.stringify({ key: stateKey, feedStats }));
   }

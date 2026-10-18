@@ -214,6 +214,11 @@ export interface Route {
   flags: number;
   /** Hex colour without '#', if provided by the feed. */
   color?: string;
+  /**
+   * Brand of an operator that names its routes only by where they run ("Paris-Gare-de-Lyon/Marseille-St-Charles"
+   * → "Frecciarossa"), set by an operator adapter of the ETL (packages/etl/operators); see routeBrand.
+   */
+  brand?: string;
 }
 
 /**

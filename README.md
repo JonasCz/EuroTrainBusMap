@@ -14,6 +14,9 @@ packages/
   shared/   schema.ts – the data contract (Manifest, NetworkFile, CityFile, …) + pack.ts (compact network encoding)
   etl/      data pipeline (Node 22 + DuckDB): GTFS feeds → static JSON
     feeds.json          data-driven feed list (Transitous mirror + Mobility Database fallbacks, per-feed options)
+    operators/          operator adapters: one re-runnable script per operator for what is not a generic rule
+                        (SNCF coach categories, Entur replacement trains, Trenitalia brand, ZOU! feed…; see its README)
+    data/classify-keywords.json  generic multilingual keyword lists of the route classifier
     src/cli.ts          `build-data` entry: download → load (DuckDB) → build
     src/gtfs/load.ts    per-feed loading: only kept routes/trips/stop_times/stops, calendars → service days
     src/build.ts        cities, stations, dedup, patterns, corridors, geometry, output, sanity
@@ -34,7 +37,10 @@ Pipeline in short:
 2. **Load** – each zip is unzipped, filtered and loaded into a DuckDB file, then deleted. Kept:
    heavy rail (long distance, regional/suburban), coaches and *intercity* buses (≥ 15 km span,
    urban modes/operators dropped). Rail is classified LongDistance/Regional from extended route types,
-   train category tokens and operators; the night-train flag is set.
+   train category tokens and operators (keyword lists in `data/classify-keywords.json`); the night-train flag is set.
+   Operator-specific fixes (a feed's coach categories on rail routes, its replacement trains, extra feeds) are operator
+   adapters (`packages/etl/operators/`, one file per operator, applied in id order and refused when two touch the
+   same value).
 3. **Stations** (`core/stations.ts`) – stops are merged into stations first, purely spatially, from several weak
    signals, none trusted alone: the feed's `parent_station` (explicit but rarely maintained), *near* (≤ 60 m always;
    ≤ 150 m when a rail stop is involved, shrinking to 100 / 70 m where many differently named stops lie around, so
@@ -69,7 +75,7 @@ Pipeline in short:
 5. **Dedup** – the same train/coach present in several feeds (DE+AT+CH+CZ…) is detected by matching
    (city, time) sequences and kept once, with merged calendars. The kept trip also takes the boarding / alighting
    restrictions of the dropped copies, and of the copies a feed leaves to a dedicated operator's feed
-   (`dedicatedOperators`; kept by the loader as `limit_hints`): the more restrictive copy wins. The Eurostar feed lets
+   (`exclusive` in the operator adapters, `packages/etl/operators/`; kept by the loader as `limit_hints`): the more restrictive copy wins. The Eurostar feed lets
    anyone ride Rotterdam → Amsterdam, NS's copy in nl-openov (no domestic travel) does not.
 6. **Patterns & trips** – station sequences with offsets, deduplicated (a bus pattern keeps the stops in named places (towns and
    villages, `busPlace`), one main stop per smaller town and the entry / exit stops of a big city; the stops it leaves out are kept with

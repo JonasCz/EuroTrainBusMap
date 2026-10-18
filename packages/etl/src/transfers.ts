@@ -34,7 +34,7 @@ export class TransferCollector {
       const cat = route?.cat ?? Cat.Bus;
       const tz = cf.patternTz[i] ?? 0;
       // regional buses: the mode is enough (route names are line numbers or place lists)
-      const bn = route && cat !== Cat.Bus ? routeBrand(route.name, route.agency, cat) : "";
+      const bn = route && cat !== Cat.Bus ? routeBrand(route.name, route.agency, cat, route.brand) : "";
       let brand = this.brands.get(bn);
       if (brand === undefined) this.brands.set(bn, (brand = this.brands.size));
       const key = `${cat}|${tz}|${brand}|${p.stations.join(",")}|${p.arr.join(",")}|${p.dep.join(",")}|${(p.limits ?? []).join(",")}`;

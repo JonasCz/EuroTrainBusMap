@@ -1,7 +1,12 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { fetchText } from "./download.ts";
 import { warn } from "./util/log.ts";
+import { applyOperators, loadOperatorFiles, type OperatorRegistry } from "./operators/registry.ts";
+
+/** Operator adapters (one file per operator; see the README there). */
+export const OPERATORS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "operators");
 
 export type ModeClass = "rail" | "coach" | "bus";
 export type Tier = "core" | "bus";
@@ -28,11 +33,6 @@ export interface FeedOptions {
   dropAgencies?: string;
   /** Regex on agency name: keep only these routes. */
   onlyAgencies?: string;
-  /**
-   * Regex (case-insensitive) on agency name: the bus / coach routes of these agencies are rail-replacement buses
-   * (train operators whose buses only replace their trains, e.g. SJ, Mälartåg) and are dropped; their trains are kept.
-   */
-  replacementBusAgencies?: string;
   /** Minimum straight-line span (km) of a bus route (default from config). */
   minBusKm?: number;
   /** Regex with one capture group applied to trip_id to get the train category when trip_short_name is missing. */
@@ -76,10 +76,13 @@ export interface FeedsConfig {
   userAgent: string;
   transitousBase: string;
   minBusKm: number;
+  /** Operators with their own feed (from the operator adapters' `exclusive`; feeds.json may list more). */
   dedicatedOperators: DedicatedOperator[];
   coachOperators: string;
   urbanAgencies: string;
   feeds: FeedDef[];
+  /** The operator adapters (set by loadFeedsConfig). */
+  operators?: OperatorRegistry;
 }
 
 /** A concrete file to download and process (multi-file feeds expand into several). */
@@ -92,8 +95,16 @@ export interface ResolvedFeed {
   transitousFile?: string;
 }
 
-export async function loadFeedsConfig(path: string): Promise<FeedsConfig> {
-  return JSON.parse(await readFile(path, "utf8")) as FeedsConfig;
+/**
+ * feeds.json with the operator adapters applied (their extra feeds and feed options merged in, exclusive operators
+ * added to dedicatedOperators); `operatorsDir: null` loads the file alone.
+ */
+export async function loadFeedsConfig(path: string, operatorsDir: string | null = OPERATORS_DIR): Promise<FeedsConfig> {
+  const cfg = JSON.parse(await readFile(path, "utf8")) as FeedsConfig;
+  cfg.dedicatedOperators ??= [];
+  if (operatorsDir === null) return cfg;
+  const { adapters, sources } = await loadOperatorFiles(operatorsDir);
+  return applyOperators(cfg, adapters, sources);
 }
 
 /** Parse the nginx autoindex HTML of the Transitous mirror into a list of file names. */

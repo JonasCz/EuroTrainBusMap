@@ -2,34 +2,6 @@
  "userAgent": "EuroTrainBusMap/1.0 (+https://github.com/JonasCz/EuroTrainBusMap)",
  "transitousBase": "https://api.transitous.org/gtfs/",
  "minBusKm": 15,
- "dedicatedOperators": [
-  {
-   "pattern": "flix",
-   "feeds": [
-    "eu-flixbus",
-    "gb-flixbus",
-    "tr-flixbus"
-   ]
-  },
-  {
-   "pattern": "blablacar|ouibus",
-   "feeds": [
-    "eu-blablacar-bus"
-   ]
-  },
-  {
-   "pattern": "eurostar|thalys",
-   "feeds": [
-    "eu-eurostar"
-   ]
-  },
-  {
-   "pattern": "european sleeper",
-   "feeds": [
-    "eu-european-sleeper"
-   ]
-  }
- ],
  "coachOperators": "\\b(flix ?bus|flixtrain|blablacar|ouibus|alsa|national express(?! (west midlands|coventry|dundee|bus))|megabus|ecolines|lux express|regiojet|student agency|vy (buss)?ekspress|vy bus4you|bus4you|nor-way|bussekspress|swebus|eurolines|scottish citylink|citylink|expressway|aircoach|dublin coach|gobus|jj kavanagh|leo express|sindbad|marino ?bus|itabus|baltour|socibus|monbus|ember|simple express|arriva express|polonus|kautra|nettbuss ekspress|timjan|tide ekspress|kystbussen|lavprisekspressen|matkahuolto|onnibus|kaugliinid|hansabuss|eurobus|union ivkoni|orange ways|globtour|niš ekspres|nis ekspres|lasta|arriva.*(express|intercity)|bus ?eireann.*express)\\b",
  "urbanAgencies": "\\b(bvg|berliner verkehrsbetriebe|mvg|münchner verkehrsgesellschaft|hochbahn|wiener linien|ratp|london buses|tfl|gvb|ret|htm|dpp|dopravní podnik|mpk|ztm|bkv|bkk|atm milano|atac|tmb|emt madrid|emt valencia|stib|mivb|tpg|vbz|bernmobil|kvb|rheinbahn|üstra|ssb|vag nürnberg|lvb|dvb|hsl|sl stockholm|ruter|movia|iett)\\b",
  "feeds": [
@@ -479,24 +451,7 @@
    "notes": "route_type 2 (606) + 3 (TER coaches). No shapes.",
    "approxMB": 5.6,
    "license": "ODbL-1.0",
-   "licenseUrl": "https://transport.data.gouv.fr/datasets/horaires-sncf",
-   "options": {
-    "tripPrefixRegex": "_[A-Z]:([^:]+):",
-    "headsignIsNumber": true,
-    "prefixNames": {
-     "OUI": "TGV INOUI",
-     "OGO": "OUIGO",
-     "LYR": "TGV Lyria",
-     "IC": "Intercités",
-     "ICN": "Intercités de Nuit",
-     "TER": "TER",
-     "TT": "Tram-train",
-     "ICE": "ICE",
-     "TRN": "Train",
-     "CTE": "Car TER",
-     "CRE": "Car"
-    }
-   }
+   "licenseUrl": "https://transport.data.gouv.fr/datasets/horaires-sncf"
   },
   {
    "id": "fr-transilien",
@@ -517,34 +472,6 @@
    "licenseUrl": "https://transport.data.gouv.fr/",
    "options": {
     "railCat": "Regional"
-   }
-  },
-  {
-   "id": "fr-paca-zou-intermetropole",
-   "country": "FR",
-   "name": "ZOU! Intermétropoles Marseille – Toulon – Nice (Transdev Rail Sud)",
-   "tier": "core",
-   "keep": [
-    "rail"
-   ],
-   "sources": [
-    {
-     "transitous": "fr_zou.gtfs.zip"
-    },
-    {
-     "url": "https://www.data.gouv.fr/api/1/datasets/r/764d6d5b-d04e-4aa7-94b7-f8b2274d2964"
-    }
-   ],
-   "notes": "Regional trains Marseille - Toulon - Nice run by Transdev since 2025; not in the SNCF feed (which only has the SNCF TER pieces Marseille - Toulon, Toulon - Les Arcs, Les Arcs - Nice). route_type 100, route SUD_IV15, trip_short_name = train number. No shapes.",
-   "approxMB": 0.2,
-   "license": "etalab-2.0",
-   "licenseUrl": "https://transport.data.gouv.fr/datasets/zou",
-   "options": {
-    "railCat": "Regional",
-    "prefixNames": {
-     "": "TER"
-    },
-    "agencyName": "Transdev Rail Sud Intermétropole"
    }
   },
   {
@@ -853,10 +780,7 @@
     }
    ],
    "notes": "Origin needs Trafiklab API key; Transitous mirror (shapes stripped, 44 MB) or MDB mirror of Sweden 3 (821 MB with shapes, no key needed). The bus routes of the train operators (named by train number, e.g. SJ 60629 Karlstad - Oslo, Tåg i Bergslagen 68128 Borlänge - Mora on one day) are their rail-replacement buses (ersättningsbussar).",
-   "approxMB": 44,
-   "options": {
-    "replacementBusAgencies": "^(SJ|VR Snabbtåg|Öresundståg|Mälartåg|Vy Tåg|Tåg i Bergslagen|Tågåkeriet i Bergslagen|Snälltåget|Norrtåg|Krösatåg|Krösatågen Öst)$"
-   }
+   "approxMB": 44
   },
   {
    "id": "fi-fintraffic",

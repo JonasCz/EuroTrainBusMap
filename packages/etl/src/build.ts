@@ -31,6 +31,7 @@ import {
 } from "@etbm/shared";
 import type { Db } from "./db.ts";
 import type { FeedsConfig, ResolvedFeed } from "./feeds.ts";
+import type { FeedRef } from "./operators/types.ts";
 import type { FeedLoadStats } from "./gtfs/load.ts";
 import type { CliArgs } from "./cli.ts";
 import { BBOX, loadPlaces, loadVillages } from "./geonames.ts";
@@ -433,17 +434,20 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       tShort[k] = (c[9]![r] as string | null) ?? null;
     }
   });
-  const rclass = new Map<number, { cls: string; agency: string; short: string; long: string; color: string | null; tz: string; pname: string | null; routeType: number | null }>();
+  const rclass = new Map<number, { feed: number; cls: string; agency: string; short: string; long: string; color: string | null; tz: string; pname: string | null; routeType: number | null }>();
   // operator name override of a feed (options.agencyName, e.g. "TransDev RAIL_5241" → "Transdev")
   const agencyOverride = new Map<number, string>();
-  for (const r of await db.all<{ feed: number; key: string }>(`SELECT feed, key FROM feeds ORDER BY feed`)) {
+  /** feed number → the feed as the operator adapters see it */
+  const feedRef = new Map<number, FeedRef>();
+  for (const r of await db.all<{ feed: number; key: string; id: string; country: string }>(`SELECT feed, key, id, country FROM feeds ORDER BY feed`)) {
     const name = ctx.feeds.find((f) => f.key === r.key)?.def.options?.agencyName;
     if (name) agencyOverride.set(r.feed, name);
+    feedRef.set(r.feed, { key: r.key, id: r.id, country: r.country });
   }
   for (const r of await db.all<{ rc: number; feed: number; cls: string; agency: string; route_short: string; route_long: string; color: string | null; tz: string; pname: string | null; route_type: number | null }>(
     `SELECT rc, feed, cls, agency, route_short, route_long, color, tz, pname, route_type FROM rclass ORDER BY rc`,
   ))
-    rclass.set(r.rc, { cls: r.cls, agency: agencyOverride.get(r.feed) ?? r.agency ?? "", short: r.route_short ?? "", long: r.route_long ?? "", color: r.color, tz: r.tz, pname: r.pname, routeType: r.route_type });
+    rclass.set(r.rc, { feed: r.feed, cls: r.cls, agency: agencyOverride.get(r.feed) ?? r.agency ?? "", short: r.route_short ?? "", long: r.route_long ?? "", color: r.color, tz: r.tz, pname: r.pname, routeType: r.route_type });
   const feedPriority = new Map<number, number>();
   for (const r of await db.all<{ feed: number; priority: number }>(`SELECT feed, priority FROM feeds ORDER BY feed`)) feedPriority.set(r.feed, r.priority);
 
@@ -754,14 +758,17 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     // Older databases (--reuse-db) may still carry the removed Deutschlandticket bit (1).
     const flags = tFlags[tk]! & (Flag.Night | CAVEAT_FLAGS);
     const color = rc.color && /^[0-9a-fA-F]{6}$/.test(rc.color) ? rc.color.toUpperCase() : undefined;
-    const rkey = `${dn.name}\u0001${rc.agency}\u0001${cat}\u0001${flags}\u0001${color ?? ""}`;
+    // operator adapters (packages/etl/operators): brand / high-speed of routes their data does not name
+    const ex = cfg.operators?.routeExtras({ feed: feedRef.get(rc.feed)!, agency: rc.agency, name: dn.name, short: rc.short, long: rc.long, cat, routeType: rc.routeType }) ?? {};
+    const rkey = `${dn.name}\u0001${rc.agency}\u0001${cat}\u0001${flags}\u0001${color ?? ""}\u0001${ex.brand ?? ""}`;
     let route = routeIndex.get(rkey);
     if (route === undefined) {
       route = routes.length;
       const r: Route = { name: dn.name, agency: rc.agency, cat: cat as CatBit, flags };
       if (color) r.color = color;
+      if (ex.brand) r.brand = ex.brand;
       routes.push(r);
-      routeHs.push(cat !== Cat.Bus && cat !== Cat.Coach && isHighSpeedService({ routeType: rc.routeType, agency: rc.agency, names: [rc.pname ?? "", rc.short, rc.long, dn.name, tShort[tk] ?? ""] }));
+      routeHs.push(cat !== Cat.Bus && cat !== Cat.Coach && isHighSpeedService({ routeType: rc.routeType, agency: rc.agency, names: [rc.pname ?? "", rc.short, rc.long, dn.name, tShort[tk] ?? ""], highSpeed: ex.highSpeed }));
       routeIndex.set(rkey, route);
     }
     const utc = rc.tz === "UTC";
@@ -1500,6 +1507,15 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     biggestCityFiles: sizes.slice(0, 25),
     sanity,
   });
+  // What the operator adapters changed: load-time rows (operator_log, kept with the database) and build-time ones.
+  {
+    const ops: Record<string, Record<string, number>> = {};
+    for (const r of await db.all<{ adapter: string; feed: string; field: string; n: number }>(`SELECT adapter, feed, field, sum(n)::INTEGER AS n FROM operator_log GROUP BY ALL ORDER BY ALL`).catch(() => []))
+      (ops[r.adapter] ??= {})[`${r.field}@${r.feed}`] = r.n;
+    for (const [a, m] of Object.entries(cfg.operators?.summary() ?? {})) Object.assign((ops[a] ??= {}), m);
+    report.operators = ops;
+    for (const a of Object.keys(ops).sort()) log(`operator ${a}: ${Object.entries(ops[a]!).map(([k, n]) => `${k} ${n}`).join(", ")}`);
+  }
   // The report goes to the work dir, not into the published data.
   await writeFile(join(args.work, "build-report.json"), JSON.stringify(report, null, 1));
   await rm(join(outRoot, "build-report.json"), { force: true });

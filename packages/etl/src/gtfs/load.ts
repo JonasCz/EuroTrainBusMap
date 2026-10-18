@@ -10,6 +10,8 @@ import { sqlGtfsTime, isUtcLike, validTz } from "../core/time.ts";
 import { log, warn } from "../util/log.ts";
 import { StopLimit } from "@etbm/shared";
 import { BBOX } from "../geonames.ts";
+import { OperatorConflictError, type FeedOperators } from "../operators/registry.ts";
+import type { LoadApi, OperatorAdapter } from "../operators/types.ts";
 
 /** Version of what the loader stores: part of the --reuse-db key, so a database loaded by an older loader is reloaded. */
 export const LOAD_VERSION = 3;
@@ -53,6 +55,7 @@ export async function initSchema(db: Db): Promise<void> {
     CREATE TABLE IF NOT EXISTS shapes(shape_key INTEGER, seq INTEGER, lat DOUBLE, lon DOUBLE, dist DOUBLE);
     CREATE TABLE IF NOT EXISTS limit_hints(htrip INTEGER, feed INTEGER, num VARCHAR, tz VARCHAR, rn INTEGER, n INTEGER, lat DOUBLE, lon DOUBLE,
       arr SMALLINT, dep SMALLINT, pd UTINYINT);
+    CREATE TABLE IF NOT EXISTS operator_log(adapter VARCHAR, feed VARCHAR, field VARCHAR, n INTEGER);
   `);
 }
 
@@ -121,10 +124,15 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
     `INSERT INTO feeds VALUES (${feedIdx}, ${sqlStr(rf.key)}, ${sqlStr(def.id)}, ${sqlStr(def.country)}, ${opts.priority ?? 0}, ${sqlStr(rf.transitousFile ?? "")})`,
   );
 
+  /** columns of the feed's GTFS files (operator adapters' onLoad hooks) */
+  const fileColumns = new Map<string, Map<string, string>>();
+  const ops = cfg.operators?.forFeed({ key: rf.key, id: def.id, country: def.country });
+
   // ---------- agency ----------
   await db.run(`DROP TABLE IF EXISTS t_agency; CREATE TEMP TABLE t_agency(agency_id VARCHAR, name VARCHAR, tz VARCHAR)`);
   if (files["agency.txt"]) {
     const ac = await columns(db, files["agency.txt"]);
+    fileColumns.set("agency.txt", ac);
     await db.run(
       `INSERT INTO t_agency SELECT coalesce(${c(ac, "agency_id")}, ''), coalesce(${c(ac, "agency_name")}, ''), ${c(ac, "agency_timezone")} FROM ${csv(files["agency.txt"])}`,
     );
@@ -134,6 +142,7 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
 
   // ---------- routes ----------
   const rc = await columns(db, files["routes.txt"]);
+  fileColumns.set("routes.txt", rc);
   await db.run(`DROP TABLE IF EXISTS t_routes; CREATE TEMP TABLE t_routes AS SELECT
       ${c(rc, "route_id")} AS route_id, coalesce(${c(rc, "agency_id")}, '') AS agency_id,
       try_cast(${c(rc, "route_type")} AS INTEGER) AS route_type,
@@ -143,6 +152,7 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
 
   // ---------- trips ----------
   const tc = await columns(db, files["trips.txt"]);
+  fileColumns.set("trips.txt", tc);
   await db.run(`DROP TABLE IF EXISTS t_trips; CREATE TEMP TABLE t_trips AS SELECT
       ${c(tc, "route_id")} AS route_id, ${c(tc, "service_id")} AS service_id, ${c(tc, "trip_id")} AS trip_id,
       ${opts.headsignIsNumber ? "NULL::VARCHAR" : c(tc, "trip_headsign")} AS headsign,
@@ -194,7 +204,6 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
   };
   const dropAg = opts.dropAgencies ? new RegExp(opts.dropAgencies, "i") : null;
   const onlyAg = opts.onlyAgencies ? new RegExp(opts.onlyAgencies, "i") : null;
-  const replAg = opts.replacementBusAgencies ? new RegExp(opts.replacementBusAgencies, "i") : null;
   const dedicated = cfg.dedicatedOperators
     .filter((d) => !d.feeds.includes(def.id) && d.feeds.some((f) => ctx.presentFeedIds.has(f)))
     .map((d) => new RegExp(d.pattern, "i"));
@@ -219,10 +228,9 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
     }
     const cl = classifyRoute(
       { routeType: r.route_type, agency: agencyName, shortName: r.short, longName: r.long, desc: r.desc, tripPrefix: r.prefix },
-      cctx,
+      ops ? { ...cctx, hooks: ops.classifyHooks(agencyName) } : cctx,
     );
     if (!cl) continue;
-    if (cl.cls !== "rail" && replAg && replAg.test(agencyName)) continue;
     let tz = validTz(ag?.tz) ?? defaultTz;
     if (isUtcLike(tz)) tz = "UTC";
     const pname = opts.prefixNames?.[r.prefix] ?? null;
@@ -292,6 +300,7 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
   // ---------- stop_times (streamed from CSV, filtered by kept trips) ----------
   const stPath = extract(zipPath, find("stop_times.txt")!, dir);
   const sc = await columns(db, stPath);
+  fileColumns.set("stop_times.txt", sc);
   const distExpr = sc.has("shape_dist_traveled") ? `try_cast(${c(sc, "shape_dist_traveled")} AS FLOAT)` : "NULL::FLOAT";
   // Boarding / alighting restrictions (StopLimit bits): only type 1 ("no pickup" / "no drop off") counts. Types 2 / 3
   // (phone the agency / ask the driver) are ordinary stops that need a reservation or a request: the Austrian PTA feeds
@@ -330,6 +339,7 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
 
   // ---------- stops ----------
   const sp = await columns(db, files["stops.txt"]!);
+  fileColumns.set("stops.txt", sp);
   await db.run(`DROP TABLE IF EXISTS t_stops_all; CREATE TEMP TABLE t_stops_all AS SELECT
       ${c(sp, "stop_id")} AS stop_id, coalesce(${c(sp, "stop_name")}, '') AS name,
       try_cast(${c(sp, "stop_lat")} AS DOUBLE) AS lat, try_cast(${c(sp, "stop_lon")} AS DOUBLE) AS lon,
@@ -352,19 +362,8 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
   // their restrictions are kept as hints, matched onto the operator's trips after dedup (build.ts).
   if (shadowRows.length) await loadLimitHints(ctx, feedIdx, rf.key, zipPath, find("stop_times.txt")!, dir, shadowRows);
 
-  // ---------- rail-replacement buses published as trains ----------
-  // Entur (NO) runs its "buss for tog" under the train's line (route_type 100, e.g. F6 Trondheim – Oslo on a day
-  // of engineering works) but calls only at bus stops: stops.txt `vehicle_type` (extended route type of the stop)
-  // is a bus type at every stop of the trip. Such trips are rail-replacement buses, dropped like the named ones.
-  if (sp.has("vehicle_type")) {
-    const n0 = await db.scalar(`SELECT count(DISTINCT trip_key) FROM t_st`);
-    await db.run(`DELETE FROM t_st WHERE trip_key IN (
-        SELECT st.trip_key FROM t_st st JOIN t_kt kt USING (trip_key) JOIN t_stops_all s USING (stop_id)
-        WHERE kt.cls = 'rail' GROUP BY st.trip_key
-        HAVING bool_and(coalesce(s.vehicle_type = 3 OR s.vehicle_type BETWEEN 200 AND 209 OR s.vehicle_type BETWEEN 700 AND 716, false)))`);
-    const dropped = n0 - (await db.scalar(`SELECT count(DISTINCT trip_key) FROM t_st`));
-    if (dropped) log(`feed ${rf.key}: ${dropped} rail trips calling only at bus stops (rail-replacement buses) dropped`);
-  }
+  // ---------- operator adapters (packages/etl/operators): fixes on this feed's tables, scoped to their routes ----------
+  if (ops) await runLoadHooks(db, ops, rf.key, fileColumns, rcRows);
 
   // ---------- bus filter: drop short (urban) bus/coach trips ----------
   const minKm = opts.minBusKm ?? cfg.minBusKm;
@@ -491,6 +490,56 @@ async function loadLimitHints(ctx: LoadContext, feedIdx: number, key: string, zi
   const n = await db.scalar(`SELECT count(DISTINCT htrip) FROM limit_hints WHERE feed = ${feedIdx}`);
   if (n) log(`feed ${key}: ${n} trips left to a dedicated operator's feed keep their stop restrictions as hints`);
   await db.run(`DROP TABLE IF EXISTS t_shmap; DROP TABLE IF EXISTS t_sht;`);
+}
+
+/**
+ * The onLoad hooks of the operator adapters for this feed, in id order. Each sees only this feed's tables and may
+ * only drop trips of the routes in its scope (agencies); two adapters whose scopes share a route fail the load.
+ */
+export async function runLoadHooks(db: Db, ops: FeedOperators, key: string, fileColumns: Map<string, Map<string, string>>, rcRows: unknown[][]): Promise<void> {
+  // every route class belongs to at most one adapter's hook: checked for all of them before any runs
+  const owner = new Map<number, string>();
+  const runs: { a: OperatorAdapter; scoped: number[] | null }[] = [];
+  for (const a of ops.loaders) {
+    const scoped = a.appliesTo.agencies?.length ? rcRows.filter((r) => ops.covers(a, r[5] as string)).map((r) => r[0] as number) : null;
+    for (const rc of scoped ?? rcRows.map((r) => r[0] as number)) {
+      const o = owner.get(rc);
+      if (o) throw new OperatorConflictError(`${o} and ${a.id} both have an onLoad hook for route class ${rc} of feed ${key}`);
+      owner.set(rc, a.id);
+    }
+    if (!scoped || scoped.length) runs.push({ a, scoped });
+  }
+  for (const { a, scoped } of runs) await a.onLoad!(loadApi(db, a, ops, key, fileColumns, scoped));
+}
+
+const READ_ONLY_RE = /^\s*(SELECT|WITH)\b/i;
+
+function loadApi(db: Db, a: OperatorAdapter, ops: FeedOperators, key: string, fileColumns: Map<string, Map<string, string>>, scoped: number[] | null): LoadApi {
+  const readOnly = (sql: string) => {
+    if (!READ_ONLY_RE.test(sql) || sql.includes(";")) throw new Error(`operator ${a.id}: only single SELECT / WITH queries are allowed (${sql.slice(0, 60)}…)`);
+    return sql;
+  };
+  return {
+    feed: ops.feed,
+    columns: (file) => {
+      const m = fileColumns.get(file.toLowerCase());
+      return m ? new Set(m.keys()) : null;
+    },
+    all: async (sql) => db.all(readOnly(sql)),
+    scalar: async (sql) => db.scalar(readOnly(sql)),
+    dropTrips: async (sql, reason) => {
+      readOnly(sql);
+      const n0 = await db.scalar(`SELECT count(DISTINCT trip_key) FROM t_st`);
+      const scope = scoped ? ` AND trip_key IN (SELECT trip_key FROM t_kt WHERE rc IN (${scoped.join(",")}))` : "";
+      await db.run(`DELETE FROM t_st WHERE trip_key IN (${sql})${scope}`);
+      const n = n0 - (await db.scalar(`SELECT count(DISTINCT trip_key) FROM t_st`));
+      if (n) {
+        log(`feed ${key}: operator ${a.id}: ${n} trips dropped (${reason})`);
+        ops.registry.record(a.id, key, "onLoad.dropTrips", n);
+      }
+      return n;
+    },
+  };
 }
 
 export { existsSync };
