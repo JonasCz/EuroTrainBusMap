@@ -39,7 +39,8 @@ import { MaskStore, getBit, newMask, popcount, setBit } from "./core/calendar.ts
 import { isoToEpochDay, tzOffsetMinutes, validTz } from "./core/time.ts";
 import { resolveDuplicates, type DupPair, type DupTrip } from "./core/dedup.ts";
 import { PatternStore, localizeStart, processTripStops, type RawStop } from "./core/patterns.ts";
-import { displayName } from "./core/classify.ts";
+import { displayName, isHighSpeedService } from "./core/classify.ts";
+import type { GeometryRequest } from "./geometry/index.ts";
 import { sliceShape } from "./core/shapes.ts";
 import { buildSegments } from "./core/segments.ts";
 import { anchorCitiesAtMainStation } from "./core/anchor.ts";
@@ -369,11 +370,11 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       tShort[k] = (c[9]![r] as string | null) ?? null;
     }
   });
-  const rclass = new Map<number, { cls: string; agency: string; short: string; long: string; color: string | null; tz: string; pname: string | null }>();
-  for (const r of await db.all<{ rc: number; cls: string; agency: string; route_short: string; route_long: string; color: string | null; tz: string; pname: string | null }>(
-    `SELECT rc, cls, agency, route_short, route_long, color, tz, pname FROM rclass ORDER BY rc`,
+  const rclass = new Map<number, { cls: string; agency: string; short: string; long: string; color: string | null; tz: string; pname: string | null; routeType: number | null }>();
+  for (const r of await db.all<{ rc: number; cls: string; agency: string; route_short: string; route_long: string; color: string | null; tz: string; pname: string | null; route_type: number | null }>(
+    `SELECT rc, cls, agency, route_short, route_long, color, tz, pname, route_type FROM rclass ORDER BY rc`,
   ))
-    rclass.set(r.rc, { cls: r.cls, agency: r.agency ?? "", short: r.route_short ?? "", long: r.route_long ?? "", color: r.color, tz: r.tz, pname: r.pname });
+    rclass.set(r.rc, { cls: r.cls, agency: r.agency ?? "", short: r.route_short ?? "", long: r.route_long ?? "", color: r.color, tz: r.tz, pname: r.pname, routeType: r.route_type });
   const feedPriority = new Map<number, number>();
   for (const r of await db.all<{ feed: number; priority: number }>(`SELECT feed, priority FROM feeds ORDER BY feed`)) feedPriority.set(r.feed, r.priority);
 
@@ -459,6 +460,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     return i;
   };
   const routes: Route[] = [];
+  /** per route: a high-speed service (TGV, ICE, AVE…; steers rail geometry onto / off high-speed lines) */
+  const routeHs: boolean[] = [];
   const routeIndex = new Map<string, number>();
   const store = new PatternStore();
   const masks = new MaskStore();
@@ -510,6 +513,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       const r: Route = { name: dn.name, agency: rc.agency, cat: cat as CatBit, flags };
       if (color) r.color = color;
       routes.push(r);
+      routeHs.push(cat !== Cat.Bus && cat !== Cat.Coach && isHighSpeedService({ routeType: rc.routeType, agency: rc.agency, names: [rc.pname ?? "", rc.short, rc.long, dn.name, tShort[tk] ?? ""] }));
       routeIndex.set(rkey, route);
     }
     const utc = rc.tz === "UTC";
@@ -598,11 +602,17 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   // The drawn network connects stations: every hop between two consecutive, different stations of a
   // pattern is a corridor (undirected, keyed by the station pair), inside a city as well as between cities.
   timer.start("corridors");
+  const RAIL = Cat.LongDistance | Cat.Regional;
   interface CorrAcc {
     a: number;
     b: number;
     cats: number;
     tpd: Record<number, number>;
+    /** rail trains per day of high-speed services */
+    tpdHs: number;
+    /** fastest scheduled time (min) between the two stations: high-speed services / other trains */
+    minHs: number;
+    minConv: number;
     shapeTrip: number;
     shapeW: number;
   }
@@ -623,13 +633,22 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       if (id === undefined) {
         id = corrs.length;
         corrIndex.set(key, id);
-        corrs.push({ a, b, cats: 0, tpd: {}, shapeTrip: -1, shapeW: 0 });
+        corrs.push({ a, b, cats: 0, tpd: {}, tpdHs: 0, minHs: Infinity, minConv: Infinity, shapeTrip: -1, shapeW: 0 });
       }
       list.push(id);
       if (!w) continue;
       const cr = corrs[id]!;
       cr.cats |= route.cat;
       cr.tpd[route.cat] = (cr.tpd[route.cat] ?? 0) + w / D;
+      if (route.cat & RAIL) {
+        const hs = routeHs[pt.route]!;
+        const dt = pt.arr[i + 1]! - pt.dep[i]!;
+        if (hs) cr.tpdHs += w / D;
+        if (dt > 0) {
+          if (hs) cr.minHs = Math.min(cr.minHs, dt);
+          else cr.minConv = Math.min(cr.minConv, dt);
+        }
+      }
       if (pt.shapeTrip >= 0 && w > cr.shapeW) [cr.shapeTrip, cr.shapeW] = [pt.shapeTrip, w];
     }
     patternCorr.push(list);
@@ -654,7 +673,6 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
 
   // ------------------------------------------------------------------ geometry
   timer.start("geometry");
-  const RAIL = Cat.LongDistance | Cat.Regional;
   // Douglas-Peucker tolerance (m) of the stored line geometry (per line-graph segment). Routed lines
   // follow track / road, so they keep the detail of the (already 20-50 m) graph geometry; unsnapped
   // fallbacks are smooth curves that only need enough points to stay curved.
@@ -670,7 +688,14 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     // rail trains per day: how much this hop tells the router about the track it uses (geometry/guide.ts)
     const tpdLong = Math.round((c.tpd[Cat.LongDistance] ?? 0) * 100) / 100;
     const tpd = Math.round(((c.tpd[Cat.LongDistance] ?? 0) + (c.tpd[Cat.Regional] ?? 0)) * 100) / 100;
-    return { id, mode: (c.cats & RAIL ? "rail" : "road") as "rail" | "road", hops: [hop], a: hop.from, b: hop.to, anchored: true, tpd, tpdLong };
+    const mode = (c.cats & RAIL ? "rail" : "road") as "rail" | "road";
+    const req: GeometryRequest = { id, mode, hops: [hop], a: hop.from, b: hop.to, anchored: true, tpd, tpdLong };
+    if (mode === "rail") {
+      if (c.tpdHs > 0) req.tpdHs = Math.round(c.tpdHs * 100) / 100;
+      if (Number.isFinite(c.minHs)) req.minHs = c.minHs;
+      if (Number.isFinite(c.minConv)) req.minConv = c.minConv;
+    }
+    return req;
   });
   if (process.env.ETBM_DUMP_GEOM_REQS) await writeFile(process.env.ETBM_DUMP_GEOM_REQS, JSON.stringify(reqs));
   // The database is not needed any more: close it and release big JS structures

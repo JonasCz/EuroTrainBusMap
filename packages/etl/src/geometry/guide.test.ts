@@ -3,7 +3,9 @@ import { RailGraphBuilder } from './graph.ts';
 import { Router } from './route.ts';
 import { buildWithRouter, type GeometryRequest } from './index.ts';
 import { dist, polylineLength, type LonLat } from './geo.ts';
-import { TrackUsage, USAGE_MAX_MULT, coverage, onTrack, resample, shapeEdgeMult, usageMult } from './guide.ts';
+import {
+  TrackUsage, USAGE_MAX_MULT, avoidHighSpeed, coverage, highSpeedEdges, highSpeedHop, hsLength, kmh, onTrack, resample, shapeEdgeMult, usageMult, usesHs,
+} from './guide.ts';
 
 /** Points every ~100 m through the given corners. */
 function pts(...c: LonLat[]): LonLat[] {
@@ -118,5 +120,80 @@ describe('rail routes follow the track trains use', () => {
     }));
     const [res] = buildWithRouter([long, ...branchStops], router);
     expect(north(res!.coords)).toBeLessThan(50.01);
+  });
+});
+
+describe('high-speed lines', () => {
+  // straight line X–Y named as a high-speed line (cost × 0.85), the main line via M1–M3 a classic line
+  function hsGraph() {
+    const b = new RailGraphBuilder();
+    b.addLine(flat(pts([0, 50], [1, 50])), 0.85);
+    b.addLine(flat(pts([-0.1, 50], [0, 50])));
+    b.addLine(flat(pts([1, 50], [1.1, 50])));
+    for (let i = 0; i + 1 < MAIN.length; i++) b.addLine(flat(pts(MAIN[i]!, MAIN[i + 1]!)));
+    return b.build({ simplifyTol: 5 });
+  }
+  const g = hsGraph();
+  const router = new Router(g);
+  const north = (c: [number, number][]) => Math.max(...c.map((p) => p[1]));
+  const hop = (extra: Partial<GeometryRequest>): GeometryRequest => ({ id: 1, mode: 'rail', a: [0.02, 50], b: [0.98, 50], anchored: true, hops: [{ from: [0.02, 50], to: [0.98, 50] }], tpd: 4, tpdLong: 4, ...extra });
+
+  it('edges of named high-speed lines are recognised by their cost', () => {
+    const hs = highSpeedEdges(g);
+    const res = router.route([0.02, 50], [0.98, 50], 2e5)!;
+    expect(hsLength(g, hs, [-1, ...res.edges, -1])).toBeGreaterThan(60000);
+    expect(usesHs(hsLength(g, hs, [-1, ...res.edges, -1]), res.length)).toBe(true);
+  });
+  it('high-speed services stay on the high-speed line', () => {
+    const [res] = buildWithRouter([hop({ tpdHs: 4, minHs: 20 })], router);
+    expect(north(res!.coords)).toBeLessThan(50.01);
+  });
+  it('conventional trains are kept off it', () => {
+    const [res] = buildWithRouter([hop({ minConv: 70 })], router);
+    expect(north(res!.coords)).toBeGreaterThan(50.14);
+  });
+  it('unless their timetable is too fast for the classic line', () => {
+    const [res] = buildWithRouter([hop({ minConv: 25 })], router);
+    expect(north(res!.coords)).toBeLessThan(50.01);
+  });
+  it('a high-speed service too slow for the high-speed line is not on it', () => {
+    expect(highSpeedHop({ tpd: 4, tpdHs: 3 })).toBe(true);
+    expect(highSpeedHop({ tpd: 4, tpdHs: 1 })).toBe(false);
+    expect(avoidHighSpeed({ tpd: 4, tpdHs: 4, minHs: 80 }, 80000, 72000)).toBe(true);
+    expect(avoidHighSpeed({ tpd: 4, tpdHs: 4, minHs: 20 }, 80000, 72000)).toBe(false);
+    expect(kmh(100000, 60)).toBeCloseTo(100);
+  });
+});
+
+describe('no reversing at junctions', () => {
+  // stem W–J, a fork at J into N and S (17° either side), and a longer loop from N round to S
+  function fork() {
+    const b = new RailGraphBuilder();
+    const J: LonLat = [0.9, 50], N: LonLat = [1, 50.02], S: LonLat = [1, 49.98];
+    b.addLine(flat(pts([0.7, 50], J)));
+    b.addLine(flat(pts(J, N)));
+    b.addLine(flat(pts(J, S)));
+    b.addLine(flat(pts(N, [1.15, 50.03], [1.2, 50], [1.15, 49.97], S)));
+    return b.build({ simplifyTol: 5 });
+  }
+  const g = fork();
+  const west = (c: LonLat[]) => Math.min(...c.map((p) => p[0]));
+  const east = (c: LonLat[]) => Math.max(...c.map((p) => p[0]));
+  it('without a reversal cost the shortest path backs through the fork', () => {
+    const res = new Router(g, { minComponent: 100 }).route([1, 50.02], [1, 49.98], 1e5)!;
+    expect(west(res.coords)).toBeLessThan(0.91);
+  });
+  it('with it the route takes the loop', () => {
+    const res = new Router(g, { minComponent: 100, reversalCost: 50000, reversalShare: 5 }).route([1, 50.02], [1, 49.98], 1e5)!;
+    expect(west(res.coords)).toBeGreaterThan(0.99);
+    expect(east(res.coords)).toBeGreaterThan(1.19);
+  });
+  it('a reversal is still taken when nothing else connects', () => {
+    const b = new RailGraphBuilder();
+    b.addLine(flat(pts([0.7, 50], [0.9, 50])));
+    b.addLine(flat(pts([0.9, 50], [1, 50.02])));
+    b.addLine(flat(pts([0.9, 50], [1, 49.98])));
+    const res = new Router(b.build({ simplifyTol: 5 }), { minComponent: 100, reversalCost: 50000, reversalShare: 2 }).route([1, 50.02], [1, 49.98], 1e5);
+    expect(res).not.toBeNull();
   });
 });

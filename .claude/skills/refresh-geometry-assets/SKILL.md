@@ -93,3 +93,18 @@ Fallbacks should be a small fraction.
   `packages/etl/src/geometry/guide.ts` (feed shapes guide the route; hops ≥ 25 km are re-routed by the trains/day of
   all other hops per edge). Tune it on a geometry dump (`ETBM_DUMP_GEOM_REQS`, requests carry `tpd` / `tpdLong`) with
   shaped hops as ground truth: route them without the shape and count how often the result covers < 80 % of the shape.
+- High-speed lines are not a graph attribute either: the graph's name-based cost multiplier (×0.85 / ×0.93,
+  `overture.ts` COST) is read back at routing time (`edgeCost / edgeLen < 0.985`, `guide.ts` `highSpeedEdges`), and
+  conventional trains (no TGV / ICE / AVE…, `isHighSpeedService`) are kept off those edges unless their timetable is
+  faster than 140 km/h on the classic route. So a rebuilt graph keeps working as long as the multipliers stay < 1 for
+  high-speed names and ≥ 1 for everything else. Improving coverage means better name patterns (`HIGH_SPEED_NAME`) and a
+  graph rebuild (new key); OSM `highspeed=yes` would be better but Overpass / Geofabrik are not reachable from the sandbox.
+- Some OSM *proposed* LGVs (GPSO south of Bordeaux) are in the graph as ordinary track named LGV; they are mostly
+  disconnected, so nothing routes on them today, but a filter on OSM `railway=proposed` would need a graph rebuild.
+- Rail routing forbids (costs half the straight-line hop distance, ≤ 50 km) reversing at a fork (`route.ts`
+  `reversalCost`, `RAIL_ROUTER_OPTS`). The search runs on directed edges (2 × edges states): ~35 % slower than the old
+  node-based A* (rail geometry ~75 s instead of ~56 s offline on 49.8k corridors).
+- Offline comparison of geometry changes: dump the requests once (`ETBM_DUMP_GEOM_REQS`), then run `buildWithRouter` on the
+  rail requests with the old code (a copy of `src/geometry` from `git show HEAD:…` inside `packages/etl`, so node_modules
+  resolve) and the new one, and compare with `coverage` (< 0.9 both ways = changed). An SVG of the graph around a corridor
+  (grey track, orange high-speed edges, old / new line) rendered with Playwright was the fastest way to judge a change.

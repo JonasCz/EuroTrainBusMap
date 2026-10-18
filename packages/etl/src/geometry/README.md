@@ -17,6 +17,21 @@ Corridor geometries for the map: `buildGeometries(reqs, { workDir, log })` (see 
      long-distance hop counts regional trains at 25 %; its own pass-1 trains count by its
      confidence, 1 up to 60 km then 60 km / length). Non-stop trains then stay on the main line
      the stopping trains mark instead of the shortest branch line.
+  3. **High-speed lines** (`guide.ts`, no extra asset): edges whose cost per metre is below 0.985 lie on a
+     line *named* as a high-speed line (the ×0.85 / ×0.93 multipliers below; every other multiplier is ≥ 1).
+     Each rail request carries `tpdHs` (trains/day of high-speed services: TGV, OUIGO, ICE, AVE, Frecciarossa,
+     Eurostar…, route_type 101; `isHighSpeedService` in `core/classify.ts`) and the fastest scheduled time
+     between its stations of high-speed (`minHs`) and other trains (`minConv`). A hop whose trains are mostly
+     conventional (night trains, Intercités, TER, IC, RE) and whose route uses ≥ 2 km / 10 % of high-speed
+     track (end edges not counted) is routed again with high-speed edges ×4; the new route is kept unless the
+     timetable would mean > 140 km/h on it (then the train must be on the high-speed line: Belgian IC on HSL 2,
+     TER GV, Southeastern on HS1). A high-speed service slower than 90 km/h along its high-speed route is
+     moved off it the same way. Pass two keeps the ×4 for hops moved in pass one.
+  4. **No reversing at junctions** (`route.ts`): the A* runs on directed edges, and passing from one branch of
+     a fork onto the other (edge directions at the node, taken 150 m along each edge, within 45°) costs
+     half the hop's straight-line distance, at most 50 km (`RAIL_ROUTER_OPTS`). Before, a stop next to a fork
+     could back onto the other branch (Libourne → Angoulême over LGV SEA via Ambarès, Paris → Sens reversing
+     near Montereau). Road and tram graphs keep `reversalCost` 0.
   Otherwise a straight great-circle line (`snapped: false`).
 - **road**: plausible feed shape, else a gentle curve bulging 5 % to the left of west→east
   (`snapped: false`).
@@ -29,8 +44,8 @@ Corridor geometries for the map: `buildGeometries(reqs, { workDir, log })` (see 
 |---|---|
 | `overture.ts` | resolves the latest Overture release (STAC), extracts Europe rail to `<workDir>/overture/rail-europe-<release>.parquet` (cached; ~13 min, ~220 MB), loads it into a graph |
 | `graph.ts` | typed-array graph: vertices shared between segments = junctions, degree-2 chains contracted, edge geometry Douglas-Peucker simplified (20 m), grid index over edge sub-segments |
-| `route.ts` | multi-candidate station snapping (≤1.5 km) + A* with detour bound; optional per-query edge cost multipliers (`RouteOptions.edgeMult`), returns the path's edges |
-| `guide.ts` | steering rail routes: feed shapes on the track (`onTrack`, `shapeEdgeMult`, `coverage`) and track usage (`TrackUsage`, `usageMult`) |
+| `route.ts` | multi-candidate station snapping (≤1.5 km) + A* over directed edges with detour bound and an optional reversal cost at forks; optional per-query edge cost multipliers (`RouteOptions.edgeMult`), returns the path's edges |
+| `guide.ts` | steering rail routes: feed shapes on the track (`onTrack`, `shapeEdgeMult`, `coverage`), track usage (`TrackUsage`, `usageMult`) and high-speed lines (`highSpeedEdges`, `avoidHighSpeed`) |
 | `geo.ts` | haversine, simplify, smoothing, curves |
 | `demo.ts` | routes 10 well-known pairs, writes GeoJSON + PNG preview |
 
@@ -39,6 +54,17 @@ funicular, monorail dropped); segments flagged `is_abandoned` / `is_disused` /
 `is_under_construction` dropped. Overture has no service/siding or speed attributes, so costs are
 tuned by name: high-speed line names (LGV, alta velocità, HS1, …) ×0.85, German
 Schnellfahrstrecke/Neubaustrecke ×0.93, freight-only ×1.4, unknown gauge ×1.05.
+
+Sources checked for better high-speed / usage tags (2026-10): Overture rail segments carry no maxspeed,
+highspeed, usage or service (release 2026-09-23.1); OSM itself is not reachable in bulk from the build
+sandbox (Overpass API and Geofabrik refused by the proxy, openrailwaymap.app tiles may not be bulk
+downloaded by its usage policy, country extracts at download.openstreetmap.fr are 2.5-6 GB each). The OSM
+line names kept by Overture cover the French and Spanish LGV/LAV network well (~6.5k km of track each),
+German NBS (~2.4k km), Belgian HSL and HS1; Italian AV lines only partly (Italian feeds have shapes).
+A timetable-derived label (track of hops averaging ≥ 200 km/h, minus track of short slow conventional
+hops) was tried and dropped: it marked short classic pieces at junctions and in station throats, and
+Swiss / Austrian new lines that conventional trains do use. Note: the graph also holds some OSM
+*proposed* lines named as LGV (GPSO Bordeaux–Toulouse / Bordeaux–Dax) without the construction flag.
 
 Env: `ETBM_RAIL_PARQUET` (use a given extract), `ETBM_OVERTURE_RELEASE` (pin a release),
 `ETBM_GEOMETRY_DUCKDB_MEMORY` (DuckDB memory_limit, default 4GB; 4 threads, spills to

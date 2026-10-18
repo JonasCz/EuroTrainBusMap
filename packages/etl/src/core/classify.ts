@@ -165,6 +165,24 @@ export function classifyRoute(r: RouteInfo, ctx: ClassifyContext): Classificatio
 }
 
 /**
+ * High-speed services: train brands built for (and timetabled on) high-speed lines (LGV, NBS, AV,
+ * HSL, HS1), or GTFS route_type 101. Used only to steer rail geometry (geometry/guide.ts): other
+ * trains are kept off the lines named as high-speed lines unless their timetable needs them.
+ */
+const HS_RE = /\b(tgv|inoui|ouigo|lyria|ice|eurostar|thalys|ave|avlo|alvia|avant|euromed|iryo|frecciarossa|frecciargento|italo|intercity direct|eurocity direct|railjet|rjx)\b/i;
+/** Brand names that look high-speed but are not ("OUIGO Train Classique" runs on classic lines). */
+const NOT_HS_RE = /\b(train classique|intercit[ée]s|ter)\b/i;
+
+export function isHighSpeedService(r: { routeType?: number | null; agency: string; names: string[] }): boolean {
+  const text = r.names.filter(Boolean).join(" ");
+  if (NOT_HS_RE.test(text)) return false;
+  if (r.routeType === 101) return true;
+  // Trenitalia France (Paris – Lyon – Milano Frecciarossa) names its routes after the end stations only
+  if (r.agency === "Trenitalia" || /^eurostar\b/i.test(r.agency)) return true;
+  return HS_RE.test(text);
+}
+
+/**
  * Per-trip fallback for ambiguous rail: long distance if the trip covers a
  * long straight-line distance with sparse stops.
  */

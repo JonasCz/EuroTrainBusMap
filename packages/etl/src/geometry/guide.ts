@@ -247,3 +247,77 @@ export class TrackUsage {
     };
   }
 }
+
+/*
+ * High-speed lines. Overture keeps no maxspeed / highspeed / usage tags, but OSM names of
+ * high-speed lines (LGV, NBS, HSL, alta velocità…) give them a cost multiplier below 1 when the
+ * graph is built (overture.ts COST.highSpeed / newLine); every other multiplier is ≥ 1. So the
+ * cost / length ratio of an edge tells whether it is (mostly) a high-speed line, with no extra
+ * asset. Those lines are cheap for everybody, which drew night trains and regional trains on the
+ * LGV (Paris → Marseille, Libourne → Angoulême): conventional trains route with them made
+ * expensive instead, unless their timetable is too fast for the classic line.
+ */
+
+/** An edge whose cost per metre is below this lies (mostly) on a named high-speed line. */
+export const HS_COST_RATIO = 0.985;
+/** Cost multiplier of high-speed edges for trains that are not high-speed services. */
+export const HS_AVOID_MULT = 4;
+/**
+ * Fastest average speed (km/h, stop to stop along the drawn route) a train keeps on a classic
+ * line. A conventional train timetabled faster than this must use the high-speed line (Belgian
+ * and Dutch intercities on HSL 2 / HSL-Zuid, TER GV on LGV Nord, Southeastern on HS1).
+ */
+export const CONV_MAX_KMH = 140;
+/** A high-speed service averaging less than this along a high-speed path is not on it. */
+export const HS_MIN_KMH = 90;
+/** A route counts as using high-speed track from this length (m) and share of its length on it. */
+export const HS_MIN_LEN = 2000;
+export const HS_MIN_SHARE = 0.1;
+
+/** 1 for edges of named high-speed lines (see HS_COST_RATIO). */
+export function highSpeedEdges(g: RailGraph): Uint8Array {
+  const hs = new Uint8Array(g.edgeCount);
+  for (let e = 0; e < g.edgeCount; e++) if (g.edgeLen[e]! > 1 && g.edgeCost[e]! < HS_COST_RATIO * g.edgeLen[e]!) hs[e] = 1;
+  return hs;
+}
+
+/**
+ * Track length (m) of a path's edges on high-speed lines. The two end edges (where the stations
+ * snap) are left out: a station on a high-speed line is no reason to route around it.
+ */
+export function hsLength(g: RailGraph, hs: Uint8Array, edges: ArrayLike<number>): number {
+  const first = edges[0], last = edges[edges.length - 1];
+  let s = 0;
+  for (const e of new Set(Array.from(edges))) if (hs[e] && e !== first && e !== last) s += g.edgeLen[e]!;
+  return s;
+}
+
+/** Whether a route of `len` m uses high-speed track worth avoiding. */
+export const usesHs = (hsLen: number, len: number): boolean => hsLen >= HS_MIN_LEN && hsLen >= HS_MIN_SHARE * len;
+
+/** Average speed (km/h) of `len` m in `min` minutes. */
+export const kmh = (len: number, min: number): number => len / 1000 / (min / 60);
+
+/** What a rail hop's timetable says about high-speed lines. */
+export interface HsInfo { tpd?: number; tpdHs?: number; minHs?: number; minConv?: number }
+
+/** Most trains of the hop are high-speed services (TGV, ICE, AVE…). */
+export function highSpeedHop(r: HsInfo): boolean {
+  const tpd = r.tpd ?? 0, hs = r.tpdHs ?? 0;
+  if (tpd > 0) return hs >= 0.5 * tpd;
+  return r.minHs !== undefined && r.minConv === undefined;
+}
+
+/**
+ * Whether a hop should be routed off high-speed lines, given the length (m) of a route that
+ * avoids them: conventional trains unless their fastest run would be implausibly fast on that
+ * route; high-speed services only when they are too slow for the high-speed route (`hsRouteLen`).
+ */
+export function avoidHighSpeed(r: HsInfo, convRouteLen: number, hsRouteLen: number): boolean {
+  if (highSpeedHop(r)) return r.minHs !== undefined && kmh(hsRouteLen, r.minHs) < HS_MIN_KMH;
+  return r.minConv === undefined || kmh(convRouteLen, r.minConv) <= CONV_MAX_KMH;
+}
+
+/** Edge multipliers that keep a route off high-speed lines. */
+export const hsAvoidMult = (hs: Uint8Array) => (e: number): number => (hs[e] ? HS_AVOID_MULT : 1);
+

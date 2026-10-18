@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Cat, Flag } from "@etbm/shared";
-import { classifyRoute, displayName, heuristicRailCat, modeOfRouteType, type ClassifyContext } from "../src/core/classify.ts";
+import { classifyRoute, displayName, heuristicRailCat, isHighSpeedService, modeOfRouteType, type ClassifyContext } from "../src/core/classify.ts";
 
 const ctx = (over: Partial<ClassifyContext> = {}): ClassifyContext => ({
   keep: ["rail", "coach", "bus"],
@@ -83,5 +83,27 @@ describe("displayName", () => {
     expect(displayName("IR13", "", "21174", "SBB")).toEqual({ name: "IR13", number: "21174" });
     expect(displayName("RE 1", "", "", "DB")).toEqual({ name: "RE 1" });
     expect(displayName("", "Berlin - Hamburg", "", "X")).toEqual({ name: "Berlin - Hamburg" });
+  });
+});
+
+describe("isHighSpeedService", () => {
+  const hs = (names: string[], agency = "", routeType = 2) => isHighSpeedService({ routeType, agency, names });
+  it("recognises high-speed brands", () => {
+    expect(hs(["TGV INOUI", "421H", "Paris - Bordeaux"], "SNCF VOYAGEURS")).toBe(true);
+    expect(hs(["OUIGO", "533A"])).toBe(true);
+    expect(hs(["ICE 41"], "DB Fernverkehr AG")).toBe(true);
+    expect(hs(["AVE"], "RENFE OPERADORA")).toBe(true);
+    expect(hs(["FR", "Frecciarossa"], "TRENITALIA")).toBe(true);
+    expect(hs([""], "SBB", 101)).toBe(true);
+    expect(hs(["Paris-Gare-de-Lyon/Lyon-Perrache"], "Trenitalia")).toBe(true);
+    expect(hs(["FRPNO -> GBSPX"], "Eurostar")).toBe(true);
+  });
+  it("leaves conventional trains out", () => {
+    expect(hs(["Intercités de nuit", "Paris - Nice"], "SNCF VOYAGEURS")).toBe(false);
+    expect(hs(["OUIGO Train Classique"])).toBe(false);
+    expect(hs(["IC 55"], "DB Fernverkehr AG")).toBe(false);
+    expect(hs(["RE 5"], "DB Regio AG")).toBe(false);
+    expect(hs(["TER", "Bordeaux - Angoulême"], "SNCF")).toBe(false);
+    expect(hs(["IC", "InterCity"], "PKP Intercity")).toBe(false);
   });
 });
