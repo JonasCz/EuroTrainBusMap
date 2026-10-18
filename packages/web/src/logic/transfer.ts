@@ -135,6 +135,12 @@ export interface SearchParams extends TransferSettings {
   cats: number;
   /** journeys mode: record complete journeys to this city (the last round keeps only events there) */
   target?: number;
+  /**
+   * Continue a journey that arrives at `station` (of the origin city) at `utc` (ms): board only departures after
+   * the transfer time from that station (the minimum transfer time, or the walk to another station of the city)
+   * and within the maximum wait (or the same day), instead of every departure of the travel day.
+   */
+  after?: { station: number; utc: number };
 }
 
 /** Per reached city: first round (1 = direct on the day) and the fastest journey of that round. */
@@ -291,6 +297,26 @@ export class TransferSearch {
     return w === undefined ? Infinity : Math.max(min, w);
   }
 
+  /** Latest service-day offset of a first-leg trip: the next day too when continuing a journey (a wait across midnight). */
+  private get ddMax(): number {
+    return this.params.after ? 1 : 0;
+  }
+
+  /**
+   * First-leg departure window at origin station `s` (minutes relative to t0, inclusive): the travel day, or, when
+   * continuing a journey (params.after), from the arrival plus the transfer time to that station until the maximum
+   * wait (same day: see sameDayLimit). Empty when the station is too far from the arrival station to walk.
+   */
+  private originWindow(s: number): [number, number] {
+    const a = this.params.after;
+    if (!a) return [0, this.dayLen - 1];
+    const t = Math.round(a.utc / 60000) - this.t0;
+    const x = this.transferMin(a.station, s);
+    if (x === Infinity) return [1, 0];
+    const W = this.params.maxWait;
+    return [t + x, W === null ? sameDayLimit(this.midnightsOf(this.params.origin), t) : t + W];
+  }
+
   /** Local midnights (relative minutes) around the day in a city's tz. */
   private midnightsOf(city: number): number[] {
     const tz = this.net.cityTz[city] ?? "UTC";
@@ -340,6 +366,7 @@ export class TransferSearch {
       const stations = P.originStation !== undefined ? [P.originStation] : Array.from(this.net.cityStations(P.origin));
       for (const s of stations) {
         if (s >= store.nStations) continue;
+        const [lo, hi] = this.originWindow(s);
         for (let e = B.start[s]!; e < B.start[s + 1]!; e++) {
           const ref = B.ref[e]!, i = B.stop[e]!;
           const c = chunks[rc[ref]!]!, p = rp[ref]!;
@@ -347,10 +374,10 @@ export class TransferSearch {
           const dep = c.stDep[c.pStop[p]! + i]!;
           const t0 = c.pTrip[p]!, t1 = c.pTrip[p + 1]!;
           let bestVal = -Infinity;
-          for (let dd = -3; dd <= 0; dd++) {
+          for (let dd = -3; dd <= this.ddMax; dd++) {
             const base = this.baseOf(c.pTz[p]!, dd) + dep;
-            // departures in [0, dayLen)
-            for (let t = lowerBound(c.trStart, t0, t1, -base); t < t1 && c.trStart[t]! + base < this.dayLen; t++) {
+            // departures in [lo, hi]
+            for (let t = lowerBound(c.trStart, t0, t1, lo - base); t < t1 && c.trStart[t]! + base <= hi; t++) {
               if (!this.runs(c.trCal[t]!, dd)) continue;
               const d = c.trStart[t]! + base;
               if (byRef) bestVal = Math.max(bestVal, dep);
@@ -695,6 +722,7 @@ export class TransferSearch {
         const stations = P.originStation !== undefined ? [P.originStation] : Array.from(this.net.cityStations(P.origin));
         for (const s of stations) {
           if (s >= store.nStations) continue;
+          const [lo, hi] = this.originWindow(s);
           for (let e = B.start[s]!; e < B.start[s + 1]!; e++) {
             const ref = B.ref[e]!, i = B.stop[e]!;
             const c = chunks[rc[ref]!]!, p = rp[ref]!;
@@ -702,9 +730,9 @@ export class TransferSearch {
             const key = keyOf(0, ref);
             const dep = c.stDep[c.pStop[p]! + i]!;
             const t0 = c.pTrip[p]!, t1 = c.pTrip[p + 1]!;
-            for (let dd = -3; dd <= 0; dd++) {
+            for (let dd = -3; dd <= this.ddMax; dd++) {
               const base = this.baseOf(c.pTz[p]!, dd) + dep;
-              for (let t = lowerBound(c.trStart, t0, t1, -base); t < t1 && c.trStart[t]! + base < this.dayLen; t++) {
+              for (let t = lowerBound(c.trStart, t0, t1, lo - base); t < t1 && c.trStart[t]! + base <= hi; t++) {
                 if (this.runs(c.trCal[t]!, dd)) add(ref, t, t0, dd, i, c.trStart[t]! + base, -1, key);
               }
             }

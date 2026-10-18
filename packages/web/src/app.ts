@@ -92,6 +92,11 @@ export class App {
       delete next.wholeCity;
     }
     if (!next.schedule) delete next.journey;
+    // the continuation search and the joined parts belong to the legs: other legs drop them unless named
+    if (("legs" in patch || "dest" in patch) && !("extend" in patch)) delete next.extend;
+    if ("legs" in patch && !("parts" in patch) && next.parts) next.parts = next.parts.filter((n) => n < next.legs.length);
+    if (!next.legs.length) delete next.extend;
+    if (!next.legs.length || !next.parts?.length) delete next.parts;
     this.state = next;
     const hash = toHash(this.net, next);
     const url = `${location.pathname}${location.search}${hash}`;
@@ -106,6 +111,15 @@ export class App {
 
   clickCity(id: number): void {
     const s = this.state;
+    // a journey is shown: another city continues it from where it ends (the journeys from there after the arrival)
+    const end = this.journeyEnd();
+    if (s.city !== undefined && end !== undefined && id !== s.city) {
+      if (id === end) {
+        if (s.extend !== undefined) this.set({ extend: undefined });
+        else this.set({ dest: id, legs: [] });
+      } else if (id !== s.extend) this.set({ extend: id });
+      return;
+    }
     if (s.city === undefined) this.set({ city: id, dest: undefined, legs: [] });
     else if (id === s.city) {
       if (s.dest !== undefined) this.set({ dest: undefined, legs: [] });
@@ -136,13 +150,30 @@ export class App {
   back(): void {
     const s = this.state;
     // connections → the schedule of the trip that got there → the previous step (departures list / connections);
-    // a journey picked from the journeys list goes back to the list
-    if (s.legs.length && !s.schedule) this.set({ schedule: true });
+    // a journey picked from the journeys list goes back to the list; a continuation (its search, or the joined
+    // journey) goes back to the journey it continues
+    const ends = this.legEnds?.key === encodeLegs(s.legs) ? this.legEnds.to : null;
+    const part = s.parts?.[s.parts.length - 1];
+    if (s.extend !== undefined) this.set({ extend: undefined });
+    else if (s.legs.length && !s.schedule) this.set({ schedule: true });
+    else if (part !== undefined && ends?.[part - 1] !== undefined) {
+      this.set({ legs: s.legs.slice(0, part), dest: ends[part - 1], parts: s.parts!.slice(0, -1), schedule: true, journey: part > 1 || undefined });
+    }
     else if (s.journey) this.set({ legs: [] });
     else if (s.legs.length) this.set({ legs: s.legs.slice(0, -1) });
     else if (s.dest !== undefined) this.set({ dest: undefined });
     else if (s.station !== undefined) this.set({ station: undefined });
     else if (s.city !== undefined) this.set({ city: undefined, date: undefined });
+  }
+
+  /** Arrival cities of the legs of the last journey rendered (per leg), keyed by the encoded legs. */
+  private legEnds: { key: string; to: number[] } | null = null;
+
+  /** The city where the shown journey ends (its legs resolved), if a journey is shown. */
+  private journeyEnd(): number | undefined {
+    const s = this.state;
+    if (!s.legs.length || s.dest === undefined || this.legEnds?.key !== encodeLegs(s.legs)) return undefined;
+    return this.legEnds.to[this.legEnds.to.length - 1];
   }
 
   // ---- rendering ----------------------------------------------------------------
@@ -319,6 +350,7 @@ export class App {
       history.replaceState(null, "", toHash(net, this.state) || location.pathname);
     }
     const last = infos[infos.length - 1]!;
+    this.legEnds = { key: encodeLegs(this.state.legs), to: infos.map((i) => i.to) };
     // every leg is one trip: one trip/day of width on its corridors; the rest of each run is drawn faded
     const traffic: CorridorTraffic = new Map();
     const context = new Map<number, number>();
@@ -329,6 +361,13 @@ export class App {
       focus.add(i.to);
     }
     const corridors = trafficCats(traffic);
+
+    // ---- continuing the journey to another city: the journeys from its end, after the arrival
+    if (s.extend !== undefined) {
+      if (s.extend === last.to || s.extend === origin) this.set({ extend: undefined }, { replace: true });
+      else await this.renderExtension(infos, origin, s.extend, focus, traffic, context, stale);
+      return;
+    }
 
     // ---- a journey with changes: every leg's stops in one list, with the changes between them
     if (s.schedule && infos.length > 1) {
@@ -506,25 +545,83 @@ export class App {
       return;
     }
     if (stale()) return;
-    const rows: JourneyRow[] = [];
     const traffic: CorridorTraffic = new Map();
-    const files = new Map<number, Promise<CityFile | null>>([[origin, Promise.resolve(cf)]]);
+    const rows = await this.journeyRows(res.journeys, origin, Promise.resolve(cf), traffic);
+    if (stale()) return;
+    const corridors = trafficCats(traffic);
+    this.panel.show({ ...base, status: "done", rows });
+    await this.map.setHighlight({ emphasis: { ...emphasis, focus: this.withCorridorEnds(new Set([origin, dest]), corridors) }, corridors, traffic });
+  }
+
+  /**
+   * The best route options first, up to JOURNEY_ROWS journeys, each resolved against the boarding cities' timetables
+   * (`cf`: the CityFile of `origin`); their legs' corridors are added to `traffic`.
+   */
+  private async journeyRows(journeys: Journey[], origin: number, cf: Promise<CityFile | null>, traffic: CorridorTraffic): Promise<JourneyRow[]> {
+    const net = this.net;
+    const files = new Map<number, Promise<CityFile | null>>([[origin, cf]]);
     const fileOf = (c: number) => {
       let p = files.get(c);
       if (!p) files.set(c, (p = loadCity(net.ds, c).catch(() => null)));
       return p;
     };
-    // the best route options first, up to JOURNEY_ROWS journeys (each resolved against the boarding cities' timetables)
     const picked: Journey[] = [];
-    for (const g of groupJourneys(res.journeys, (j) => j, () => [], net.ctx.stationCity)) {
+    for (const g of groupJourneys(journeys, (j) => j, () => [], net.ctx.stationCity)) {
       if (picked.length && picked.length + g.rows.length > JOURNEY_ROWS) break;
       picked.push(...g.rows);
     }
+    const rows: JourneyRow[] = [];
     for (const j of picked) rows.push(await this.journeyRow(j, fileOf, traffic));
+    return rows;
+  }
+
+  /**
+   * Continuing the journey of `infos` to city `to`: the journeys from the city where it ends, leaving after its
+   * arrival (the minimum transfer time or the walk to another station, at most the maximum wait), with up to the
+   * set number of changes (at least one). The journey so far stays on the map.
+   */
+  private async renderExtension(
+    infos: LegInfo[],
+    origin: number,
+    to: number,
+    focus: Set<number>,
+    traffic: CorridorTraffic,
+    context: Map<number, number>,
+    stale: () => boolean,
+  ): Promise<void> {
+    const net = this.net;
+    const s = this.state;
+    const last = infos[infos.length - 1]!;
+    const from = last.to;
+    const date = localDate(last.arrUtc, cityTz(net, from));
+    const settings: TransferSettings = { ...s.xfer, transfers: Math.max(1, s.xfer.transfers) };
+    const base = { kind: "journeys" as const, city: from, dest: to, date, today: this.today(from), settings, cont: { legs: infos, origin } };
+    document.title = `${net.cities[origin]!.name} → ${net.cities[from]!.name} → ${net.cities[to]!.name} – EuroTrainBusMap`;
+    this.panel.show({ ...base, status: this.transfers.available ? "loading" : "error", rows: [], ...(this.transfers.available ? {} : { message: "this data build has no transfer timetable" }) });
+    this.frame([origin, ...infos.map((i) => i.to), to], `x${encodeLegs(s.legs)}-${to}`);
+    const emphasis = { active: true, origin, dest: to };
+    focus.add(to);
+    await this.map.setHighlight({ emphasis: { ...emphasis, focus: this.withCorridorEnds(new Set(focus), trafficCats(traffic)) }, corridors: trafficCats(traffic), traffic, context });
+    if (!this.transfers.available || stale()) return;
+    const params: SearchParams = { origin: from, date, cats: s.filters.cats, ...settings, target: to, after: { station: last.arrStation, utc: last.arrUtc } };
+    let res: Awaited<ReturnType<TransferClient["journeys"]>>;
+    try {
+      res = await this.transfers.journeys(params, `${net.cities[from]!.name}→${net.cities[to]!.name} after ${new Date(last.arrUtc).toISOString()}`);
+      if (!res || stale()) return;
+      await this.transfers.loadLines(res.chunks);
+    } catch (e) {
+      if (!stale()) this.panel.show({ ...base, status: "error", rows: [], message: (e as Error).message });
+      return;
+    }
     if (stale()) return;
-    const corridors = trafficCats(traffic);
+    const more: CorridorTraffic = new Map();
+    const rows = await this.journeyRows(res.journeys, from, loadCity(net.ds, from).catch(() => null), more);
+    if (stale()) return;
     this.panel.show({ ...base, status: "done", rows });
-    await this.map.setHighlight({ emphasis: { ...emphasis, focus: this.withCorridorEnds(new Set([origin, dest]), corridors) }, corridors, traffic });
+    // the journey so far and the ways on from its end
+    for (const [c, t] of more) for (const [cat, v] of Object.entries(t)) addTraffic(traffic, [c], +cat, v ?? 0);
+    const corridors = trafficCats(traffic);
+    await this.map.setHighlight({ emphasis: { ...emphasis, focus: this.withCorridorEnds(focus, corridors) }, corridors, traffic, context });
   }
 
   private async journeyRow(j: Journey, fileOf: (city: number) => Promise<CityFile | null>, traffic: CorridorTraffic): Promise<JourneyRow> {
@@ -622,6 +719,13 @@ export class App {
     const v = stop.via ?? { trip: c.trip, serviceDate: c.serviceDate, board: c.board };
     const leg: Leg = { from: fromCity, trip: v.trip, date: v.serviceDate, board: v.board, alight: stop.stop };
     this.set({ legs: [...this.state.legs, leg] });
+  }
+
+  /** A journey continuing the shown one (continuation view): the legs joined, showing the whole journey. */
+  chooseExtension(route: Leg[]): void {
+    const s = this.state;
+    if (s.extend === undefined || !route.length || !s.legs.length) return;
+    this.set({ legs: [...s.legs, ...route], dest: s.extend, parts: [...(s.parts ?? []), s.legs.length], schedule: true, journey: true });
   }
 
   /** A journey with changes (journeys view): its legs, showing the last leg's schedule. */

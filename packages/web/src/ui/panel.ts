@@ -45,6 +45,11 @@ export type View =
       status: "loading" | "done" | "error";
       rows: JourneyRow[];
       message?: string;
+      /**
+       * Continuing a journey: the journeys from `city` (where `legs`, from `origin`, end) to `dest`, leaving after
+       * the arrival; a journey picked is appended to the legs.
+       */
+      cont?: { legs: LegInfo[]; origin: number };
     }
   | {
       kind: "timetable";
@@ -113,7 +118,7 @@ export interface JourneyRow {
 }
 
 export interface PanelActions {
-  state: { city?: number; station?: string; dest?: number; filters: Filters; legs: Leg[] };
+  state: { city?: number; station?: string; dest?: number; filters: Filters; legs: Leg[]; extend?: number };
   set(patch: Record<string, unknown>, opts?: { replace?: boolean }): void;
   clickCity(id: number): void;
   clickStation(id: number, city: number, name: string): void;
@@ -125,6 +130,8 @@ export interface PanelActions {
   /** Another departure at the change before the journey's last leg `leg`. */
   chooseOption(leg: number, o: ChangeOption): void;
   chooseJourney(legs: Leg[]): void;
+  /** A journey of the continuation view: appended to the shown journey. */
+  chooseExtension(legs: Leg[]): void;
   setTransfers(x: TransferSettings): void;
   showSchedule(leg: number): void;
   shiftDate(days: number): void;
@@ -228,22 +235,12 @@ export class Panel {
   // ---- search -------------------------------------------------------------------
 
   private bindSearch(): void {
-    const names = this.net.nameKey;
     const update = () => {
-      const q = slugify(this.search.value);
-      if (!q) {
+      if (!slugify(this.search.value)) {
         this.closeList();
         return;
       }
-      const scored: [number, number][] = [];
-      names.forEach((n, i) => {
-        const idx = n.indexOf(q);
-        if (idx < 0) return;
-        const c = this.net.cities[i]!;
-        scored.push([i, (idx === 0 ? 2 : idx > 0 && n[idx - 1] === "-" ? 1 : 0) + c.importance]);
-      });
-      scored.sort((a, b) => b[1] - a[1]);
-      this.matches = scored.slice(0, 8).map((s) => s[0]);
+      this.matches = this.matchCities(this.search.value, 8);
       this.active = this.matches.length ? 0 : -1;
       this.renderList();
     };
@@ -264,6 +261,62 @@ export class Panel {
         this.closeList();
       }
     });
+  }
+
+  /** Cities whose name contains `text` (word starts first, then by importance), at most `limit`. */
+  private matchCities(text: string, limit: number, skip?: (city: number) => boolean): number[] {
+    const q = slugify(text);
+    if (!q) return [];
+    const scored: [number, number][] = [];
+    this.net.nameKey.forEach((n, i) => {
+      const idx = n.indexOf(q);
+      if (idx < 0 || skip?.(i)) return;
+      const c = this.net.cities[i]!;
+      scored.push([i, (idx === 0 ? 2 : idx > 0 && n[idx - 1] === "-" ? 1 : 0) + c.importance]);
+    });
+    scored.sort((a, b) => b[1] - a[1]);
+    return scored.slice(0, limit).map((s) => s[0]);
+  }
+
+  /**
+   * Continue the shown journey from `from`, where it ends: a map tap on another city does it; this field finds the
+   * city by name. Both open the journeys from `from` to that city after the arrival.
+   */
+  private continueBox(from: number, origin: number): HTMLElement {
+    const n = this.net;
+    const name = n.cities[from]?.name ?? "";
+    const input = h("input", { type: "search", class: "dest-filter", placeholder: "Continue to… (city)", autocomplete: "off", spellcheck: "false", "aria-label": `Continue the journey from ${name} to a city` }) as HTMLInputElement;
+    const list = h("ul", { class: "cont-list", hidden: true });
+    let matches: number[] = [];
+    const go = (id: number) => this.actions.set({ extend: id });
+    const update = () => {
+      matches = this.matchCities(input.value, 6, (c) => c === from || c === origin);
+      list.replaceChildren(
+        ...matches.map((id) => {
+          const c = n.cities[id]!;
+          return h("li", null, h("button", { type: "button", class: "cont-opt", onclick: () => go(id) }, h("span", { class: "opt-name" }, c.name), h("span", { class: "opt-meta" }, c.country)));
+        }),
+      );
+      if (!matches.length && input.value.trim()) list.append(h("li", { class: "opt-empty" }, "No matching city"));
+      list.hidden = !list.childElementCount;
+    };
+    input.addEventListener("input", update);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && matches[0] !== undefined) go(matches[0]);
+      else if (e.key === "Escape" && input.value) {
+        e.preventDefault();
+        input.value = "";
+        update();
+      }
+    });
+    return h(
+      "div",
+      { class: "cont-box" },
+      h("p", { class: "cont-title" }, icon("next", 14), ` Continue from ${name}`),
+      h("p", { class: "small muted" }, `Tap a city on the map, or name one: journeys from ${name} after this arrival, with your transfer settings – also beyond the number of changes searched at once.`),
+      input,
+      list,
+    );
   }
 
   private renderList(): void {
@@ -635,15 +688,38 @@ export class Panel {
     const a = n.cities[v.city]!;
     const b = n.cities[v.dest]!;
     const originTz = cityTz(n, v.city);
+    const cont = v.cont;
     const from = v.station !== undefined ? shortStationName(stationName(n, v.station), a.name) : a.name;
     const title = h("span", { class: "pair" }, v.station !== undefined ? `${from} (${a.name})` : from, h("span", { class: "pair-arrow", "aria-label": "to" }, icon("arrow", 16)), b.name);
     const k = v.settings.transfers;
-    const sub =
-      v.status === "done"
-        ? `${v.rows.length} journey${v.rows.length === 1 ? "" : "s"} with up to ${connWord(k)}${v.rows.length > 1 ? ` in ${countOptions(v.rows, n)}` : ""} · no direct service`
+    const found = `${v.rows.length} journey${v.rows.length === 1 ? "" : "s"} with up to ${connWord(k)}${v.rows.length > 1 ? ` in ${countOptions(v.rows, n)}` : ""}`;
+    const rules = `min. ${v.settings.minTransfer} min to change${v.settings.maxWait === null ? ", same day" : `, max. ${fmtWait(v.settings.maxWait)} wait`}`;
+    const arrived = cont ? cont.legs[cont.legs.length - 1]! : null;
+    const sub = cont
+      ? v.status === "done"
+        ? `${found} · after arriving ${fmtTime(arrived!.arrUtc, originTz)}`
+        : `Searching journeys after arriving ${fmtTime(arrived!.arrUtc, originTz)}…`
+      : v.status === "done"
+        ? `${found} · no direct service`
         : `No direct service · searching journeys with up to ${connWord(k)}…`;
     const out: Node[] = [this.header(title, sub, { back: true })];
-    out.push(this.dateBar(v.date, v.today, () => new Set(), true));
+    if (cont) {
+      const o = n.cities[cont.origin]!.name;
+      out.push(
+        h(
+          "div",
+          { class: "cont-head" },
+          h(
+            "p",
+            null,
+            h("span", { class: "muted" }, "Continuing "),
+            `${o} → ${a.name}`,
+            h("span", { class: "muted" }, ` (${formatDateShort(localDate(cont.legs[0]!.depUtc, cityTz(n, cont.origin)))}, arrives ${fmtTime(arrived!.arrUtc, originTz)} at ${stationName(n, arrived!.arrStation)}). Pick a journey to add it.`),
+          ),
+          h("button", { type: "button", class: "link small", onclick: () => this.actions.set({ dest: v.dest, legs: [] }) }, `Search ${o} → ${b.name} instead`),
+        ),
+      );
+    } else out.push(this.dateBar(v.date, v.today, () => new Set(), true));
     if (v.status === "loading") {
       out.push(h("p", { class: "pad muted" }, "Searching connections…"));
       return out;
@@ -657,7 +733,9 @@ export class Panel {
         h(
           "p",
           { class: "pad muted" },
-          `No journey with up to ${connWord(k)} on ${formatDateShort(v.date)} (min. ${v.settings.minTransfer} min to change${v.settings.maxWait === null ? ", same day" : `, max. ${fmtWait(v.settings.maxWait)} wait`}).`,
+          cont
+            ? `No journey to ${b.name} with up to ${connWord(k)} after arriving in ${a.name} at ${fmtTime(arrived!.arrUtc, originTz)} (${rules}).`
+            : `No journey with up to ${connWord(k)} on ${formatDateShort(v.date)} (${rules}).`,
         ),
       );
       return out;
@@ -701,8 +779,8 @@ export class Panel {
             type: "button",
             class: "tt-row",
             disabled: !r.route,
-            title: r.route ? `${r.legs.map((l) => (l.info ? [l.info.route.name, l.info.number].filter(Boolean).join(" ") : CAT_LABEL[l.raw.cat])).join(" + ")}: show the legs and the stops` : "This journey could not be matched to the timetable",
-            onclick: () => r.route && this.actions.chooseJourney(r.route),
+            title: r.route ? `${r.legs.map((l) => (l.info ? [l.info.route.name, l.info.number].filter(Boolean).join(" ") : CAT_LABEL[l.raw.cat])).join(" + ")}: ${cont ? "add it to the journey" : "show the legs and the stops"}` : "This journey could not be matched to the timetable",
+            onclick: () => r.route && (cont ? this.actions.chooseExtension(r.route) : this.actions.chooseJourney(r.route)),
           },
           h("span", { class: "tt-times" }, timeEl(n, j.depUtc, depStation, { strong: true }), timeEl(n, j.arrUtc, arrStation, { refDate: localDate(j.depUtc, originTz), refTz: originTz })),
           h(
@@ -763,7 +841,7 @@ export class Panel {
       list.append(more);
     }
     out.push(list);
-    out.push(h("p", { class: "hint" }, "Times are local. Grouped by the trains or buses taken and where to change; per option the departures not beaten by a later one arriving no later. Changes include the walk between stations. Select a journey for its legs and stops."));
+    out.push(h("p", { class: "hint" }, `Times are local. Grouped by the trains or buses taken and where to change; per option the departures not beaten by a later one arriving no later. Changes include the walk between stations. ${cont ? "Select a journey to add it." : "Select a journey for its legs and stops."}`));
     return out;
   }
 
@@ -1158,7 +1236,8 @@ export class Panel {
     const counts: OnwardCount[] = [];
     const row = (_st: ScheduleStop, i: number) => this.schedRow(sc, i, { windowMin: v.windowMin, counts, count: (stop, whole) => v.onward(stop, whole), choose: (stop, whole) => this.actions.chooseStop(stop, whole) });
     const list = h("ol", { class: "sched", style: `--mode:var(--cat-${sc.route.cat})`, "aria-label": `Stops of ${tag}` }, stops.map(row));
-    out.push(list, h("p", { class: "hint" }, `Times are local. Tap a stop for the connections from there within ${v.windowMin / 60} h of arriving; numbers count them (the same vehicle not included).`));
+    const start = v.legs[0]!;
+    out.push(list, this.continueBox(alight.city, n.file.stations[start.depStation]!.city), h("p", { class: "hint" }, `Times are local. Tap a stop for the connections from there within ${v.windowMin / 60} h of arriving; numbers count them (the same vehicle not included).`));
     this.lazyCounts(counts);
     queueMicrotask(() => list.querySelector(".is-end")?.scrollIntoView({ block: "nearest" }));
     return out;
@@ -1325,7 +1404,7 @@ export class Panel {
       if (part.foldAfter) items.push(fold("after", part.to + 1, sc.stops.length - 1));
     });
     const list = h("ol", { class: "sched jsched", "aria-label": "Stops and changes of the journey" }, items);
-    out.push(list, h("p", { class: "hint" }, `Times are local. Tap a stop for the connections from there within ${v.windowMin / 60} h of arriving; numbers count them (the same vehicle not included).`));
+    out.push(list, this.continueBox(al.city, b0.city), h("p", { class: "hint" }, `Times are local. Tap a stop for the connections from there within ${v.windowMin / 60} h of arriving; numbers count them (the same vehicle not included).`));
     this.lazyCounts(counts.splice(0));
     return out;
   }

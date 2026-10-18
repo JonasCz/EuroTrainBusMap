@@ -192,6 +192,39 @@ describe("journeys with changes", () => {
   });
 });
 
+describe("continuing a journey (after an arrival)", () => {
+  // CEST: local = UTC + 2 h
+  const at = (hh: number, mm = 0) => Date.UTC(2026, 9, 20, hh - 2, mm);
+  const cont = (from: string, to: string, after: { station: number; utc: number } | null, over: Partial<SearchParams> = {}) => {
+    const s = new TransferSearch(store(), net, { origin: cityId(from), target: cityId(to), date: DATE, cats: 15, transfers: 1, minTransfer: 5, maxWait: null, ...(after ? { after } : {}), ...over });
+    while (!s.done) s.round();
+    return s.journeys().map((j) => new Date(j.depUtc).toISOString().slice(11, 16));
+  };
+  it("boards only after the arrival plus the minimum transfer time", () => {
+    // B → E 09:05 (07:05 UTC): 5 min after arriving at 09:00 is enough, 10 are not, an arrival at 09:10 is too late
+    expect(cont("B", "E", { station: 2, utc: at(9) })).toEqual(["07:05"]);
+    expect(cont("B", "E", { station: 2, utc: at(9) }, { minTransfer: 10 })).toEqual([]);
+    expect(cont("B", "E", { station: 2, utc: at(9, 10) })).toEqual([]);
+    // without an arrival every departure of the day counts
+    expect(cont("B", "E", null)).toEqual(["07:05"]);
+  });
+  it("continues with changes and respects the maximum wait", () => {
+    // B 09:05 → E 09:35, E 11:00 → T
+    expect(cont("B", "T", { station: 2, utc: at(9) })).toEqual(["07:05"]);
+    expect(cont("B", "T", { station: 2, utc: at(9) }, { transfers: 0 })).toEqual([]);
+    // B → Q 09:20: within 30 min of the arrival, not within 15
+    expect(cont("B", "Q", { station: 2, utc: at(9) }, { maxWait: 30 })).toEqual(["07:20"]);
+    expect(cont("B", "Q", { station: 2, utc: at(9) }, { maxWait: 15 })).toEqual([]);
+  });
+  it("walks from the arrival station to the other stations of the city", () => {
+    // arriving at W station 8 at 12:00; station 9 is a 12 min walk: the 12:15 bus to X, not the 12:08 one to Y
+    expect(cont("W", "X", { station: 8, utc: at(12) })).toEqual(["10:15"]);
+    expect(cont("W", "Y", { station: 8, utc: at(12) })).toEqual([]);
+    // station 10 is beyond walking range
+    expect(cont("W", "Z", { station: 8, utc: at(12) })).toEqual([]);
+  });
+});
+
 describe("journeys: route options", () => {
   // O origin; P, M, Q change cities; N target. Brands: 1 Intercités, 2 TGV, 3 TER
   const C2: Record<string, number[]> = { O: [0], P: [1, 2], M: [3], Q: [4], N: [5] };

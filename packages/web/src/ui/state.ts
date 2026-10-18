@@ -23,6 +23,16 @@ export interface AppState {
    * every leg, and back returns to the list instead of the connections from the previous leg.
    */
   journey?: boolean;
+  /**
+   * Continue the journey of `legs` to this city (URL `next=<city>`): the journeys from the last leg's arrival city,
+   * leaving after the arrival (transfer time, maximum wait), to append to the legs.
+   */
+  extend?: number;
+  /**
+   * The legs are journeys joined end to end (each one continuing the previous): the leg counts where the earlier
+   * ones end, ascending (URL `parts=3,4`). Back from the joined journey drops the last continuation.
+   */
+  parts?: number[];
   /** Onward connections from every station of the last leg's arrival city, not only the arrival station (URL `onward=city`). */
   wholeCity?: boolean;
   /**
@@ -73,6 +83,18 @@ function parseSettings(q: URLSearchParams): TransferSettings {
   });
 }
 
+/** Leg counts where joined journeys end: ascending, each between 1 and the number of legs − 1. */
+function parseParts(v: string | null, legs: number): number[] {
+  const out: number[] = [];
+  for (const p of (v ?? "").split(",")) {
+    if (!/^\d{1,3}$/.test(p)) break;
+    const n = +p;
+    if (n < 1 || n >= legs || (out.length && n <= out[out.length - 1]!)) break;
+    out.push(n);
+  }
+  return out;
+}
+
 export function parseHash(net: Net, hash: string): AppState {
   const q = new URLSearchParams(hash.replace(/^#/, ""));
   const city = cityByRef(net, q.get("from"));
@@ -82,6 +104,8 @@ export function parseHash(net: Net, hash: string): AppState {
   const f = q.get("modes");
   const local = q.get("local") !== "0";
   const legs = city !== undefined && dest !== undefined ? decodeLegs(q.get("legs"), city) : [];
+  const extend = legs.length ? cityByRef(net, q.get("next")) : undefined;
+  const parts = legs.length ? parseParts(q.get("parts"), legs.length) : [];
   return {
     ...(city !== undefined ? { city } : {}),
     ...(station && /^[a-z0-9-]{1,80}$/.test(station) ? { station } : {}),
@@ -92,6 +116,8 @@ export function parseHash(net: Net, hash: string): AppState {
     ...(legs.length && (q.get("trip") === "1" || q.get("trip") === "all") ? { schedule: true } : {}),
     ...(legs.length && q.get("trip") === "all" ? { journey: true } : {}),
     ...(legs.length && q.get("onward") === "city" ? { wholeCity: true } : {}),
+    ...(extend !== undefined && extend !== city ? { extend } : {}),
+    ...(parts.length ? { parts } : {}),
     xfer: parseSettings(q),
   };
 }
@@ -106,6 +132,8 @@ export function toHash(net: Net, s: AppState): string {
     q.push(`legs=${encodeLegs(s.legs)}`);
     if (s.schedule) q.push(s.journey ? "trip=all" : "trip=1");
     else if (s.wholeCity) q.push("onward=city");
+    if (s.parts?.length) q.push(`parts=${s.parts.join(",")}`);
+    if (s.extend !== undefined) q.push(`next=${net.slug[s.extend]}`);
   }
   if (s.filters.cats !== ALL_CATS) q.push(`modes=${encodeCats(s.filters.cats) || "none"}`);
   if (s.filters.local === false) q.push("local=0");

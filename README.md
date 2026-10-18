@@ -169,6 +169,14 @@ Pipeline in short:
      "TGV INOUI → Paris → TGV INOUI"; header with the duration range, changes and runs a day, below it one row per departure with
      the change time and the walk), each journey matched back to the boarding cities' shards (`matchLeg`) for route names; a row
      opens the journey's legs (schedule of the last leg, crumbs, the walk between stations shown with the change).
+     - **Continuing a journey** (`App.renderExtension`, URL `next=<city>`, then `parts=<n>,…`): while a journey (or a trip's
+       schedule, or the connections from a stop) is shown, tapping another city on the map – or naming one in the "Continue from X"
+       box under the journey – searches the journeys from the city where it ends to that city, leaving after its arrival
+       (`SearchParams.after`: first legs board no earlier than the minimum transfer time / the walk from the arrival station, and
+       within the maximum wait or the same day; at least 1 change, the set number if higher). The list is the journeys view with a
+       "Continuing A → B" line and "Search A → C instead" (the old tap behaviour); a row appends its legs and opens the joined
+       journey (header A → C, all legs and changes). `parts` records where joined journeys end, so Back drops the last
+       continuation; journeys can so be built beyond the 2 changes searched at once (Bordeaux → Ventimiglia → Genova).
      - **Search**: round-based (RAPTOR-like) over trips, not a time-expanded graph. Round 1 boards every trip leaving the origin on
        the day and records an arrival event at every later stop (intermediate stops included); round r + 1 boards at every city
        reached in round r every trip whose departure is feasible after one of the city's arrivals (transfer time per station pair,

@@ -822,6 +822,54 @@ h2:focus {
   margin: 0;
 }
 
+/* continuing a journey from where it ends */
+.cont-box {
+  margin: 10px 14px 4px;
+  padding: 10px 12px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+}
+.cont-box p {
+  margin: 0 0 8px;
+}
+.cont-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+.cont-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.cont-opt {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.cont-opt:hover,
+.cont-opt:focus-visible {
+  background: var(--surface-2);
+}
+.cont-list .opt-empty {
+  padding: 7px 10px;
+}
+.cont-head {
+  padding: 0 18px 8px;
+}
+.cont-head p {
+  margin: 0 0 4px;
+}
+
 /* journey */
 .crumbs {
   display: flex;

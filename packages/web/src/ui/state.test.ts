@@ -61,6 +61,23 @@ describe("journey steps in the URL", () => {
   });
 });
 
+describe("journeys joined end to end in the URL", () => {
+  const legs = "legs=4.20261019.1.3,7.20261019.0.2,9.20261019.0.5";
+  it("keeps the continuation target and where the joined journeys end", () => {
+    const t = parseHash(net, `#from=paris&to=lyon&${legs}&trip=all&parts=2&next=paris`);
+    expect(t.extend).toBeUndefined(); // the origin is no continuation
+    const u = parseHash(net, `#from=lyon&to=paris&${legs}&trip=all&parts=2&next=paris`);
+    expect([u.parts, u.extend]).toEqual([[2], 0]);
+    expect(toHash(net, u)).toBe(`#from=lyon&to=paris&${legs}&trip=all&parts=2&next=paris`);
+  });
+  it("drops invalid part boundaries and a continuation without legs", () => {
+    expect(parseHash(net, `#from=paris&to=lyon&${legs}&parts=1,1`).parts).toEqual([1]);
+    expect(parseHash(net, `#from=paris&to=lyon&${legs}&parts=3`).parts).toBeUndefined(); // not before the last leg
+    expect(parseHash(net, `#from=paris&to=lyon&${legs}&parts=0,2`).parts).toBeUndefined();
+    expect(parseHash(net, "#from=paris&to=lyon&next=lyon").extend).toBeUndefined();
+  });
+});
+
 describe("connection settings in the URL", () => {
   it("keeps changes, minimum transfer and maximum wait only when they differ from the defaults", () => {
     expect(parseHash(net, "#from=paris").xfer).toEqual({ transfers: 0, minTransfer: 10, maxWait: null });
