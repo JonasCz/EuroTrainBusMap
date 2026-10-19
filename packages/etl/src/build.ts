@@ -57,6 +57,7 @@ import { runSanity } from "./sanity.ts";
 import { writeMapData } from "./mapdata.ts";
 import { loadUrbanFeedDefs, writeUrbanLayer } from "./urban/index.ts";
 import { computeTransit, gatherTransitFeeds } from "./urban/transit.ts";
+import { BASEMAP_FILES } from "./assets-version.ts";
 import { BASEMAP_DIR, BASEMAP_MAXZOOM, BASEMAP_MINZOOM, BASEMAP_TILES_KEY, BASEMAP_VERSION, installBasemapTiles } from "./basemap/tiles.ts";
 import type { GeneratorReport } from "./generators/types.ts";
 import { readRetrievedAt } from "./generators/gtfs.ts";
@@ -1683,5 +1684,5 @@ function buildAttribution(ctx: BuildCtx): AttributionFile {
   return { sources };
 }
 
-export const BASEMAP_FILES = ["borders.json", "labels.json"];
+export { BASEMAP_FILES };
 

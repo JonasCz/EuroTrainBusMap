@@ -10,6 +10,7 @@
     "test": "vitest run",
     "typecheck": "tsc -p .",
     "assets": "NODE_USE_ENV_PROXY=1 node --no-warnings --max-old-space-size=8192 --import tsx src/assets.ts",
+    "assets-version": "node --no-warnings --import tsx src/assets-version.ts",
     "stops:candidates": "NODE_USE_ENV_PROXY=1 node --no-warnings --max-old-space-size=8192 --import tsx src/stop-candidates.ts"
   },
   "dependencies": {

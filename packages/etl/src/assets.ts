@@ -10,6 +10,8 @@
  *   rail/urbanrail-graph-v1.bin     tram / metro / light-rail track graph (aligns local-transport lines without shapes)
  *   road/road-graph-v1.bin          major-road graph for coach/bus corridor geometry (same format)
  *   manifest.json                   list of the keys above (read by the weekly build)
+ *   version.json                    the assets' version stamp (assets-version.ts), written by refresh-assets as its
+ *                                   last step; build-deploy refreshes the assets first when it does not match the code
  *
  * `--out` may already hold the current R2 assets (the workflow downloads them first, so the parts not rebuilt are kept).
  * Every file in it that is not one of the current keys above (an older format version such as rail-graph-v0.bin, the
@@ -26,23 +28,15 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLACES_ASSET, VILLAGES_ASSET, loadPlaces, loadVillages } from "./geonames.ts";
 import { loadFeedsConfig } from "./feeds.ts";
-import { BASEMAP_FILES } from "./build.ts";
+import { ASSET_KEYS, BASEMAP_FILES } from "./assets-version.ts";
 import { BASEMAP_TILES_KEY, buildBasemapTiles } from "./basemap/tiles.ts";
 import { log, warn } from "./util/log.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
 
-/** Every asset key the current code reads (the manifest lists exactly these, when present). */
-export const ASSET_KEYS = [
-  PLACES_ASSET,
-  VILLAGES_ASSET,
-  ...BASEMAP_FILES.map((f) => `basemap/${f}`),
-  BASEMAP_TILES_KEY,
-  RAIL_GRAPH_KEY,
-  URBAN_RAIL_GRAPH_KEY,
-  ROAD_GRAPH_KEY,
-];
+/** Every asset key the current code reads: ASSET_KEYS (assets-version.ts, with the version check of the bucket). */
+export { ASSET_KEYS };
 
 export interface AssetsManifest {
   generatedAt: string;
