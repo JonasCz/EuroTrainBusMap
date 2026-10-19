@@ -2,6 +2,7 @@
  "userAgent": "EuroTrainBusMap/1.0 (+https://github.com/JonasCz/EuroTrainBusMap)",
  "transitousBase": "https://api.transitous.org/gtfs/",
  "minBusKm": 15,
+ "staleMaxDays": 730,
  "coachOperators": "\\b(flix ?bus|flixtrain|blablacar|ouibus|alsa|national express(?! (west midlands|coventry|dundee|bus))|megabus|ecolines|lux express|regiojet|student agency|vy (buss)?ekspress|vy bus4you|bus4you|nor-way|bussekspress|swebus|eurolines|scottish citylink|citylink|expressway|aircoach|dublin coach|gobus|jj kavanagh|leo express|sindbad|marino ?bus|itabus|baltour|socibus|monbus|ember|simple express|arriva express|polonus|kautra|nettbuss ekspress|timjan|tide ekspress|kystbussen|lavprisekspressen|matkahuolto|onnibus|kaugliinid|hansabuss|eurobus|union ivkoni|orange ways|globtour|niš ekspres|nis ekspres|lasta|arriva.*(express|intercity)|bus ?eireann.*express)\\b",
  "urbanAgencies": "\\b(bvg|berliner verkehrsbetriebe|mvg|münchner verkehrsgesellschaft|hochbahn|wiener linien|ratp|london buses|tfl|gvb|ret|htm|dpp|dopravní podnik|mpk|ztm|bkv|bkk|atm milano|atac|tmb|emt madrid|emt valencia|stib|mivb|tpg|vbz|bernmobil|kvb|rheinbahn|üstra|ssb|vag nürnberg|lvb|dvb|hsl|sl stockholm|ruter|movia|iett)\\b",
  "feeds": [
@@ -1114,7 +1115,7 @@
    ],
    "sources": [
     {
-     "transitousMatch": "^it_(Lazio-Cotral|Piemonte-Bus|Sardegna-ARST|Sardegna-Contributate|Toscana-Autolinee-LineeRegionali|Bolzano-STA|Trentino-Trasporti|Sicilia-intercity-coaches|Calabria-CORE|Puglia-Brindisi-Extraurbano|Veneto-Mobilita-di-Marca|Lombardia-Autolinee-Varesine)\\.gtfs\\.zip$"
+     "transitousMatch": "^it_(Lazio-Cotral|Piemonte-Bus|Sardegna-ARST|Sardegna-Contributate|Toscana-Autolinee-LineeRegionali|Bolzano-STA|Trentino-Trasporti|Sicilia-intercity-coaches|Calabria-CORE|Puglia-Brindisi-Extraurbano|liguria-riviera-transporti|Veneto-Mobilita-di-Marca|Lombardia-Autolinee-Varesine|Lombardia-Movibus)\\.gtfs\\.zip$"
     }
    ],
    "notes": "No national aggregate; ~10 regional files from Transitous listing.",
@@ -1179,6 +1180,21 @@
    "approxMB": 0.05
   },
   {
+   "id": "es-feve",
+   "country": "ES",
+   "name": "Renfe Cercanías AM / FEVE (narrow gauge)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "es_Feve.gtfs.zip"
+    }
+   ],
+   "approxMB": 0.2
+  },
+  {
    "id": "es-alsa",
    "country": "ES",
    "name": "ALSA (national coach)",
@@ -1211,7 +1227,7 @@
    ],
    "sources": [
     {
-     "transitousMatch": "^es_(Autobuses-Xunta-de-Galicia|Autobús-interurbano-de-Cataluña|Autobús-interurbano-Comunidad-Valenciana|Generalitat-Valenciana-\\(Intercity-bus\\)|Autobús-Principado-de-Asturias|Transporte-metropolitano-Andalucía|Sarfa-autobuses|Bizkaibus|Lurraldebus-.*|La-Veloz-SA|Autobuses-Sarbus|Autobús-en-Cantabria|Consorcio-Regional-de-Transportes-de-Madrid-CRTM-I|Transporte-público-de-la-Isla-de-Mallorca|Autobús-interurbano-de-Tenerife|Unauto|Alavabus)\\.gtfs\\.zip$"
+     "transitousMatch": "^es_(Autobuses-Xunta-de-Galicia|Autobús-interurbano-de-Cataluña|Autobús-interurbano-Comunidad-Valenciana|Generalitat-Valenciana-\\(Intercity-bus\\)|Autobús-interurbano-de-Navarra|Autobús-Principado-de-Asturias|Transporte-metropolitano-Andalucía|Sarfa-autobuses|Bizkaibus|Lurraldebus-.*|La-Veloz-SA|Autobuses-Sarbus|Autobús-en-Cantabria|Consorcio-Regional-de-Transportes-de-Madrid-CRTM-I|Transporte-público-de-la-Isla-de-Mallorca|Autobús-interurbano-de-Tenerife|Trasnportes-Insular-de-La-Palma-\\(TILP\\)|Unauto|Alavabus)\\.gtfs\\.zip$"
     }
    ],
    "notes": "Several files; no national aggregate (NAP has a bus-concessions dataset VAC-*).",
@@ -1378,6 +1394,22 @@
     "allCoach": true,
     "priority": -1
    }
+  },
+  {
+   "id": "ba-zrs",
+   "country": "BA",
+   "name": "ŽRS (Republika Srpska rail, community feed)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "transitous": "ba_ZFBiH.gtfs.zip"
+    }
+   ],
+   "notes": "Transitous ba_ZFBiH (unofficial, Petr Novak) also has the ŽRS trains (Banja Luka - Doboj - ...); only those are kept (agency filter: operator adapter operators/zrs.ts), the FBiH ones come from ba-zfbih. Last updated Aug 2025, service ended 2025-12-13: kept as stale (its last weeks repeated, labelled out of date) until it is refreshed or older than staleMaxDays.",
+   "approxMB": 0.2
   },
   {
    "id": "me-zpcg",

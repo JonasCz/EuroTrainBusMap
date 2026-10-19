@@ -92,6 +92,16 @@
    ]
   },
   {
+   "id": "u-es-metro-de-madrid",
+   "country": "ES",
+   "name": "Metro-de-Madrid",
+   "sources": [
+    {
+     "transitous": "es_Metro-de-Madrid.gtfs.zip"
+    }
+   ]
+  },
+  {
    "id": "u-es-autobús-urbano-de-madrid-(crtm)",
    "country": "ES",
    "name": "Autobús-urbano-de-Madrid-(CRTM)",
@@ -192,6 +202,26 @@
    ]
   },
   {
+   "id": "u-es-transporte-urbano-de-zaragoza",
+   "country": "ES",
+   "name": "Transporte-urbano-de-Zaragoza",
+   "sources": [
+    {
+     "transitous": "es_Transporte-urbano-de-Zaragoza.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-es-metrotenerife",
+   "country": "ES",
+   "name": "Metrotenerife",
+   "sources": [
+    {
+     "transitous": "es_Metrotenerife.gtfs.zip"
+    }
+   ]
+  },
+  {
    "id": "u-es-guaguas-municipales",
    "country": "ES",
    "name": "Guaguas Municipales (Las Palmas de Gran Canaria city bus)",
@@ -203,6 +233,32 @@
      "url": "https://files.mobilitydatabase.org/tld-767/latest.zip"
     }
    ]
+  },
+  {
+   "id": "u-ma-casatramway",
+   "country": "MA",
+   "name": "Casablanca tramway (T1–T4) and busway (BW1, BW2)",
+   "sources": [
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-3462/latest.zip"
+    }
+   ],
+   "license": "unofficial (github.com/SpaghettDev/CasaTransport-GTFS)",
+   "licenseUrl": "https://github.com/SpaghettDev/CasaTransport-GTFS",
+   "notes": "Unofficial, frequency-based; calendar 2026-05-31 – 2026-06-30 plus Sunday / holiday dates to 2026-12-27. feed_info ends 2026-06-30: kept as stale (lines read from its last weeks, labelled out of date)."
+  },
+  {
+   "id": "u-ma-casabus",
+   "country": "MA",
+   "name": "Casabus (Casablanca city buses)",
+   "sources": [
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-3463/latest.zip"
+    }
+   ],
+   "license": "unofficial (github.com/SpaghettDev/CasaTransport-GTFS)",
+   "licenseUrl": "https://github.com/SpaghettDev/CasaTransport-GTFS",
+   "notes": "Unofficial; service ended 2026-06-29: kept as stale (lines read from its last weeks, labelled out of date) within staleMaxDays."
   },
   {
    "id": "u-it-lombardia-atm",
@@ -291,6 +347,16 @@
    "sources": [
     {
      "transitous": "pt_Metro-Porto.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-pt-porto-stcp",
+   "country": "PT",
+   "name": "Porto-STCP",
+   "sources": [
+    {
+     "transitous": "pt_Porto-STCP.gtfs.zip"
     }
    ]
   },
@@ -421,6 +487,26 @@
    "sources": [
     {
      "transitous": "bg_sofia.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-gr-athens-bus",
+   "country": "GR",
+   "name": "Athens-Bus",
+   "sources": [
+    {
+     "transitous": "gr_Athens-Bus.gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-gr-athens-rail",
+   "country": "GR",
+   "name": "Athens-Rail",
+   "sources": [
+    {
+     "transitous": "gr_Athens-Rail.gtfs.zip"
     }
    ]
   },

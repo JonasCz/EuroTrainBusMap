@@ -72,12 +72,12 @@ Sahara. Feeds checked (downloaded, calendars read):
 | ONCF rail (Al Boraq, Al Atlas, TNR, Al Bidaoui) + Supratours coaches | Transitous `ma_oncf` (unofficial, scraped from oncf-voyages.ma, ODbL) | 2026-08-18 – 2028-08-18 (one week repeated; Fridays nearly empty) | `ma-oncf` (rail + coach) |
 | TITSA (Tenerife buses) | Transitous `es_Autobús-interurbano-de-Tenerife` (NAP) = `es_Transportes-interurbanos-de-Tenerife-(TITSA)` | calendar_dates 2026-10-13 – 2027-04-11 | already matched by `es-regional-bus`; was dropped by the old bbox |
 | Guaguas Municipales (Las Palmas city bus) | Transitous `es_Guaguas-Municipales` (MDB `tld-767`) | 2015 – 2035 | local layer (`urban-feeds.json`) |
-| Metrotenerife (tram) | Transitous `es_Metrotenerife` = operator URL | ended 2025-07-15 | no: removed from `urban-feeds.json` (out of date) |
-| Casablanca tramway T1–T4, busway BW1/BW2 | MDB `mdb-3462` (unofficial) | feed_info 2026-05-31 – 06-30, only Sunday / holiday dates after that | no: removed (out of date) |
-| TILP (La Palma buses) | Transitous `es_Trasnportes-Insular-de-La-Palma-(TILP)` | ended 2025-12-25 | no (stale) |
-| ONCF (other unofficial feed) | MDB `mdb-3049` | ended 2025-12-31, 60 trips | no (stale, superseded) |
-| Casabus (Casablanca city bus) | MDB `mdb-3463` | ended 2026-06-29 | no (stale) |
-| Vitalis Tétouan city bus | MDB `mdb-1816` | ended 2021-11-30 | no (stale) |
+| Metrotenerife (tram) | Transitous `es_Metrotenerife` = operator URL | ended 2025-07-15 | local layer, **stale** (lines from its last weeks, labelled out of date) |
+| Casablanca tramway T1–T4, busway BW1/BW2 | MDB `mdb-3462` (unofficial) | feed_info 2026-05-31 – 06-30, only Sunday / holiday dates after that | local layer `u-ma-casatramway`, **stale** |
+| TILP (La Palma buses) | Transitous `es_Trasnportes-Insular-de-La-Palma-(TILP)` | ended 2025-12-25 | `es-regional-bus` (regex), **stale** (last weeks repeated, labelled) |
+| ONCF (other unofficial feed) | MDB `mdb-3049` | ended 2025-12-31, 60 trips | no (stale and superseded by `ma-oncf`) |
+| Casabus (Casablanca city bus) | MDB `mdb-3463` | ended 2026-06-29 | local layer `u-ma-casabus`, **stale** |
+| Vitalis Tétouan city bus | MDB `mdb-1816` | ended 2021-11-30 | no (older than the 2-year cap on stale data) |
 | Fred. Olsen Express (inter-island ferries) | Transitous `es_Ferry-Fred.Olsen` (NAP) | 2026-10-17 – 2027-05-30 | no: ferries are not a mode of the pipeline |
 | Baleària (incl. Algeciras – Tanger Med / Ceuta, Huelva – Gran Canaria / Tenerife) | Transitous `es_Ferry-Baleària` | service dates end 2025-03-31 | no: ferry, and stale |
 
@@ -94,7 +94,7 @@ timetable only as a web page, so the feed `ba-zfbih` is **generated** from it on
 
 | Part of <https://www.zfbh.ba/en/time-table/> | Use |
 |---|---|
-| Heading "ŽFBH Timetable for 2025/2026" | must name the current annual timetable (else the source fails); service is generated up to the December timetable change |
+| Heading "ŽFBH Timetable for 2025/2026" | names the annual timetable; service is generated up to the December timetable change. An earlier year (the page not yet updated after the change) is not an error: the feed is flagged stale, its last weeks repeated and labelled "Timetables out of date — expired 12 Dec 2026"; a later year fails the source |
 | Table "Train number \| Train type \| Relation \| Departure \| Arrival" (39 trains: Sarajevo – Mostar – Čapljina (– Ploče), Sarajevo – Zenica – Maglaj, Sarajevo – Visoko, Sarajevo – Pazarić, Zenica – Maglaj) | one trip per train; "Fast train" → route type 103 (long distance), "Local train" → 106 (regional) |
 | "Note:" footnotes keyed by asterisks (`*` … `*******`) | exact texts mapped to hard-coded calendar rules; weekday trains skip the FBiH public holidays (1–2 Jan, 1 Mar, 1–2 May, 25 Nov) |
 | Station form (POST `redvoznje_pol` / `redvoznje_dol`, 54 stations) | the trains between two stations with their times there: queried for Sarajevo and Maglaj with every other station (106 requests, ~4 s each, two at a time: ~4 min), giving every train's intermediate stops |
@@ -104,8 +104,11 @@ ignored) and not the Ploče trains. The footnotes date the Ploče trains (390–
 27.09.2026) in the past, so none of them runs in an October – December window; HŽPP's feed (`hr-hz`) has 390 – 393
 between Ploče and Metković on Fridays to Sundays until December 2026, so their Croatian part is still on the map.
 Station coordinates come from the stops of the 2025 community feed (they lie on the OSM track of the rail graph within
-25 m) plus Briješće (estimated); Ploče as in the HŽPP feed. The Transitous file `ba_ZFBiH` itself is out of date and no
-longer in `feeds.json` (the ŽRS trains of Republika Srpska, Banja Luka – Doboj …, have no current source).
+25 m) plus Briješće (estimated); Ploče as in the HŽPP feed. The Transitous file `ba_ZFBiH` itself is out of date; it
+stays in `feeds.json` as `ba-zrs` for the ŽRS trains of Republika Srpska (Banja Luka – Doboj …), which have no other
+source: limited to the ŽRS agency by the operator adapter `operators/zrs.ts`, kept as **stale** (its last six weeks
+before 2025-12-13 repeated, every train labelled "Timetables out of date — expired 13 Dec 2025") until it is refreshed
+or older than the cap (13 Dec 2027).
 
 ### Buses (checked 19 Oct 2026)
 
@@ -129,25 +132,41 @@ the build's dedup (coaches; `ba-centrotrans` takes part with its buses, option `
 (FlixBus, Li-Bus). In a test build with the BiH feeds and their neighbours the dedup paired 77 redvoznje trips with
 Centrotrans regional trips (Sarajevo – Kakanj / Vareš / Fojnica …); by the repo's rule the trip serving more places
 stays and takes the other's days. Health: `health.json`; `buskarta-intl` was last confirmed 2026-08-16 (no lines from it are used).
+A line source counts as valid for 60 days after its last confirmation; when that has run out before the build, the
+feed is kept as **stale** (masks on the six weeks up to the end, repeated by the build, labelled out of date) instead of
+being dropped.
 
-## 7. Feed audit (19 Oct 2026)
+## 7. Feed audit (19 Oct 2026) and stale feeds
 
 Every feed of `feeds.json` and `urban-feeds.json` was checked against its downloaded zip (last service day from
-calendar / calendar_dates, `feed_info` dates, services active in the next 60 days). Removed as out of date:
+calendar / calendar_dates, `feed_info` dates, services active in the next 60 days). Out of date:
 
 | Feed | Evidence |
 |---|---|
 | `ba-zrs` (Transitous `ba_ZFBiH`, ŽRS only) | last service 2025-12-13 (file of Aug 2025) |
 | `es-feve` (Transitous `es_Feve`) | last service 2026-05-13 (file of 15 Apr 2026), 0 trips in the window |
 | `es-regional-bus` file `Autobús-interurbano-de-Navarra` (regex) | last service 2025-12-31 (file of Nov 2025) |
+| `es-regional-bus` file `Trasnportes-Insular-de-La-Palma-(TILP)` (regex) | last service 2025-12-25 |
 | `it-regional-bus` files `liguria-riviera-transporti`, `Lombardia-Movibus` (regex) | summer timetable ended 2026-09-13; ended 2025-03-30 |
 | `u-es-metro-de-madrid` | last service 2026-05-27 (file of May 2025) |
 | `u-es-metrotenerife` | last service 2025-07-15 |
 | `u-es-transporte-urbano-de-zaragoza` | feed_info ends 2026-10-05; after it one stray service a day (27,161 dates before vs 1 per day after) |
 | `u-ma-casatramway` | feed_info 2026-05-31 – 06-30; only Sunday / holiday dates after that |
+| `u-ma-casabus` | last service 2026-06-29 |
 | `u-pt-porto-stcp` | last service 2026-10-06 (file of 10 Sep 2026) |
 | `u-gr-athens-bus`, `u-gr-athens-rail` | last service 2026-10-06 / 2026-08-31 (files of 8 Jul 2026) |
 
-Kept although close to their end: `u-it-lombardia-atm` (last service 2026-10-19, refreshed monthly upstream),
-`ba-centrotrans` (2026-11-05). The build's validity check (`packages/etl/src/gtfs/validity.ts`) skips such a feed with a
-warning as soon as its service has ended, so they need no manual step.
+They were first removed (commit 603737a) and are now **kept as stale** (`packages/etl/src/gtfs/validity.ts`): a feed
+whose service ended before the build's first day, but not more than `staleMaxDays` (feeds.json, 730 days;
+`--stale-max-days`) before it, is loaded with its last service pattern projected onto the build window – per weekday
+the typical day of its last six weeks (the most common set of services, so a holiday is outvoted; ties go to the
+trip count closest to the median, then the later day) – and every route of it carries the expiry date
+(`Route.expired`, `expired` in `attribution.json`, tile property `e` of the local lines). The app shows "Timetables out
+of date — expired {date}" on its departures, trips, journey legs, local-line popups and in the data sources. In the
+cross-feed dedup a stale trip always loses to a current copy and adds no days to it. Everything is computed from the
+zip on every build; nothing is stored. A feed older than the cap is skipped (`expiredFeeds` in the build report), and
+a source that disappears or stops parsing drops out as before. Stale feeds are listed in the build report as
+`staleFeeds`. Caveat: a seasonal timetable that ran out (Liguria Riviera's summer timetable) is repeated as it was.
+
+Close to their end: `u-it-lombardia-atm` (last service 2026-10-19, refreshed monthly upstream), `ba-centrotrans`
+(2026-11-05): from the day after, they become stale by themselves (labelled), no manual step needed.

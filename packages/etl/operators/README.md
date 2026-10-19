@@ -20,6 +20,7 @@ share one quirk), applied at fixed points of every build.
 | `se-train-operators.ts` | se-trafiklab, train operators' agencies | their bus routes are replacement buses: dropped (`classify.after`) |
 | `sncf.ts` | fr-sncf-national | feed options (category from trip_id, number in headsign, category names); CTE / CRE trips on rail routes are buses, CRE reservation only (`classify.before`) |
 | `trenitalia.ts` | agency Trenitalia | end-station-named long-distance trains: brand "Frecciarossa", high speed (`route`) |
+| `zrs.ts` | ba-zrs | only the ŽRS (Republika Srpska) trains of the community feed ba_ZFBiH are kept (`feedOptions.onlyAgencies`; the FBiH trains come from the generated ba-zfbih) |
 | `zou.ts` | fr-paca-zou-intermetropole | adds the Transdev ZOU! regional-train feed after fr-transilien (`extraFeeds`) |
 
 ## The header comment (required)
