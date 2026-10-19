@@ -9,6 +9,7 @@ import { loadPlaces } from "../geonames.ts";
 import { log, warn } from "../util/log.ts";
 import { cityDiscs, DiscIndex } from "./classify.ts";
 import { extractFeed } from "./extract.ts";
+import { zipExpired } from "../gtfs/validity.ts";
 import { EXTRACT_VERSION, type UrbanFeed } from "./types.ts";
 
 /** Cities from this population on count for bus lines. */
@@ -85,6 +86,12 @@ export async function gatherFeeds(o: GatherOptions): Promise<{ feeds: UrbanFeed[
     while (nextDl < todo.length && nextDl < i + 4) startDl(todo[nextDl++]!.rf);
     const zip = await dl.get(rf.key);
     if (!zip) continue;
+    // a feed whose service has ended is left out (gtfs/validity.ts; the main stage warns for its own feeds)
+    const outOfDate = await zipExpired(zip, o.startDate);
+    if (outOfDate) {
+      if (extraKeys.has(rf.key)) warn(`urban feed ${rf.key}: out of date (${outOfDate}), skipped`);
+      continue;
+    }
     const st = await stat(zip);
     const cacheFile = join(outDir, "feeds", `${rf.key}.json.gz`);
     const stamp = `${st.size}:${EXTRACT_VERSION}:${refDate}:${BUS_CITY_MIN_POP}`;

@@ -67,6 +67,8 @@ export interface BuildCtx {
   feeds: ResolvedFeed[];
   feedStats: FeedLoadStats[];
   failed: string[];
+  /** Feeds skipped because their service ended before the build's first day (gtfs/validity.ts). */
+  expired?: { key: string; reason: string }[];
   /** Outcome of the feed generators (packages/etl/generators); empty with --reuse-db. */
   generated?: GeneratorReport[];
   licenses: unknown[];
@@ -106,7 +108,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const D = args.days;
   const startDay = isoToEpochDay(args.startDate);
   const stats: Record<string, number> = {};
-  const report: Record<string, unknown> = { args: { ...args }, feeds: ctx.feedStats, failedFeeds: ctx.failed, ...(ctx.generated?.length ? { generated: ctx.generated } : {}) };
+  const report: Record<string, unknown> = { args: { ...args }, feeds: ctx.feedStats, failedFeeds: ctx.failed, expiredFeeds: ctx.expired ?? [], ...(ctx.generated?.length ? { generated: ctx.generated } : {}) };
 
   // ------------------------------------------------------------------ categories
   timer.start("categories");
@@ -1491,6 +1493,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   Object.assign(stats, {
     feeds: ctx.feedStats.filter((f) => f.trips > 0).length,
     feedsFailed: ctx.failed.length,
+    feedsExpired: ctx.expired?.length ?? 0,
     cities: outCities.length,
     stations: outStations.length,
     corridors: outCorr.length,

@@ -21,6 +21,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import { Cat, TRANSIT_BANDS, TRANSIT_MAX_M, TRANSIT_MAX_MIN, transitUseful, walkMinutes, type TransitPair } from "@etbm/shared";
 import { Db } from "../db.ts";
 import { downloadWithFallback } from "../download.ts";
+import { zipExpired } from "../gtfs/validity.ts";
 import { resolveFeeds, type FeedDef, type FeedsConfig, type ResolvedFeed } from "../feeds.ts";
 import { loadPlaces } from "../geonames.ts";
 import { fastDist } from "../util/geo.ts";
@@ -499,6 +500,8 @@ export async function gatherTransitFeeds(o: GatherTransitOptions): Promise<Trans
         continue;
       }
     }
+    // a feed whose service has ended is left out (gtfs/validity.ts; warned by the main stage and the local layer)
+    if (await zipExpired(zip, o.startDate)) continue;
     const st = await stat(zip);
     const cacheFile = join(outDir, `${rf.key}.json.gz`);
     const stamp = `${st.size}:${TRANSIT_EXTRACT_VERSION}:${monday}:${TRANSIT_CITY_MIN_POP}`;

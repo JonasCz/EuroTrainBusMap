@@ -6,6 +6,7 @@ import { Db } from "./db.ts";
 import { downloadWithFallback, fetchText, mapLimit } from "./download.ts";
 import { loadFeedsConfig, resolveFeeds, type ResolvedFeed, type Tier } from "./feeds.ts";
 import { LOAD_VERSION, initSchema, loadFeed, type FeedLoadStats } from "./gtfs/load.ts";
+import { zipExpired } from "./gtfs/validity.ts";
 import { runBuild } from "./build.ts";
 import { runGenerator } from "./generators/registry.ts";
 import type { GeneratorReport } from "./generators/types.ts";
@@ -104,6 +105,8 @@ async function main() {
 
   const feedStats: FeedLoadStats[] = [];
   const failed: string[] = [];
+  /** feeds whose service ended before the build's first day (gtfs/validity.ts): skipped */
+  const expired: { key: string; reason: string }[] = [];
   const stateFile = join(args.work, "db-state.json");
   const cfgText = await readFile(join(here, "..", "feeds.json"), "utf8");
   const stateKey = JSON.stringify({ feeds: feeds.map((f) => f.key), start: args.startDate, days: args.days, tiers: args.tiers, load: LOAD_VERSION, cfgLen: cfgText.length, cfgHash: cfgText.split("").reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7), ops: cfg.operators?.loadFingerprint() ?? 0, gens: cfg.generators?.fingerprint ?? 0 });
@@ -113,6 +116,7 @@ async function main() {
     if (st.key === stateKey) {
       reuse = true;
       feedStats.push(...st.feedStats);
+      expired.push(...(st.expired ?? []));
       log("reusing existing DuckDB database (--reuse-db)");
     } else warn("--reuse-db: database was built with different inputs, rebuilding");
   }
@@ -181,34 +185,47 @@ async function main() {
       }
       const lctx = { db, cfg, startDate: args.startDate, days: args.days, tmpDir, presentFeedIds: present, dropBus };
       let st: FeedLoadStats | null = null;
-      try {
-        st = await loadFeed(lctx, i, rf, zip);
-      } catch (e) {
-        warn(`feed ${rf.key}: load failed: ${(e as Error).stack ?? e}`);
-      }
+      // A feed whose service has ended is not loaded at all (it drops out of the build and the attribution by
+      // itself and comes back when its source publishes a new timetable); its fallbacks may be newer.
+      let outOfDate = await zipExpired(zip, args.startDate);
+      if (outOfDate) warn(`feed ${rf.key}: out of date (${outOfDate}), skipped`);
+      else
+        try {
+          st = await loadFeed(lctx, i, rf, zip);
+        } catch (e) {
+          warn(`feed ${rf.key}: load failed: ${(e as Error).stack ?? e}`);
+        }
       // Stale or broken primary source: try the fallbacks.
       for (let u = 1; (!st || st.trips === 0) && u < rf.urls.length; u++) {
         const dest = join(cacheDir, "feeds", `${rf.key}.fallback${u}.zip`);
         try {
           await downloadWithFallback([rf.urls[u]!], dest, cfg.userAgent, args.maxAgeH);
+          const fx = await zipExpired(dest, args.startDate);
+          if (fx) {
+            warn(`feed ${rf.key}: fallback ${rf.urls[u]} out of date too (${fx})`);
+            continue;
+          }
           warn(`feed ${rf.key}: no usable data from primary source, trying ${rf.urls[u]}`);
           st = await loadFeed(lctx, i, rf, dest);
+          outOfDate = null;
         } catch (e) {
           warn(`feed ${rf.key}: fallback ${u} failed: ${(e as Error).message}`);
         }
       }
       if (st) feedStats.push(st);
-      if (!st) failed.push(rf.key);
+      else if (outOfDate) expired.push({ key: rf.key, reason: outOfDate });
+      else failed.push(rf.key);
     }
     // what the operator adapters changed while loading (kept with the database for --reuse-db runs)
     const opRows = cfg.operators?.summaryRows() ?? [];
     if (opRows.length) await db.insertRows("operator_log", [{ name: "adapter", type: "VARCHAR" }, { name: "feed", type: "VARCHAR" }, { name: "field", type: "VARCHAR" }, { name: "n", type: "INTEGER" }], opRows, join(tmpDir, "operator_log.csv"));
     await db.run("CHECKPOINT");
-    await writeFile(stateFile, JSON.stringify({ key: stateKey, feedStats }));
+    await writeFile(stateFile, JSON.stringify({ key: stateKey, feedStats, expired }));
   }
 
   if (generated.length) log(`feed generators: ${generated.map((g) => `${g.id} ${g.ok ? "ok" : "FAILED"}`).join(", ")}`);
-  await runBuild({ db, args, cfg, feeds, feedStats, failed, generated, licenses, timer, cacheDir, tmpDir, t0 });
+  if (expired.length) log(`out-of-date feeds skipped: ${expired.map((e) => `${e.key} (${e.reason})`).join(", ")}`);
+  await runBuild({ db, args, cfg, feeds, feedStats, failed, expired, generated, licenses, timer, cacheDir, tmpDir, t0 });
   db.close();
 }
 

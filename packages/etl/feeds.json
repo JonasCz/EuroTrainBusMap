@@ -1117,7 +1117,7 @@
    ],
    "sources": [
     {
-     "transitousMatch": "^it_(Lazio-Cotral|Piemonte-Bus|Sardegna-ARST|Sardegna-Contributate|Toscana-Autolinee-LineeRegionali|Bolzano-STA|Trentino-Trasporti|Sicilia-intercity-coaches|Calabria-CORE|Puglia-Brindisi-Extraurbano|liguria-riviera-transporti|Veneto-Mobilita-di-Marca|Lombardia-Autolinee-Varesine|Lombardia-Movibus)\\.gtfs\\.zip$"
+     "transitousMatch": "^it_(Lazio-Cotral|Piemonte-Bus|Sardegna-ARST|Sardegna-Contributate|Toscana-Autolinee-LineeRegionali|Bolzano-STA|Trentino-Trasporti|Sicilia-intercity-coaches|Calabria-CORE|Puglia-Brindisi-Extraurbano|Veneto-Mobilita-di-Marca|Lombardia-Autolinee-Varesine)\\.gtfs\\.zip$"
     }
    ],
    "notes": "No national aggregate; ~10 regional files from Transitous listing.",
@@ -1182,21 +1182,6 @@
    "approxMB": 0.05
   },
   {
-   "id": "es-feve",
-   "country": "ES",
-   "name": "Renfe Cercanías AM / FEVE (narrow gauge)",
-   "tier": "core",
-   "keep": [
-    "rail"
-   ],
-   "sources": [
-    {
-     "transitous": "es_Feve.gtfs.zip"
-    }
-   ],
-   "approxMB": 0.2
-  },
-  {
    "id": "es-alsa",
    "country": "ES",
    "name": "ALSA (national coach)",
@@ -1229,7 +1214,7 @@
    ],
    "sources": [
     {
-     "transitousMatch": "^es_(Autobuses-Xunta-de-Galicia|Autobús-interurbano-de-Cataluña|Autobús-interurbano-Comunidad-Valenciana|Generalitat-Valenciana-\\(Intercity-bus\\)|Autobús-interurbano-de-Navarra|Autobús-Principado-de-Asturias|Transporte-metropolitano-Andalucía|Sarfa-autobuses|Bizkaibus|Lurraldebus-.*|La-Veloz-SA|Autobuses-Sarbus|Autobús-en-Cantabria|Consorcio-Regional-de-Transportes-de-Madrid-CRTM-I|Transporte-público-de-la-Isla-de-Mallorca|Autobús-interurbano-de-Tenerife|Unauto|Alavabus)\\.gtfs\\.zip$"
+     "transitousMatch": "^es_(Autobuses-Xunta-de-Galicia|Autobús-interurbano-de-Cataluña|Autobús-interurbano-Comunidad-Valenciana|Generalitat-Valenciana-\\(Intercity-bus\\)|Autobús-Principado-de-Asturias|Transporte-metropolitano-Andalucía|Sarfa-autobuses|Bizkaibus|Lurraldebus-.*|La-Veloz-SA|Autobuses-Sarbus|Autobús-en-Cantabria|Consorcio-Regional-de-Transportes-de-Madrid-CRTM-I|Transporte-público-de-la-Isla-de-Mallorca|Autobús-interurbano-de-Tenerife|Unauto|Alavabus)\\.gtfs\\.zip$"
     }
    ],
    "notes": "Several files; no national aggregate (NAP has a bus-concessions dataset VAC-*).",
@@ -1326,25 +1311,6 @@
    "attribution": "Željeznice Federacije Bosne i Hercegovine",
    "notes": "Generated on every build by packages/etl/generators/ba-zfbih.ts from the HTML timetable (no GTFS published). Replaces the Transitous community feed ba_ZFBiH for the FBiH trains (that feed ended 2025-12-13).",
    "approxMB": 0.01
-  },
-  {
-   "id": "ba-zrs",
-   "country": "BA",
-   "name": "ŽRS (Republika Srpska rail, community feed)",
-   "tier": "core",
-   "keep": [
-    "rail"
-   ],
-   "sources": [
-    {
-     "transitous": "ba_ZFBiH.gtfs.zip"
-    }
-   ],
-   "options": {
-    "onlyAgencies": "RSrp|Republike Srpske"
-   },
-   "notes": "Transitous ba_ZFBiH (unofficial, Petr Novak) also has the ŽRS trains (Banja Luka - Doboj - ...); only those are kept, the FBiH ones come from ba-zfbih. Last updated Aug 2025, service ended 2025-12-13: loads nothing until it is refreshed.",
-   "approxMB": 0.2
   },
   {
    "id": "me-zpcg",

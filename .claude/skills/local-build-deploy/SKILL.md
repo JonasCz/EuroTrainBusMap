@@ -173,7 +173,8 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
 
 `pnpm typecheck` passes (shared, etl, web); `pnpm test` passes (etl 195 tests, web 147 tests, ~10 s each). `wrangler whoami` works with the env token;
 `wrangler deploy --dry-run` succeeded on the assembled `dist/site` (1781 files). Expected harmless build warnings: a few feeds with
-"no trips within the horizon" (it-regional-bus lombardia/liguria, es-feve, navarra bus, ba-zfbih), stop-names "not found within 1500 m",
+"no trips within the horizon" (short-bus-only files such as lurraldebus-*), "out of date (service ended on …), skipped" for a feed whose
+calendar has run out (gtfs/validity.ts; `expiredFeeds` in the build report – remove it from feeds.json if it has ended for good), stop-names "not found within 1500 m",
 "Berlin is missing station Berlin Ostbahnhof".
 
 ## Gotchas

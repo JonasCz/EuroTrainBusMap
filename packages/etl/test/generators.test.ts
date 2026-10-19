@@ -236,11 +236,8 @@ describe("generator registry and build integration", () => {
     const ba = cfg.feeds.find((f) => f.id === "ba-zfbih")!;
     expect(ba.sources).toEqual([{ generated: "ba-zfbih" }]);
     expect(ba.timetableUrl).toBe("https://www.zfbh.ba/en/time-table/");
-    // the community feed only for the ŽRS trains, so no FBiH train comes twice
-    const zrs = cfg.feeds.find((f) => f.sources.some((s) => "transitous" in s && s.transitous === "ba_ZFBiH.gtfs.zip"))!;
-    expect(zrs.id).toBe("ba-zrs");
-    expect(new RegExp(zrs.options!.onlyAgencies!, "i").test("Željeznice FBiH d.o.o.")).toBe(false);
-    expect(new RegExp(zrs.options!.onlyAgencies!, "i").test("Željeznice RSrp d.o.o.")).toBe(true);
+    // the community feed ba_ZFBiH (ŽFBiH and ŽRS, ended 2025-12-13) is out of date: no feed reads it any more
+    expect(cfg.feeds.some((f) => f.sources.some((s) => "transitous" in s && s.transitous === "ba_ZFBiH.gtfs.zip"))).toBe(false);
     const rf = await resolveFeeds(cfg, { only: ["ba-zfbih"], tiers: ["core"], cacheDir: dir });
     expect(rf).toEqual([expect.objectContaining({ key: "ba-zfbih", urls: [], generator: "ba-zfbih" })]);
   });

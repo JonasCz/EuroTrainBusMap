@@ -35,7 +35,11 @@ Pipeline in short:
 
 1. **Feeds** – resolved from `feeds.json` (Transitous file names are looked up in its index, so
    year-suffixed names roll over automatically), downloaded with a custom User-Agent, 3 at a time,
-   ETag-cached in `work/cache`. A stale primary source falls back to the next URL.
+   ETag-cached in `work/cache`. A stale primary source falls back to the next URL. **Out-of-date feeds are skipped**
+   (`gtfs/validity.ts`): a feed whose last service day (calendar / calendar_dates) or `feed_info` end date lies before the
+   build's first day is not loaded, not used for the local layer or transit transfers and not credited (warning
+   "out of date …", `expiredFeeds` in the build report); it comes back by itself when its source publishes a new
+   timetable. Feeds that have ended for good are removed from `feeds.json` / `urban-feeds.json` instead.
    Operators that publish no GTFS get a **generated feed** (`packages/etl/generators/`, source `{ "generated": "<id>" }`
    in `feeds.json`): a script per source fetches the operator's timetable page, parses it strictly (known table
    structure, footnote texts mapped to hard-coded calendar rules, a check that the timetable is current) and writes a

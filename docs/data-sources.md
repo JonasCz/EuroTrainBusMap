@@ -72,8 +72,8 @@ Sahara. Feeds checked (downloaded, calendars read):
 | ONCF rail (Al Boraq, Al Atlas, TNR, Al Bidaoui) + Supratours coaches | Transitous `ma_oncf` (unofficial, scraped from oncf-voyages.ma, ODbL) | 2026-08-18 – 2028-08-18 (one week repeated; Fridays nearly empty) | `ma-oncf` (rail + coach) |
 | TITSA (Tenerife buses) | Transitous `es_Autobús-interurbano-de-Tenerife` (NAP) = `es_Transportes-interurbanos-de-Tenerife-(TITSA)` | calendar_dates 2026-10-13 – 2027-04-11 | already matched by `es-regional-bus`; was dropped by the old bbox |
 | Guaguas Municipales (Las Palmas city bus) | Transitous `es_Guaguas-Municipales` (MDB `tld-767`) | 2015 – 2035 | local layer (`urban-feeds.json`) |
-| Metrotenerife (tram) | Transitous `es_Metrotenerife` = operator URL | ended 2025-07-15 | already in `urban-feeds.json` (display only, tram lines unchanged) |
-| Casablanca tramway T1–T4, busway BW1/BW2 | MDB `mdb-3462` (unofficial) | 2026-05-31 – 06-30 + Sunday dates to 2026-12-27 | local layer |
+| Metrotenerife (tram) | Transitous `es_Metrotenerife` = operator URL | ended 2025-07-15 | no: removed from `urban-feeds.json` (out of date) |
+| Casablanca tramway T1–T4, busway BW1/BW2 | MDB `mdb-3462` (unofficial) | feed_info 2026-05-31 – 06-30, only Sunday / holiday dates after that | no: removed (out of date) |
 | TILP (La Palma buses) | Transitous `es_Trasnportes-Insular-de-La-Palma-(TILP)` | ended 2025-12-25 | no (stale) |
 | ONCF (other unofficial feed) | MDB `mdb-3049` | ended 2025-12-31, 60 trips | no (stale, superseded) |
 | Casabus (Casablanca city bus) | MDB `mdb-3463` | ended 2026-06-29 | no (stale) |
@@ -104,7 +104,27 @@ ignored) and not the Ploče trains. The footnotes date the Ploče trains (390–
 27.09.2026) in the past, so none of them runs in an October – December window; HŽPP's feed (`hr-hz`) has 390 – 393
 between Ploče and Metković on Fridays to Sundays until December 2026, so their Croatian part is still on the map.
 Station coordinates come from the stops of the 2025 community feed (they lie on the OSM track of the rail graph within
-25 m) plus Briješće (estimated); Ploče as in the HŽPP feed. The Transitous file stays in `feeds.json` as `ba-zrs`, limited
-to the ŽRS agency (Republika Srpska: Banja Luka – Doboj …), which has no other source; it loads nothing until it is
-refreshed.
+25 m) plus Briješće (estimated); Ploče as in the HŽPP feed. The Transitous file `ba_ZFBiH` itself is out of date and no
+longer in `feeds.json` (the ŽRS trains of Republika Srpska, Banja Luka – Doboj …, have no current source).
 
+## 7. Feed audit (19 Oct 2026)
+
+Every feed of `feeds.json` and `urban-feeds.json` was checked against its downloaded zip (last service day from
+calendar / calendar_dates, `feed_info` dates, services active in the next 60 days). Removed as out of date:
+
+| Feed | Evidence |
+|---|---|
+| `ba-zrs` (Transitous `ba_ZFBiH`, ŽRS only) | last service 2025-12-13 (file of Aug 2025) |
+| `es-feve` (Transitous `es_Feve`) | last service 2026-05-13 (file of 15 Apr 2026), 0 trips in the window |
+| `es-regional-bus` file `Autobús-interurbano-de-Navarra` (regex) | last service 2025-12-31 (file of Nov 2025) |
+| `it-regional-bus` files `liguria-riviera-transporti`, `Lombardia-Movibus` (regex) | summer timetable ended 2026-09-13; ended 2025-03-30 |
+| `u-es-metro-de-madrid` | last service 2026-05-27 (file of May 2025) |
+| `u-es-metrotenerife` | last service 2025-07-15 |
+| `u-es-transporte-urbano-de-zaragoza` | feed_info ends 2026-10-05; after it one stray service a day (27,161 dates before vs 1 per day after) |
+| `u-ma-casatramway` | feed_info 2026-05-31 – 06-30; only Sunday / holiday dates after that |
+| `u-pt-porto-stcp` | last service 2026-10-06 (file of 10 Sep 2026) |
+| `u-gr-athens-bus`, `u-gr-athens-rail` | last service 2026-10-06 / 2026-08-31 (files of 8 Jul 2026) |
+
+Kept although close to their end: `u-it-lombardia-atm` (last service 2026-10-19, refreshed monthly upstream),
+`ba-centrotrans` (2026-11-05). The build's validity check (`packages/etl/src/gtfs/validity.ts`) skips such a feed with a
+warning as soon as its service has ended, so they need no manual step.
