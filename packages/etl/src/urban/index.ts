@@ -89,8 +89,8 @@ async function addAttribution(buildDir: string, feeds: UrbanFeed[], defs: FeedDe
     const e = tf ? lic.get(tf) : undefined;
     const src: AttributionFile["sources"][number] = {
       name: d.name,
-      license: e?.spdx_license_identifier ?? (e?.license_url ? "see terms" : "see source"),
-      ...(e?.license_url ?? e?.publisher?.url ? { url: (e?.license_url ?? e?.publisher?.url)! } : {}),
+      license: e?.spdx_license_identifier ?? (e?.license_url ? "see terms" : d.license ?? "see source"),
+      ...(e?.license_url ?? e?.publisher?.url ?? d.licenseUrl ? { url: (e?.license_url ?? e?.publisher?.url ?? d.licenseUrl)! } : {}),
       ...(e?.publisher?.name && !d.name.toLowerCase().includes(e.publisher.name.toLowerCase()) ? { attribution: e.publisher.name } : {}),
     };
     att.sources.push(src);

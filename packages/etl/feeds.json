@@ -1502,6 +1502,23 @@
    }
   },
   {
+   "id": "ma-oncf",
+   "country": "MA",
+   "name": "ONCF (Morocco rail: Al Boraq, Al Atlas, TNR, Al Bidaoui) + Supratours coaches",
+   "tier": "core",
+   "keep": [
+    "rail",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "ma_oncf.gtfs.zip"
+    }
+   ],
+   "notes": "Unofficial (github.com/orhazal/oncf-gtfs-unofficial, scraped from oncf-voyages.ma; ODbL). One weekly pattern repeated for two years (Oct 2026: 2026-08-18 – 2028-08-18; Fridays nearly empty in the scrape). Route types 101 (Al Boraq), 102, 109 (TNR, Al Bidaoui), 202 (Supratours coaches down to Laayoune / Dakhla / Guerguerat). MDB mdb-3049 (another unofficial ONCF feed) ended 2025-12-31: not used.",
+   "approxMB": 0.5
+  },
+  {
    "id": "es-fgc",
    "country": "ES",
    "name": "Ferrocarrils de la Generalitat de Catalunya",

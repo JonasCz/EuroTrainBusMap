@@ -4,7 +4,7 @@
   "note": "Reviewed coach/bus stop names, see .claude/skills/review-stop-names/SKILL.md",
   "model": "claude-sonnet",
   "date": "2026-10-11",
-  "reviewed": 5896
+  "reviewed": 5913
  },
  "entries": {
   "al-showmebus:station-10": {
@@ -25889,6 +25889,74 @@
   },
   "lv-national:lux-24519": {
    "action": "keep"
+  },
+  "ma-oncf:730": {
+   "action": "rename",
+   "name": "Safi Supratours"
+  },
+  "ma-oncf:744": {
+   "action": "rename",
+   "name": "Agadir Tassila"
+  },
+  "ma-oncf:745": {
+   "action": "rename",
+   "name": "Agadir Supratours"
+  },
+  "ma-oncf:747": {
+   "action": "rename",
+   "name": "Inezgane Supratours"
+  },
+  "ma-oncf:772": {
+   "action": "rename",
+   "name": "El Argoub"
+  },
+  "ma-oncf:774": {
+   "action": "rename",
+   "name": "Tizi n'Tichka"
+  },
+  "ma-oncf:776": {
+   "action": "rename",
+   "name": "Lamhariz"
+  },
+  "ma-oncf:778": {
+   "action": "rename",
+   "name": "Guerguerat"
+  },
+  "ma-oncf:818": {
+   "action": "rename",
+   "name": "Khénifra"
+  },
+  "ma-oncf:820": {
+   "action": "rename",
+   "name": "M'rirt"
+  },
+  "ma-oncf:832": {
+   "action": "rename",
+   "name": "Agdz"
+  },
+  "ma-oncf:834": {
+   "action": "rename",
+   "name": "Zagora"
+  },
+  "ma-oncf:860": {
+   "action": "rename",
+   "name": "Errachidia"
+  },
+  "ma-oncf:862": {
+   "action": "rename",
+   "name": "Erfoud"
+  },
+  "ma-oncf:864": {
+   "action": "rename",
+   "name": "Rissani"
+  },
+  "ma-oncf:870": {
+   "action": "rename",
+   "name": "Merzouga"
+  },
+  "ma-oncf:892": {
+   "action": "rename",
+   "name": "Fnideq"
   },
   "nl-openov:3093659": {
    "action": "keep"

@@ -61,3 +61,26 @@ Aggregates such as DELFI, NL, CH, NO, SE, DK, the FR regional sets, AT PTA and T
 | (d) shapes.txt in the feeds | Mixed. Present: PKP IC, Trenitalia, Irish Rail, FI VR, UZ, RO, HR, SI, LV, Entur, NL. Missing: gtfs.de FV/RV, SNCF, SNCB, CH, AT rail, CZ, SK, ES LD, HU MÁV, GB (Transitous copies are often stripped). |
 
 **Recommendation:** extract Overture rail segments for the Europe bbox once per run (or cache by release) into a GeoParquet or FlatGeobuf file of a few hundred MB. Build a rail graph from it. For each consecutive stop pair in the timetable, snap to the graph and take a shortest path (our own lightweight map-matching). Use the feed's `shapes.txt` where it exists, and fall back to a straight line where routing fails.
+
+## 5. Canary Islands and Morocco (checked 19 Oct 2026)
+
+The map's coverage (`packages/shared/src/coverage.ts`) includes the Canary Islands, Madeira and Morocco with Western
+Sahara. Feeds checked (downloaded, calendars read):
+
+| Feed | Source | Valid | Used |
+|---|---|---|---|
+| ONCF rail (Al Boraq, Al Atlas, TNR, Al Bidaoui) + Supratours coaches | Transitous `ma_oncf` (unofficial, scraped from oncf-voyages.ma, ODbL) | 2026-08-18 – 2028-08-18 (one week repeated; Fridays nearly empty) | `ma-oncf` (rail + coach) |
+| TITSA (Tenerife buses) | Transitous `es_Autobús-interurbano-de-Tenerife` (NAP) = `es_Transportes-interurbanos-de-Tenerife-(TITSA)` | calendar_dates 2026-10-13 – 2027-04-11 | already matched by `es-regional-bus`; was dropped by the old bbox |
+| Guaguas Municipales (Las Palmas city bus) | Transitous `es_Guaguas-Municipales` (MDB `tld-767`) | 2015 – 2035 | local layer (`urban-feeds.json`) |
+| Metrotenerife (tram) | Transitous `es_Metrotenerife` = operator URL | ended 2025-07-15 | already in `urban-feeds.json` (display only, tram lines unchanged) |
+| Casablanca tramway T1–T4, busway BW1/BW2 | MDB `mdb-3462` (unofficial) | 2026-05-31 – 06-30 + Sunday dates to 2026-12-27 | local layer |
+| TILP (La Palma buses) | Transitous `es_Trasnportes-Insular-de-La-Palma-(TILP)` | ended 2025-12-25 | no (stale) |
+| ONCF (other unofficial feed) | MDB `mdb-3049` | ended 2025-12-31, 60 trips | no (stale, superseded) |
+| Casabus (Casablanca city bus) | MDB `mdb-3463` | ended 2026-06-29 | no (stale) |
+| Vitalis Tétouan city bus | MDB `mdb-1816` | ended 2021-11-30 | no (stale) |
+| Fred. Olsen Express (inter-island ferries) | Transitous `es_Ferry-Fred.Olsen` (NAP) | 2026-10-17 – 2027-05-30 | no: ferries are not a mode of the pipeline |
+| Baleària (incl. Algeciras – Tanger Med / Ceuta, Huelva – Gran Canaria / Tenerife) | Transitous `es_Ferry-Baleària` | service dates end 2025-03-31 | no: ferry, and stale |
+
+No GTFS found (Transitous, Mobility Database): Global (Gran Canaria interurban), Lanzarote / Fuerteventura buses,
+CTM coaches, Rabat–Salé tram, Naviera Armas, FRS Tarifa – Tanger. Madeira (`pt_Funchal`, valid to 2026-11-30) is inside
+the coverage now but not added.

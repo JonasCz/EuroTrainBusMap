@@ -222,6 +222,32 @@
    ]
   },
   {
+   "id": "u-es-guaguas-municipales",
+   "country": "ES",
+   "name": "Guaguas Municipales (Las Palmas de Gran Canaria city bus)",
+   "sources": [
+    {
+     "transitous": "es_Guaguas-Municipales.gtfs.zip"
+    },
+    {
+     "url": "https://files.mobilitydatabase.org/tld-767/latest.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-ma-casatramway",
+   "country": "MA",
+   "name": "Casablanca tramway (T1–T4) and busway (BW1, BW2)",
+   "sources": [
+    {
+     "url": "https://files.mobilitydatabase.org/mdb-3462/latest.zip"
+    }
+   ],
+   "license": "unofficial (github.com/SpaghettDev/CasaTransport-GTFS)",
+   "licenseUrl": "https://github.com/SpaghettDev/CasaTransport-GTFS",
+   "notes": "Unofficial, frequency-based; calendar 2026-05-31 – 2026-06-30 plus Sunday / holiday dates to 2026-12-27 (the display layer takes any trips of a route without service on the reference day)."
+  },
+  {
    "id": "u-it-lombardia-atm",
    "country": "IT",
    "name": "Lombardia-ATM",
