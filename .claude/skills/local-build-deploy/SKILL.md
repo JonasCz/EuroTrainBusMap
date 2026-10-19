@@ -34,6 +34,13 @@ unsnapped curves, so do not skip them (see the `refresh-geometry-assets` skill).
 scratch) build them yourself with `pnpm --filter @etbm/etl run assets -- --out $PWD/work/assets --work $PWD/work --only <parts>`;
 the GeoNames and basemap files are also built by `build-data` itself when missing.
 
+Are the R2 assets the ones this code expects? `npx -y wrangler@4 r2 object get "$B/version.json" --file work/assets/version.json --remote`
+then `pnpm --filter @etbm/etl run assets-version -- --check $PWD/work/assets/version.json` ("current" / "STALE: reason"). CI does
+this check in every build-deploy run and refreshes R2 by itself when it fails (job `assets` → reusable refresh-assets → build;
+README "Weekly refresh & deployment"), so a local build only sees stale assets between a push that bumps `ASSETS_VERSION`
+(`packages/etl/src/assets-version.ts`) and the end of that run. Never upload assets to R2 by hand from a local build: a
+`version.json` that claims a stamp the bucket's files do not have would stop CI from healing it.
+
 ## 2. Full data build (~22 min wall clock on 4 cores)
 
 ```sh

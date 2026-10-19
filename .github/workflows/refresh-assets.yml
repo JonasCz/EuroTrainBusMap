@@ -6,9 +6,20 @@ name: Refresh build assets (R2)
 #   basemap/{borders,labels}.json   basemap/tiles-v2.tar                  (Natural Earth, OSM land polygons)
 #   rail/rail-graph-v1.bin   rail/urbanrail-graph-v1.bin   road/road-graph-v1.bin   (Overture Maps)
 #   manifest.json                   the keys above; the weekly build downloads exactly these
+#   version.json                    the assets' version stamp (packages/etl/src/assets-version.ts: ASSETS_VERSION,
+#                                   coverage, keys), written LAST, after a successful upload and pruning
 # The bucket holds the current assets only: after the new manifest is uploaded, every object that is not
 # listed in it (older format versions, retired files) is deleted. No backups are kept.
-# Overture publishes monthly; GeoNames / Natural Earth / OSM land polygons change slowly.
+#
+# Triggers:
+#   workflow_call  from build-deploy.yml, whenever the bucket's version.json does not match the code (missing, other
+#                  ASSETS_VERSION / coverage / keys): all parts are rebuilt, then build-deploy rebuilds the data. This is
+#                  the normal way assets get refreshed – nobody has to run this workflow by hand.
+#   schedule       monthly (Overture publishes monthly; GeoNames / Natural Earth / OSM land polygons change slowly).
+#   dispatch       by hand, input `only` (a subset of the parts) and `build` (then dispatch build-deploy with
+#                  rebuild=true, so the site uses the new assets right away).
+# version.json is written only when every part was rebuilt here or the bucket already matched the code: a partial run
+# on stale assets leaves the bucket marked stale, and the next build-deploy refreshes everything.
 on:
   schedule:
     - cron: "41 1 4 * *" # 4th of each month, 01:41 UTC
@@ -17,10 +28,21 @@ on:
       only:
         description: "Comma-separated subset to rebuild (geonames,basemap,tiles,rail,urbanrail,road); others are kept from R2"
         default: "geonames,basemap,tiles,rail,urbanrail,road"
-
-concurrency:
-  group: refresh-assets
-  cancel-in-progress: false
+      build:
+        description: "Afterwards run build-deploy (rebuild data with the new assets and deploy)"
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      only:
+        description: "Comma-separated subset to rebuild (default: all parts)"
+        type: string
+        default: "geonames,basemap,tiles,rail,urbanrail,road"
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: true
+      CLOUDFLARE_ACCOUNT_ID:
+        required: true
 
 permissions:
   contents: read
@@ -29,10 +51,17 @@ permissions:
 env:
   WORK: ${{ github.workspace }}/work
   ASSETS_BUCKET: eurotrainbusmap-assets
+  ALL_PARTS: "geonames,basemap,tiles,rail,urbanrail,road"
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    # One refresh at a time, whoever started it (schedule, dispatch, or build-deploy calling this workflow). Job-level,
+    # so it also applies when called (the caller's own concurrency group is build-deploy). A run started while another
+    # waits replaces the waiting one (GitHub keeps one pending run per group).
+    concurrency:
+      group: r2-assets-refresh
+      cancel-in-progress: false
     # all six from scratch (no Overture cache): rail ~30 + road ~30 + urbanrail ~25 min of extraction, road graph ~8 min,
     # land polygons ~1 GB + tiles ~5 min, GeoNames ~250 MB ~3 min
     timeout-minutes: 300
@@ -88,6 +117,14 @@ jobs:
           (cd work/assets && find . -type f ! -name manifest.json | sed 's#^\./##' | sort | xargs -r sha256sum) > work/r2/before.sha256
           cat work/r2/before.sha256
 
+      # Was the bucket built by this code already (version.json, packages/etl/src/assets-version.ts)? Decides below
+      # whether a partial run may stamp the bucket as current.
+      - name: Version of the assets in R2
+        id: old
+        run: |
+          npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/version.json" --file work/r2/old-version.json --remote > work/r2/ver.log 2>&1 || { cat work/r2/ver.log; rm -f work/r2/old-version.json; }
+          pnpm -s --filter @etbm/etl run assets-version -- --check "$WORK/r2/old-version.json"
+
       # The Overture extracts (rail ~190 MB, major roads ~2 GB, urban rail ~25 MB) are cached, so re-runs within the
       # same Overture release skip the slow S3 scan (a new release is detected and re-extracted; old extracts are
       # deleted). Bump the key prefix when the extract definition changes (v3: rail keeps disused/under-construction
@@ -107,7 +144,7 @@ jobs:
       - name: Build assets
         run: |
           unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_REGION AWS_REGION
-          pnpm --filter @etbm/etl run assets -- --out "$WORK/assets" --work "$WORK" --only "${{ inputs.only || 'geonames,basemap,tiles,rail,urbanrail,road' }}"
+          pnpm --filter @etbm/etl run assets -- --out "$WORK/assets" --work "$WORK" --only "${{ inputs.only || env.ALL_PARTS }}"
           cat work/assets/manifest.json
           du -ah work/assets
 
@@ -141,12 +178,38 @@ jobs:
           done
           if [ "$listed" = true ]; then
             echo "bucket objects:"; cat work/r2/objects.txt
-            grep -vxF -f <(echo "$keys"; echo manifest.json) work/r2/objects.txt >> work/r2/stale.txt || true
+            grep -vxF -f <(echo "$keys"; echo manifest.json; echo version.json) work/r2/objects.txt >> work/r2/stale.txt || true
           else
             echo "::warning::could not list the bucket; deleting only the keys the old manifest listed"
           fi
           for key in $(sort -u work/r2/stale.txt); do
-            [ "$key" = manifest.json ] && continue
+            case "$key" in manifest.json | version.json) continue ;; esac
             echo "delete superseded $key"
             npx -y wrangler@4 r2 object delete "$ASSETS_BUCKET/$key" --remote || echo "::warning::could not delete $key"
           done
+
+      # Last: the version stamp of this code (assets-version.ts). Only when every part was rebuilt by this code, or the
+      # bucket already matched it (then a partial refresh keeps it current); otherwise a stale version.json is kept and
+      # the next build-deploy runs a full refresh.
+      - name: Write version.json
+        env:
+          ONLY: ${{ inputs.only || env.ALL_PARTS }}
+          WAS_CURRENT: ${{ steps.old.outputs.current }}
+        run: |
+          all=true
+          for p in ${ALL_PARTS//,/ }; do case ",$ONLY," in *",$p,"*) ;; *) all=false ;; esac; done
+          if [ "$all" != true ] && [ "$WAS_CURRENT" != true ]; then
+            echo "::warning::partial refresh ($ONLY) of assets that did not match the code: version.json not updated, the next build-deploy refreshes all parts"
+            exit 0
+          fi
+          pnpm -s --filter @etbm/etl run assets-version -- --write "$WORK/assets/version.json" --parts "$ONLY"
+          put() { for i in 1 2 3; do npx -y wrangler@4 r2 object put "$ASSETS_BUCKET/$1" --file "$2" --remote "${@:3}" && return 0; sleep $((i * 10)); done; return 1; }
+          put version.json work/assets/version.json --content-type application/json
+
+      # Dispatched by hand with `build`: rebuild the data with the new assets and deploy. Never when called by
+      # build-deploy (it builds next itself) or on the schedule (the weekly build picks the assets up).
+      - name: Run build-deploy
+        if: github.event_name == 'workflow_dispatch' && github.workflow == 'Refresh build assets (R2)' && inputs.build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build-deploy.yml --repo "${{ github.repository }}" --ref "${{ github.ref_name }}" -f rebuild=true -f refresh_assets=never

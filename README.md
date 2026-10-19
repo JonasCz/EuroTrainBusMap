@@ -430,20 +430,36 @@ Tests: `pnpm test`, types: `pnpm typecheck`.
 
 ## Weekly refresh & deployment
 
-- **`.github/workflows/build-deploy.yml`**
-  - *schedule* (Mondays 03:17 UTC) and *manual dispatch*: download assets from R2, run the full
-    ETL, cache the output (`actions/cache`, keyed by a hash of the ETL/schema sources), build the web
-    app, assemble `dist/site` (web + `data/` under `BASE_PATH`, repo variable, default `/`) and
-    `wrangler deploy` (static-assets Worker, `wrangler.jsonc`).
-  - *push*: reuses the cached data (web-only rebuild + redeploy, a few minutes); data is rebuilt
-    only when no compatible cached data exists (ETL/schema code changed).
+- **`.github/workflows/build-deploy.yml`**, three jobs:
+  1. `assets` – compares the R2 bucket's `version.json` with the stamp of the commit's code
+     (`packages/etl/src/assets-version.ts`: `ASSETS_VERSION`, `COVERAGE_ID` and its boxes, the asset keys with their
+     format versions). Missing or different → refresh needed. R2 unreadable → warning, no refresh.
+  2. `refresh` – only then: runs `refresh-assets.yml` as a reusable workflow with all parts (see below; ~2 h from
+     scratch, less with cached Overture extracts). If it fails, the run stops and nothing is deployed.
+  3. `build-deploy` – *schedule* (Mondays 03:17 UTC) and *manual dispatch*: download assets from R2, run the full
+     ETL, cache the output (`actions/cache`, keyed by a hash of the ETL/schema sources), build the web app, assemble
+     `dist/site` (web + `data/` under `BASE_PATH`, repo variable, default `/`) and `wrangler deploy` (static-assets
+     Worker, `wrangler.jsonc`). *push*: reuses the cached data (web-only rebuild + redeploy, a few minutes); data is
+     rebuilt only when no compatible cached data exists (ETL/schema code changed), when the assets were just refreshed,
+     or when the cached data was built with other assets (`.assets-stamp` in the cached output vs the hash of
+     `version.json`).
+  - Dispatch inputs: `subset` (full/core), `rebuild`, `refresh_assets` (auto / always / never).
   - A keepalive step re-enables the workflow, since GitHub disables schedules in repositories
     without activity for 60 days.
-- **`.github/workflows/refresh-assets.yml`** (monthly + manual, input `only`): rebuilds the slow-changing inputs from
-  public sources (`packages/etl/src/assets.ts`) and uploads them to the R2 bucket `eurotrainbusmap-assets`, see the table
-  below. The parts not in `only` are downloaded from R2 and kept (a failed download stops the run). Only new or changed
-  objects are uploaded, `manifest.json` last; then every object the new manifest does not list (an older format version, a
-  retired file) is deleted, so the bucket holds the current assets only and keeps no backups.
+  - So the assets heal themselves: a push that bumps `ASSETS_VERSION`, changes the coverage or an asset format – or the
+    first run after the version check landed (no `version.json` yet) – refreshes R2 and rebuilds the data in the same
+    run. Nobody has to run refresh-assets by hand. Bump `ASSETS_VERSION` whenever what an asset contains changes;
+    `test/assets-version.test.ts` fails when a file that defines the assets (`ASSET_SOURCES`) changes until
+    `ASSETS_SOURCE_HASH` is updated, so that is never forgotten silently.
+- **`.github/workflows/refresh-assets.yml`** (called by build-deploy when needed, monthly, manual with inputs `only`
+  and `build`): rebuilds the slow-changing inputs from public sources (`packages/etl/src/assets.ts`) and uploads them to
+  the R2 bucket `eurotrainbusmap-assets`, see the table below. The parts not in `only` are downloaded from R2 and kept (a
+  failed download stops the run). Only new or changed objects are uploaded, `manifest.json` next; then every object the
+  new manifest does not list (an older format version, a retired file; the bucket is listed through the Cloudflare
+  API) is deleted, so the bucket holds the current assets only and keeps no backups; `version.json` is written last –
+  only when all parts were rebuilt or the bucket already matched the code. One refresh runs at a time (job concurrency
+  group `r2-assets-refresh`). A manual run with `build` dispatches build-deploy (`rebuild=true`, `refresh_assets=never`)
+  afterwards; build-deploy never dispatches refresh-assets (it calls it), so there are no loops.
 
 ### Build assets in R2
 
@@ -466,22 +482,25 @@ them `MAP_BBOX` (point filters for GeoNames places and GTFS stops, basemap tiles
 and pan bounds) and `COVERAGE_ID`. Assets record the coverage they were built for (the first line of the GeoNames files,
 `coverage` in borders.json / labels.json, the basemap `index.json` and the graph headers), so after a coverage change a
 build with old R2 assets still works: it rebuilds the GeoNames files and borders / labels from source by itself (~2 min),
-and warns that the basemap tiles (no land outside the old box) and the graphs (unsnapped curves outside it) are stale
-until refresh-assets has run with `only=tiles,rail,urbanrail,road`. The Overture extraction takes the boxes, not the
+and warns that the basemap tiles (no land outside the old box) and the graphs (unsnapped curves outside it) are stale.
+In CI that does not happen: the coverage is part of the assets' stamp, so build-deploy refreshes R2 first. The Overture extraction takes the boxes, not the
 enclosing box (that would add every road of Egypt and Arabia); cached extracts are named `<kind>-<COVERAGE_ID>-<release>`.
 
 A first run of refresh-assets with all parts takes ~2 h (mostly the three Overture extractions; later runs within one
 Overture release reuse the cached extracts). Changing a format means a new key (`RAIL_FORMAT`, `BASEMAP_TILES_KEY`):
-add it to `ASSET_KEYS` in `src/assets.ts`, run refresh-assets, and the old key is deleted from R2 by that run.
+it is in `ASSET_KEYS` (`src/assets-version.ts`), so the stamp changes, the next build-deploy refreshes R2 and that
+refresh deletes the old key. `version.json` in the bucket: `{ assetsVersion, coverage, coverageBoxes, keys, builtAt,
+commit, parts }` (`pnpm --filter @etbm/etl run assets-version -- --stamp | --check <file> | --hash`).
 
 ### Building from scratch
 
 Nothing outside the repository and the R2 bucket is needed; every input is public:
 
 1. Secrets `CLOUDFLARE_API_TOKEN` (Workers deploy + R2 read/write) and `CLOUDFLARE_ACCOUNT_ID`; optional repo variable `BASE_PATH`.
-2. Run **refresh-assets** once with all parts (creates the bucket, uploads the assets and `manifest.json`); afterwards it
-   runs monthly.
-3. Run **build-deploy** (dispatch, `rebuild` on). On a fresh runner it downloads the assets, then every GTFS feed of
+2. Run **build-deploy** (dispatch, `rebuild` on): without `version.json` in R2 it first runs refresh-assets with all
+   parts (creates the bucket, uploads the assets, `manifest.json` and `version.json`); afterwards that runs monthly and
+   whenever the code needs other assets.
+3. Then, in the same run, the data build: on a fresh runner it downloads the assets, then every GTFS feed of
    `feeds.json`, the operator adapters' extra feeds (`packages/etl/operators/`) and `urban-feeds.json` (Transitous mirror,
    Mobility Database / operator URLs; no feed needs a key), and runs `build-data --subset full`. No local state is used:
    the DuckDB database, the feed cache and the per-feed local-transport / transit caches (`work/urban/`) all start empty
@@ -498,7 +517,8 @@ Secrets: `CLOUDFLARE_API_TOKEN` (Workers deploy + R2) and `CLOUDFLARE_ACCOUNT_ID
 
 Designed to run for free:
 
-- **GitHub Actions** – free for public repositories (weekly ~75 min job, monthly asset refresh).
+- **GitHub Actions** – free for public repositories (weekly ~75 min job, monthly asset refresh, plus a refresh when the
+  asset code changes).
 - **Cloudflare Workers static assets** – requests to static assets are free; ~10k files ≈ 1.1 GB per
   build (limits: 25 MiB per file, 20k files per deployment on the free plan).
 - **Cloudflare R2** – ~200 MB stored, a handful of operations per week: well inside the free tier

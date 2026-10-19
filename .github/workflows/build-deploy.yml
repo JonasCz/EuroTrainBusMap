@@ -1,9 +1,18 @@
 name: Build data & deploy
 
 # push:      web-only rebuild + redeploy with the cached data (rebuilds data only if the
-#            ETL/schema code changed since the cached data was built)
+#            ETL/schema code changed since the cached data was built, or the assets were refreshed)
 # schedule:  weekly full data refresh (Mondays 03:17 UTC)
-# dispatch:  choose subset (full/core) and whether to rebuild data
+# dispatch:  choose subset (full/core), whether to rebuild data and whether to refresh the assets
+#
+# Self-healing assets: job `assets` compares the R2 bucket's version.json (written by refresh-assets as its last step)
+# with the stamp of this commit's code (packages/etl/src/assets-version.ts: ASSETS_VERSION, coverage, asset keys).
+# When it is missing or different, job `refresh` runs refresh-assets.yml as a reusable workflow (all parts, ~2 h from
+# scratch, less with cached Overture extracts) before job `build-deploy`, which then rebuilds the data. So pushing a
+# change that bumps ASSETS_VERSION or the coverage – or the first run after this check landed – refreshes R2 by itself;
+# nobody needs to run refresh-assets by hand. A failed refresh stops the run (nothing deployed; the next run tries
+# again). No loops: this workflow only *calls* refresh-assets, and refresh-assets dispatches this workflow only when
+# run by hand with `build` (with refresh_assets=never).
 on:
   push:
     branches: [main]
@@ -12,6 +21,7 @@ on:
       - "pnpm-lock.yaml"
       - "wrangler.jsonc"
       - ".github/workflows/build-deploy.yml"
+      - ".github/workflows/refresh-assets.yml"
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
@@ -25,6 +35,11 @@ on:
         description: "Rebuild data (otherwise reuse cached data if compatible)"
         type: boolean
         default: true
+      refresh_assets:
+        description: "Refresh the R2 assets first: auto (when version.json does not match the code), always, never"
+        type: choice
+        options: [auto, always, never]
+        default: auto
 
 concurrency:
   group: build-deploy
@@ -32,7 +47,7 @@ concurrency:
 
 permissions:
   contents: read
-  actions: write # keepalive: re-enable this workflow so the weekly schedule never lapses
+  actions: write # keepalive: re-enable this workflow so the weekly schedule never lapses (and the called refresh's)
 
 env:
   WORK: ${{ github.workspace }}/work
@@ -40,7 +55,75 @@ env:
   ASSETS_BUCKET: eurotrainbusmap-assets
 
 jobs:
+  # Are the R2 assets the ones this code expects? (packages/etl/src/assets-version.ts)
+  assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      refresh: ${{ steps.decide.outputs.refresh }}
+      stamp: ${{ steps.check.outputs.stamp }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Compare version.json in R2 with the code
+        id: check
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          mkdir -p work/r2
+          ok=false
+          for i in 1 2 3; do
+            if npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/version.json" --file work/r2/version.json --remote > work/r2/get.log 2>&1; then ok=true; break; fi
+            cat work/r2/get.log
+            # not there: stale (first run after the version check landed, or a bucket never refreshed)
+            if grep -qiE "does not exist|not found|NoSuchKey" work/r2/get.log; then rm -f work/r2/version.json; ok=missing; break; fi
+            sleep $((i * 10))
+          done
+          if [ "$ok" = false ]; then
+            # R2 unreachable (credentials, outage): do not start a 2 h refresh on a read error; build with what is there
+            echo "::warning::could not read version.json from R2; assets not checked"
+            echo "current=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [ -f work/r2/version.json ] && cat work/r2/version.json
+          pnpm -s --filter @etbm/etl run assets-version -- --check "$PWD/work/r2/version.json"
+          # identifies the asset set the data is built with (part of the data cache key)
+          echo "stamp=$( [ -f work/r2/version.json ] && sha256sum work/r2/version.json | cut -c1-16 || echo none)" >> "$GITHUB_OUTPUT"
+      - name: Decide
+        id: decide
+        env:
+          CURRENT: ${{ steps.check.outputs.current }}
+          REASON: ${{ steps.check.outputs.reason }}
+          MODE: ${{ inputs.refresh_assets || 'auto' }}
+        run: |
+          case "$MODE" in
+            always) refresh=true ;;
+            never) refresh=false ;;
+            *) [ "$CURRENT" = false ] && refresh=true || refresh=false ;;
+          esac
+          echo "refresh=$refresh" >> "$GITHUB_OUTPUT"
+          if [ "$refresh" = true ]; then echo "::notice::refreshing the R2 assets first ($MODE): ${REASON:-requested}"; fi
+          if [ "$CURRENT" = false ] && [ "$refresh" = false ]; then echo "::warning::R2 assets do not match the code (${REASON}); refresh skipped (refresh_assets=never)"; fi
+
+  # The assets do not match the code: rebuild and upload all of them first (refresh-assets.yml as a reusable workflow).
+  refresh:
+    needs: assets
+    if: needs.assets.outputs.refresh == 'true'
+    uses: ./.github/workflows/refresh-assets.yml
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
   build-deploy:
+    needs: [assets, refresh]
+    # after a successful refresh, or none needed (a failed refresh stops here: nothing is deployed)
+    if: ${{ !cancelled() && needs.assets.result == 'success' && (needs.refresh.result == 'success' || needs.refresh.result == 'skipped') }}
     runs-on: ubuntu-latest
     # full data build from scratch (measured on 4 cores / 15 GB, Oct 2026): feed download + load 12 min, cities…mapdata
     # 22 min, transit transfers 14 min and local transport 25 min (their per-feed caches start empty in CI), 75 min in
@@ -77,6 +160,28 @@ jobs:
           key: ${{ env.DATA_KEY }}-${{ github.run_id }}
           restore-keys: ${{ env.DATA_KEY }}-
 
+      # Which asset set the data is built with: the hash of R2's version.json (read again after a refresh). Kept in the
+      # cached data (work/out/.assets-stamp); cached data built with other assets is rebuilt. Unknown (R2 unreadable):
+      # no rebuild forced.
+      - name: Assets stamp
+        id: stamp
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CHECKED: ${{ needs.assets.outputs.stamp }}
+        run: |
+          stamp="$CHECKED"
+          if [ "${{ needs.refresh.result }}" = success ]; then
+            mkdir -p work/r2
+            stamp=""
+            for i in 1 2 3; do
+              if npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/version.json" --file work/r2/version.json --remote > /dev/null 2>&1; then stamp=$(sha256sum work/r2/version.json | cut -c1-16); break; fi
+              sleep $((i * 10))
+            done
+          fi
+          echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
+          echo "assets stamp: ${stamp:-unknown}"
+
       - name: Decide whether to rebuild data
         id: mode
         run: |
@@ -87,6 +192,12 @@ jobs:
             *) rebuild=false; subset=full ;;
           esac
           [ "$have" = false ] && rebuild=true
+          # the assets were just refreshed, or the cached data was built with other assets: rebuild with the current ones
+          [ "${{ needs.assets.outputs.refresh }}" = true ] && rebuild=true
+          stamp="${{ steps.stamp.outputs.stamp }}"
+          if [ "$have" = true ] && [ -n "$stamp" ] && [ "$stamp" != none ] && [ -f work/out/.assets-stamp ] && [ "$(cat work/out/.assets-stamp)" != "$stamp" ]; then
+            echo "cached data was built with other assets ($(cat work/out/.assets-stamp), now $stamp)"; rebuild=true
+          fi
           echo "rebuild=$rebuild" >> "$GITHUB_OUTPUT"
           echo "subset=$subset" >> "$GITHUB_OUTPUT"
           echo "cached data: $have, rebuild: $rebuild, subset: $subset"
@@ -131,6 +242,7 @@ jobs:
           rm -rf work/out-new
           pnpm --filter @etbm/etl run build-data -- --out "$WORK/out-new" --work "$WORK" --assets "$WORK/assets" --subset "${{ steps.mode.outputs.subset }}"
           rm -rf work/out && mv work/out-new work/out
+          echo "${{ steps.stamp.outputs.stamp }}" > work/out/.assets-stamp
           rm -rf work/etl.duckdb work/etl.duckdb.wal work/cache/feeds work/tmp
           du -sh work/out; find work/out -type f | wc -l; df -h /
 
@@ -139,9 +251,13 @@ jobs:
         run: |
           [ -f work/build-report.json ] && node -e '
             const r = require(process.argv[1]);
-            console.log(JSON.stringify({ build: r.build, stats: r.stats, stageSeconds: r.stageSeconds, failedFeeds: r.failedFeeds, generated: r.generated, sanity: r.sanity }, null, 1));
+            console.log(JSON.stringify({ build: r.build, stats: r.stats, stageSeconds: r.stageSeconds, failedFeeds: r.failedFeeds, expiredFeeds: r.expiredFeeds, staleFeeds: r.staleFeeds, generated: r.generated, sanity: r.sanity }, null, 1));
             // feeds generated from operator web pages (packages/etl/generators): a failure skips the feed, so flag it
             for (const g of r.generated ?? []) if (!g.ok) console.log(`::warning::generated feed ${g.feed} skipped (generator ${g.id}): ${g.error}`);
+            for (const g of r.generated ?? []) if (g.ok && g.stale) console.log(`::warning::generated feed ${g.feed} is out of date (kept, labelled): ${g.stale.reason}`);
+            // out-of-date feeds (packages/etl/src/gtfs/validity.ts): kept and labelled within the cap, skipped beyond it
+            for (const f of r.staleFeeds ?? []) console.log(`::notice::feed ${f.key} out of date since ${f.expired}: kept, labelled (${f.trips} trips)`);
+            for (const f of r.expiredFeeds ?? []) console.log(`::warning::feed ${f.key} skipped: ${f.reason}`);
           ' "$PWD/work/build-report.json" || echo "no build report"
 
       - name: Save built data
@@ -162,8 +278,8 @@ jobs:
           cp -r packages/web/dist/. "$target/"
           rm -rf "$target/data" && mkdir -p "$target/data"
           cp -r work/out/. "$target/data/"
-          # network.json is only for tools; the web app loads core.json + tiles
-          rm -f "$target"/data/*/network.json "$target"/data/*/network-*.json
+          # network.json is only for tools; the web app loads core.json + tiles; .assets-stamp is for the data cache
+          rm -f "$target"/data/*/network.json "$target"/data/*/network-*.json "$target/data/.assets-stamp"
           # caching rules (_headers) must sit at the asset root, with the base path prefixed
           if [ -n "$base" ] && [ -f "$target/_headers" ]; then sed "s#^/#/$base/#" "$target/_headers" > "$site/_headers" && rm "$target/_headers"; fi
           echo "files: $(find "$site" -type f | wc -l)"; du -sh "$site"

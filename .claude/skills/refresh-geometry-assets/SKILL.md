@@ -6,7 +6,8 @@ description: Rebuild the prebuilt routing graphs used to draw corridors along re
 # Refresh geometry assets (rail + road graphs)
 
 Corridor lines are routed on two graphs built from Overture Maps transportation segments.
-Extracting each one from Overture takes about 30 min, so they are built monthly and stored in R2.
+Extracting each one from Overture takes about 30 min, so they are built monthly (and whenever build-deploy finds R2's
+`version.json` out of step with the code) and stored in R2.
 The bucket is `eurotrainbusmap-assets`:
 
 | key | content | size |
@@ -24,17 +25,33 @@ The weekly build (`build-deploy.yml`) downloads every key in the R2 `manifest.js
 `buildGeometries` also looks in `<work>/geometry/` and `<work>/assets/<kind>/`. If a graph is
 missing, the corridors become unsnapped curves and the log shows a `WARNING`.
 
-## Normal refresh (CI)
+## Normal refresh (CI): automatic
 
-Run the **refresh-assets** workflow: Actions → "Refresh build assets (R2)" → Run workflow. It
-also runs monthly on the 4th.
+You normally do **not** run anything by hand. The R2 bucket carries `version.json`, the stamp of the code that built
+its assets (`packages/etl/src/assets-version.ts`: `ASSETS_VERSION`, `COVERAGE_ID` + boxes, the asset keys incl. their
+format versions). Every **build-deploy** run (push to main, weekly, dispatch) first compares it with the code
+(job `assets`); when it is missing or different, job `refresh` runs `refresh-assets.yml` as a reusable workflow with
+all parts, and job `build-deploy` then rebuilds the data with the new assets and deploys.
+
+So, after changing graph costs, road classes, the extract or the binary layout:
+1. bump `ASSETS_VERSION` in `packages/etl/src/assets-version.ts` (a `RAIL_FORMAT` bump or a coverage change is detected
+   without it, through the keys / coverage in the stamp);
+2. update `ASSETS_SOURCE_HASH` there (`pnpm --filter @etbm/etl run assets-version -- --hash`): `test/assets-version.test.ts`
+   fails whenever a file of `ASSET_SOURCES` (geometry graph / overture / railbin / refresh-rail, basemap, geonames,
+   coverage, assets.ts) changes, to make you decide whether the assets change;
+3. push to main: the next build-deploy refreshes R2 (~2 h from scratch, less with cached Overture extracts) and rebuilds.
+
+By hand (still possible): Actions → "Refresh build assets (R2)" → Run workflow; it also runs monthly on the 4th.
 - `only` takes a comma-separated subset of `geonames,basemap,tiles,rail,urbanrail,road`. Use `rail,road` to rebuild only the graphs.
+  `build` (default on) dispatches build-deploy afterwards (`rebuild=true`, `refresh_assets=never`).
 - It runs `packages/etl/src/assets.ts`. That calls `buildRailAsset` / `buildRoadAsset` from
-  `packages/etl/src/geometry/refresh-rail.ts`, then uploads the new or changed files and `manifest.json` (last), and
-  deletes every R2 object the new manifest does not list (no old versions are kept).
-- The manifest lists exactly `ASSET_KEYS` (`src/assets.ts`). After bumping `RAIL_FORMAT` the new keys must be in
-  `ASSET_KEYS` (they are, through `RAIL_GRAPH_KEY` etc.); the old `-v1` files are then removed locally and in R2 by the next run
-  with all graph parts, so run it with `only=rail,urbanrail,road` right after merging a format change, before the weekly build.
+  `packages/etl/src/geometry/refresh-rail.ts`, then uploads the new or changed files and `manifest.json`, deletes every
+  R2 object the new manifest does not list (no old versions are kept; the listing via the Cloudflare API also catches
+  objects uploaded by hand) and writes `version.json` last. A partial run (`only` without every part) on assets that
+  did not match the code leaves `version.json` stale, so the next build-deploy rebuilds everything.
+- The manifest lists exactly `ASSET_KEYS` (`src/assets-version.ts`). After bumping `RAIL_FORMAT` the new keys are in
+  `ASSET_KEYS` (through `RAIL_GRAPH_KEY` etc.); the stamp then differs and the next build-deploy refreshes, which removes
+  the old `-v1` files locally and in R2.
 - The Overture extracts are kept in the Actions cache. A re-run on the same
   release skips the S3 scan; a new release is detected through the STAC catalog and re-extracted.
 - The Actions cache key is `overture-v4-*`: bump it whenever the extract definition (classes, flags, coverage boxes) changes, or an old extract of the same release is reused (v4: Canary Islands + Morocco).

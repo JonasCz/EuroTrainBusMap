@@ -67,7 +67,10 @@ on piers or in harbours sit on the water side where OSM maps land as water.
 
 ## Upload to R2
 
-After `assets` finished locally (the refresh-assets workflow does it itself):
+Normally nothing to do: after a change to `packages/etl/src/basemap` bump `ASSETS_VERSION` (and update
+`ASSETS_SOURCE_HASH`) in `packages/etl/src/assets-version.ts`; the next build-deploy finds R2's `version.json` out of
+step and runs refresh-assets (all parts) before building. By hand, after `assets` finished locally (the refresh-assets
+workflow does it itself; it also writes `version.json`, which a manual upload does not):
 ```sh
 B=eurotrainbusmap-assets
 npx -y wrangler@4 r2 object put $B/basemap/tiles-v2.tar --file work/assets/basemap/tiles-v2.tar --remote
