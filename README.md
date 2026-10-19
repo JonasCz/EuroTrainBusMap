@@ -16,8 +16,9 @@ packages/
     feeds.json          data-driven feed list (Transitous mirror + Mobility Database fallbacks, per-feed options)
     operators/          operator adapters: one re-runnable script per operator for what is not a generic rule
                         (SNCF coach categories, Entur replacement trains, Trenitalia brand, ZOU! feed…; see its README)
-    generators/         feed generators: one script per operator without GTFS that turns its timetable web page into
-                        a GTFS feed on every build (ŽFBiH Bosnia and Herzegovina rail; see its README)
+    generators/         feed generators: one script per source without GTFS that turns its timetable web page or API
+                        into a GTFS feed on every build (ŽFBiH Bosnia and Herzegovina rail, redvoznje.ba intercity
+                        buses; see its README)
     data/classify-keywords.json  generic multilingual keyword lists of the route classifier
     src/cli.ts          `build-data` entry: download → load (DuckDB) → build
     src/gtfs/load.ts    per-feed loading: only kept routes/trips/stop_times/stops, calendars → service days

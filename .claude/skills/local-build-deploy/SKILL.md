@@ -197,7 +197,7 @@ calendar has run out (gtfs/validity.ts; `expiredFeeds` in the build report – r
   log ends with one `operator <id>: field@feed n, …` line per adapter (also `operators` in `work/build-report.json`).
 - Feed generators (`packages/etl/generators/*.ts`, feeds with a `{ "generated": id }` source such as `ba-zfbih`) fetch the
   operator's web page on every load (not cached, `--max-age-h` does not apply; ŽFBiH ≈ 4 min of station-form requests,
-  run beside the downloads) and write `work/cache/feeds/<feed>.zip`; a failure is a `WARN generator … FAILED` line, the feed
+  ba-redvoznje ≈ 30 s for ~760 JSON files, run beside the downloads) and write `work/cache/feeds/<feed>.zip`; a failure is a `WARN generator … FAILED` line, the feed
   is skipped (`failedFeeds`, `generated` in `work/build-report.json`). Their source is part of the `--reuse-db` key.
   Try one alone with `pnpm --filter @etbm/etl run generate -- <id> --out /tmp/<id>.zip`.
 - `node --import tsx ...` fails ("Cannot find package 'tsx'") outside `packages/etl`.

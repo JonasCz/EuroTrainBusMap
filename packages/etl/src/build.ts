@@ -463,6 +463,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     `SELECT rc, feed, cls, agency, route_short, route_long, color, tz, pname, route_type FROM rclass ORDER BY rc`,
   ))
     rclass.set(r.rc, { feed: r.feed, cls: r.cls, agency: agencyOverride.get(r.feed) ?? r.agency ?? "", short: r.route_short ?? "", long: r.route_long ?? "", color: r.color, tz: r.tz, pname: r.pname, routeType: r.route_type });
+  // feeds whose bus trips are deduplicated against coaches (FeedOptions.dedupBus)
+  const dedupBusFeeds = [...feedRef].filter(([, f]) => ctx.feeds.find((x) => x.key === f.key)?.def.options?.dedupBus).map(([n]) => n);
   const feedPriority = new Map<number, number>();
   for (const r of await db.all<{ feed: number; priority: number }>(`SELECT feed, priority FROM feeds ORDER BY feed`)) feedPriority.set(r.feed, r.priority);
 
@@ -479,7 +481,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   await db.run(`CREATE OR REPLACE TEMP TABLE ev AS
     SELECT st.trip_key, t.feed, rc.cls = 'rail' AS rail, m.city, (st.dep - z.off)::INTEGER AS u
     FROM stop_times st JOIN trips t USING (trip_key) JOIN rclass rc USING (rc) JOIN stop_map m USING (stop_key) JOIN tzoff z ON z.tz = rc.tz
-    WHERE rc.cls IN ('rail', 'coach') AND NOT t.has_freq`);
+    WHERE (rc.cls IN ('rail', 'coach')${dedupBusFeeds.length ? ` OR (rc.cls = 'bus' AND t.feed IN (${dedupBusFeeds.join(",")}))` : ""}) AND NOT t.has_freq`);
   await db.run(`CREATE OR REPLACE TEMP TABLE ev2 AS SELECT * FROM ev WHERE city IN (
       SELECT city FROM ev GROUP BY city HAVING count(DISTINCT feed) >= 2)`);
   const pairRows = await db.all<{ ta: number; tb: number; n: number }>(`

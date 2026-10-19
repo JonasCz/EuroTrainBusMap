@@ -107,6 +107,29 @@ Station coordinates come from the stops of the 2025 community feed (they lie on 
 25 m) plus Briješće (estimated); Ploče as in the HŽPP feed. The Transitous file `ba_ZFBiH` itself is out of date and no
 longer in `feeds.json` (the ŽRS trains of Republika Srpska, Banja Luka – Doboj …, have no current source).
 
+### Buses (checked 19 Oct 2026)
+
+| Feed | Source | Valid | Used |
+|---|---|---|---|
+| Li-Bus Livno coaches (Livno / Sarajevo / Mostar – Split, Zagreb, Frankfurt) | Transitous `ba_livnobus` (operator GTFS, livnobus.com) | feed_info 2026-10-18 – 2026-12-02 (rolling) | `ba-livnobus` (coach); its Li Bus copies elsewhere are skipped (`operators/livnobus.ts`) |
+| Centrotrans (Sarajevo canton city and regional lines: Breza, Vareš, Kakanj, Fojnica, Busovača, Pale…) | Transitous `ba_Centrotrans` (vekejsn/gtfs-generators, Nov 2025 snapshot; the GitLab "latest" is the same file) | weekday calendars 2025-11-04 – 2026-11-05 | `ba-centrotrans` (bus tier: regional lines in the network, city lines in the local layer); drops out by itself after 5 Nov 2026 |
+| Sarajevo canton trams, trolleybuses, buses (MSKS) | Transitous `ba_Sarajevo-MSKS` (vekejsn, updated 2026-10-18) | 2021 – 2099 (generic weekly calendar) | local layer `u-ba-sarajevo-msks` |
+| Mostar Bus | Transitous `ba_Mostar` (vekejsn, updated 2026-10-18) | 2026-10-17 – 2027-04-16 | local layer `u-ba-mostar` |
+| SatBUS Banja Luka | GitLab vekejsn/gtfs-generators `banja-luka-gtfs` (not in Transitous; no licence stated) | 2026-10-17 – 2027-04-16 | local layer `u-ba-banja-luka` |
+| Intercity buses of the whole country (+ diaspora coaches) | redvoznje.ba JSON API (CC BY 4.0, from the bus stations' boards) | data confirmed 2026-09-28 | **generated** feed `ba-redvoznje` (`packages/etl/generators/ba-redvoznje.ts`) |
+
+redvoznje.ba (<https://redvoznje.ba/api/>): static JSON, `routes/bus/{from}-{to}.json` per city pair with `departures`
+and `lines` (whole runs: operator, Mon..Sun mask, stops with time, day offset and border flag). 2,816 bus pair files
+hold 7,467 line entries = 262 distinct lines; the generator reads the 100 station boards and the ~650 pair files they
+point to (~30 s). 82 % of the 8,327 pair departures belong to a line; the rest (mostly buskarta.ba records without
+stops) are not used. The masks lose the scrape weekday for services that had left before the boards were read
+(1,487 × "0111111" vs 1 × "1011111"; Kakanj 05:00 → Sarajevo "0111100" vs Monday – Friday in the Centrotrans GTFS) –
+repaired for the regular masks. Duplicates: inside the source by shared (place, time) calls; against other feeds by
+the build's dedup (coaches; `ba-centrotrans` takes part with its buses, option `dedupBus`) and the exclusive operators
+(FlixBus, Li-Bus). In a test build with the BiH feeds and their neighbours the dedup paired 77 redvoznje trips with
+Centrotrans regional trips (Sarajevo – Kakanj / Vareš / Fojnica …); by the repo's rule the trip serving more places
+stays and takes the other's days. Health: `health.json`; `buskarta-intl` was last confirmed 2026-08-16 (no lines from it are used).
+
 ## 7. Feed audit (19 Oct 2026)
 
 Every feed of `feeds.json` and `urban-feeds.json` was checked against its downloaded zip (last service day from

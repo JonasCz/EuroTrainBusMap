@@ -1310,6 +1310,76 @@
    "approxMB": 0.01
   },
   {
+   "id": "ba-livnobus",
+   "country": "BA",
+   "name": "Li-Bus Livno (coaches Livno / Sarajevo / Mostar – Split, Zagreb, Frankfurt)",
+   "tier": "core",
+   "keep": [
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "ba_livnobus.gtfs.zip"
+    },
+    {
+     "url": "https://livnobus.com/gtfs/google-transit"
+    }
+   ],
+   "notes": "The operator's own GTFS (Turistička agencija Li-Bus d.o.o.), route_type 3, feed_info valid 2026-10-18 – 2026-12-02 (rolling). Li Bus lines of other feeds are skipped (operators/livnobus.ts).",
+   "approxMB": 1,
+   "options": {
+    "allCoach": true,
+    "priority": 3
+   }
+  },
+  {
+   "id": "ba-centrotrans",
+   "country": "BA",
+   "name": "Centrotrans (Sarajevo canton buses and regional lines)",
+   "tier": "bus",
+   "keep": [
+    "bus",
+    "coach"
+   ],
+   "sources": [
+    {
+     "transitous": "ba_Centrotrans.gtfs.zip"
+    },
+    {
+     "url": "https://gitlab.com/api/v4/projects/vekejsn%2Fgtfs-generators/packages/generic/centrotrans-gtfs/latest/centrotrans_gtfs.zip"
+    }
+   ],
+   "notes": "Community feed (vekejsn/gtfs-generators, Nov 2025 snapshot), one calendar per weekday 2025-11-04 – 2026-11-05: drops out by itself after that (gtfs/validity.ts). Regional lines (17-13 Breza, 17-16 Fojnica, 17-21 Busovača, 17-22 Vareš, 17-23 Kakanj, 18-ME Pale…) go to the main network; the city lines (< 15 km) feed the local-transport layer, where they meet the canton's own feed u-ba-sarajevo-msks (same lines are merged by name and path). dedupBus: its buses take part in the cross-feed dedup against the redvoznje.ba coaches.",
+   "approxMB": 1.7,
+   "options": {
+    "dedupBus": true,
+    "priority": 2
+   }
+  },
+  {
+   "id": "ba-redvoznje",
+   "country": "BA",
+   "name": "Intercity buses of Bosnia and Herzegovina (redvoznje.ba)",
+   "tier": "core",
+   "keep": [
+    "coach"
+   ],
+   "sources": [
+    {
+     "generated": "ba-redvoznje"
+    }
+   ],
+   "license": "CC-BY-4.0",
+   "licenseUrl": "https://redvoznje.ba/api/",
+   "attribution": "Timetables: redvoznje.ba (CC BY 4.0), from the bus stations' boards; carriers as named on each trip",
+   "notes": "Generated on every build by packages/etl/generators/ba-redvoznje.ts from the redvoznje.ba JSON API (lines of the city-pair files). Lowest dedup priority: copies in operator feeds win.",
+   "approxMB": 0.1,
+   "options": {
+    "allCoach": true,
+    "priority": -1
+   }
+  },
+  {
    "id": "me-zpcg",
    "country": "ME",
    "name": "ŽPCG (Montenegro rail)",

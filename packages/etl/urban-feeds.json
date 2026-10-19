@@ -445,6 +445,45 @@
    ]
   },
   {
+   "id": "u-ba-sarajevo-msks",
+   "country": "BA",
+   "name": "Sarajevo canton public transport (trams, trolleybuses, buses; MSKS)",
+   "sources": [
+    {
+     "transitous": "ba_Sarajevo-MSKS.gtfs.zip"
+    },
+    {
+     "url": "https://gitlab.com/api/v4/projects/vekejsn%2Fgtfs-generators/packages/generic/sarajevo-gtfs/latest/sarajevo_gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-ba-mostar",
+   "country": "BA",
+   "name": "Mostar Bus (city buses)",
+   "sources": [
+    {
+     "transitous": "ba_Mostar.gtfs.zip"
+    },
+    {
+     "url": "https://gitlab.com/api/v4/projects/vekejsn%2Fgtfs-generators/packages/generic/mostar-gtfs/latest/mobus_gtfs.zip"
+    }
+   ]
+  },
+  {
+   "id": "u-ba-banja-luka",
+   "country": "BA",
+   "name": "SatBUS Banja Luka (city buses)",
+   "sources": [
+    {
+     "url": "https://gitlab.com/api/v4/projects/vekejsn%2Fgtfs-generators/packages/generic/banja-luka-gtfs/latest/banja_luka_gtfs.zip"
+    }
+   ],
+   "license": "community feed (no licence stated)",
+   "licenseUrl": "https://gitlab.com/vekejsn/gtfs-generators",
+   "notes": "Community feed by vekejsn (same generator project as Transitous' Centrotrans / Sarajevo / Mostar feeds), not in Transitous; calendar 2026-10-17 – 2027-04-16."
+  },
+  {
    "id": "u-si-lpp",
    "country": "SI",
    "name": "lpp",

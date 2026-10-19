@@ -8,6 +8,7 @@ through the normal pipeline (load, stations, dedup, patterns, …) like a downlo
 | file | feed | source | what it reads |
 | --- | --- | --- | --- |
 | `ba-zfbih.ts` | ba-zfbih | <https://www.zfbh.ba/en/time-table/> | ŽFBiH (Federation of Bosnia and Herzegovina) trains: the timetable table, its asterisk footnotes (exact texts mapped to hard-coded calendar rules) and the page's station form for the intermediate stops |
+| `ba-redvoznje.ts` | ba-redvoznje | <https://redvoznje.ba/api/> | Intercity buses of Bosnia and Herzegovina (and the diaspora coaches leaving it): the JSON API's city-pair files (their `lines`: full runs with stops), deduplicated, coordinates from the API's stations or a table in the script; freshness from `health.json` |
 
 ## How it runs
 
@@ -79,7 +80,9 @@ Rules that keep generated data honest:
 - **Is the timetable current?** Check what the page says about its validity (ŽFBiH: the heading "Timetable for
   2025/2026" must be the current annual timetable, the footnotes' dates must not all lie before it) and generate
   service only within what the page covers (ŽFBiH: up to the December timetable change) and the build window
-  (`ctx.startDate − 1` … `ctx.startDate + ctx.days`, `serviceWindow` in the registry).
+  (`ctx.startDate − 1` … `ctx.startDate + ctx.days`, `serviceWindow` in the registry). A source without its own validity
+  dates needs a freshness rule (ba-redvoznje: `health.json`; a line source not re-confirmed for 60 days fails the
+  generator, service is generated up to `last_confirmed + 60 days`, so a source that stops updating drops out by itself).
 - **Coordinates** come from a hard-coded table in the script (OSM / GeoNames / an earlier feed, checked against the rail
   graph: every point should lie on the track); a station not in the table fails the source.
 - **Prefer accuracy.** Use only stops and times the source publishes. Where a detail (intermediate stops) comes from a

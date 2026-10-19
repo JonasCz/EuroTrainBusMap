@@ -6,10 +6,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Db } from "../src/db.ts";
 import { GENERATORS_DIR, loadFeedsConfig, resolveFeeds, type FeedDef, type FeedsConfig } from "../src/feeds.ts";
 import { initSchema, loadFeed } from "../src/gtfs/load.ts";
-import { dateRange, gtfsFiles, readRetrievedAt, isoWeekday, timetableChange, timetablePeriod, validateGtfs, type GtfsFeed } from "../src/generators/gtfs.ts";
+import { dateRange, gtfsFiles, readRetrievedAt, writeGtfsZip, isoWeekday, timetableChange, timetablePeriod, validateGtfs, type GtfsFeed } from "../src/generators/gtfs.ts";
 import { applyGenerators, generatorContext, loadGeneratorFiles, runGenerator, serviceWindow, type GeneratorSet } from "../src/generators/registry.ts";
 import { GeneratorError, type FeedGenerator, type GeneratorContext } from "../src/generators/types.ts";
 import zfbih, { FOOTNOTES, STATIONS, parseMainPage, parsePairPage } from "../generators/ba-zfbih.ts";
+import { API, generateFrom, mergeDuplicates, repairMask, type Line } from "../generators/ba-redvoznje.ts";
 
 const here = import.meta.dirname;
 const FIX = join(here, "fixtures", "zfbih");
@@ -238,6 +239,7 @@ describe("generator registry and build integration", () => {
     expect(ba.timetableUrl).toBe("https://www.zfbh.ba/en/time-table/");
     // the community feed ba_ZFBiH (ŽFBiH and ŽRS, ended 2025-12-13) is out of date: no feed reads it any more
     expect(cfg.feeds.some((f) => f.sources.some((s) => "transitous" in s && s.transitous === "ba_ZFBiH.gtfs.zip"))).toBe(false);
+    expect(cfg.feeds.find((f) => f.id === "ba-redvoznje")?.timetableUrl).toBe("https://redvoznje.ba/");
     const rf = await resolveFeeds(cfg, { only: ["ba-zfbih"], tiers: ["core"], cacheDir: dir });
     expect(rf).toEqual([expect.objectContaining({ key: "ba-zfbih", urls: [], generator: "ba-zfbih" })]);
   });
@@ -276,5 +278,122 @@ describe("generator registry and build integration", () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe("ba-redvoznje (redvoznje.ba API)", () => {
+  let dir0: string;
+  beforeAll(async () => {
+    dir0 = await mkdtemp(join(tmpdir(), "etbm-rv-"));
+  });
+  afterAll(async () => {
+    await rm(dir0, { recursive: true, force: true });
+  });
+  const RV = join(here, "fixtures", "redvoznje");
+  const TODAY = "2026-10-19";
+  /** A fake API from the trimmed fixture copy; boards not in the fixtures have no departures. */
+  async function fakeApi(edit: (path: string, json: any) => any = (_p, j) => j) {
+    const files = new Map<string, string>();
+    for (const f of await readdir(RV)) files.set(f, await readFile(join(RV, f), "utf8"));
+    const requests: string[] = [];
+    const fetchText: GeneratorContext["fetchText"] = async (url) => {
+      requests.push(url);
+      const path = url.slice(API.length);
+      let name: string | undefined;
+      if (path === ".json") name = "v1.json";
+      else if (/^\/(health|stations|operators)\.json$/.test(path)) name = path.slice(1);
+      else if (path.startsWith("/stations/")) name = `station-${path.slice(10)}`;
+      else if (path.startsWith("/routes/bus/")) name = `pair-${path.slice(12)}`;
+      const text = name ? files.get(name) : undefined;
+      const json = text ? JSON.parse(text) : path.startsWith("/stations/") ? { departures: [] } : undefined;
+      if (json === undefined) throw new Error(`404 ${url}`);
+      return JSON.stringify(edit(path, json));
+    };
+    return { fetchText, requests };
+  }
+  const run = async (edit?: Parameters<typeof fakeApi>[0], today = TODAY, warnings: string[] = []) => {
+    const api = await fakeApi(edit);
+    const feed = await generateFrom(ctxWith(api.fetchText, START, warnings), today, 10);
+    return { feed, api, warnings };
+  };
+  const tripsFrom = (feed: GtfsFeed, first: string, time: number) =>
+    feed.trips.filter((t) => {
+      const st = feed.stopTimes.filter((s) => s.trip_id === t.trip_id).sort((a, b) => a.stop_sequence - b.stop_sequence);
+      return st[0]!.stop_id === first && st[0]!.dep === time;
+    });
+
+  it("happy path: unique lines with coordinates, no border stops, each URL read once", async () => {
+    const { feed, api, warnings } = await run();
+    validateGtfs(feed, serviceWindow(START, DAYS));
+    expect(new Set(api.requests).size).toBe(api.requests.length);
+    expect(api.requests.filter((u) => u.includes("/routes/bus/")).sort()).toEqual(
+      ["kakanj-sarajevo", "sarajevo-banja-luka", "sarajevo-kakanj"].map((p) => `${API}/routes/bus/${p}.json`).sort(),
+    );
+    // border crossings are not stops; Top Tourist's Sarajevo – Denmark coach keeps its towns
+    expect(feed.stops.some((s) => /Stara Gradiška|Macelj|Spielfeld/.test(s.stop_name))).toBe(false);
+    const names = new Map(feed.stops.map((s) => [s.stop_id, s.stop_name]));
+    const top = feed.trips.find((t) => feed.agency.find((a) => a.agency_id === feed.routes.find((r) => r.route_id === t.route_id)!.agency_id)!.agency_name === "Top Tourist Banja Luka")!;
+    const calls = feed.stopTimes.filter((s) => s.trip_id === top.trip_id).sort((a, b) => a.stop_sequence - b.stop_sequence);
+    expect(names.get(calls[0]!.stop_id)).toBe("Istočno Sarajevo");
+    expect(calls.map((c) => names.get(c.stop_id))).toContain("Kolding");
+    expect(calls[calls.length - 1]!.arr).toBeGreaterThan(1440); // the next day
+    // "Bare" (Sarajevo) from the script's table; stations.json positions for the boards
+    expect(feed.stops.find((s) => s.stop_id === "bare")).toMatchObject({ stop_lat: 43.8745, stop_lon: 18.408 });
+    expect(feed.stops.find((s) => s.stop_id === "sarajevo")).toMatchObject({ stop_name: "Sarajevo", stop_lat: 43.85881, stop_lon: 18.39688 });
+    expect(feed.routes.every((r) => r.route_type === 200)).toBe(true);
+    expect(feed.info.sourceUrl).toBe("https://redvoznje.ba/");
+    // the publisher name has a comma: feed_info.txt is quoted CSV, the retrieval time still reads back
+    const zip = join(dir0, "rv.zip");
+    await writeGtfsZip({ ...feed, info: { ...feed.info, retrievedAt: "2026-10-19T18:00:00Z" } }, zip, dir0);
+    expect(readRetrievedAt(zip)).toBe("2026-10-19T18:00:00Z");
+    expect(warnings.join("\n")).toMatch(/buskarta-intl last confirmed 2026-08-16/);
+  });
+
+  it("scrape-day artefact: Kakanj 05:00 → Sarajevo runs Monday – Friday (as in the Centrotrans GTFS)", async () => {
+    const { feed } = await run();
+    const [t] = tripsFrom(feed, "kakanj", 300);
+    const days = feed.services.get(t!.service_id)!;
+    expect(new Set(days.map(isoWeekday))).toEqual(new Set([0, 1, 2, 3, 4]));
+    // service ends 60 days after the source was confirmed (2026-09-28)
+    expect(days[days.length - 1]).toBe("2026-11-27");
+    expect(repairMask("0111111", "2026-09-28")).toEqual({ mask: "1111111", repaired: true });
+    expect(repairMask("0101011", "2026-09-28")).toEqual({ mask: "0101011", repaired: false });
+    expect(repairMask("1011111", "2026-09-28")).toEqual({ mask: "1011111", repaired: false }); // a Tuesday gap is real
+  });
+
+  it("one bus listed twice is one trip with the days of both", () => {
+    const c = (key: string, t: number) => ({ key, name: key, t, coord: [44, 18] as [number, number] });
+    const a: Line = { operator: "X", days: "0101011", source: "s", calls: [c("a", 600), c("b", 660), c("c", 700)], pages: ["p1"] };
+    const b: Line = { operator: "X", days: "0001001", source: "s", calls: [c("a", 600), c("b", 660)], pages: ["p2"] };
+    const d: Line = { operator: "X", days: "1000000", source: "s", calls: [c("a", 600), c("b", 660)], pages: ["p3"] }; // no common day
+    const { lines, merged } = mergeDuplicates([b, a, d]);
+    expect(merged).toBe(1);
+    expect(lines.find((l) => l.calls.length === 3)).toMatchObject({ days: "0101011", pages: ["p1", "p2"] });
+    expect(lines).toHaveLength(2);
+  });
+
+  it("data too stale fails the source", async () => {
+    await expect(run(undefined, "2026-12-15")).rejects.toThrow(/data too stale: health.json data_last_confirmed 2026-09-28 is 78 days old/);
+    // a line source stale while the dataset is fresh
+    await expect(
+      run((p, j) => (p === "/health.json" ? { ...j, sources: j.sources.map((s: any) => (s.source === "autobuskastanica" ? { ...s, last_confirmed: "2026-07-01" } : s)) } : j)),
+    ).rejects.toThrow(/source autobuskastanica \(lines\) last confirmed 2026-07-01/);
+  });
+
+  it("a changed API fails the source", async () => {
+    await expect(run((p, j) => (p === ".json" ? { ...j, api_version: "v2" } : j))).rejects.toThrow(/api_version "v2"/);
+    await expect(run((p, j) => (p === ".json" ? { ...j, license: { name: "CC BY-NC 4.0" } } : j))).rejects.toThrow(/licence changed/);
+    await expect(run((p, j) => (p.startsWith("/routes/") ? { ...j, lines: undefined } : j))).rejects.toThrow(/no lines list/);
+    await expect(run((p, j) => (p.startsWith("/routes/") ? { ...j, lines: j.lines.map((l: any) => ({ ...l, days: "Mon-Fri" })) } : j))).rejects.toThrow(/days is not a Mon..Sun mask/);
+    await expect(
+      run((p, j) => (p.startsWith("/routes/") ? { ...j, lines: j.lines.map((l: any) => ({ ...l, stops: l.stops.map((s: any) => ({ ...s, time: "5.30" })) })) } : j)),
+    ).rejects.toThrow(/is not HH:MM/);
+    await expect(run((p, j) => (p.startsWith("/stations/") ? { ...j, departures: j.departures.map((d: any) => ({ ...d, url: "/bus/x/" })) } : j))).rejects.toThrow(/unexpected url/);
+  });
+
+  it("too many places without coordinates fail the source", async () => {
+    const unknown = (n: number) => (p: string, j: any) =>
+      p === "/stations.json" ? { ...j, stations: j.stations.map((s: any, i: number) => (i < n ? { ...s, slug: `${s.slug}-moved` } : s)) } : j;
+    await expect(run(unknown(20))).rejects.toThrow(/have no coordinates \(more than 5 %\)/);
   });
 });

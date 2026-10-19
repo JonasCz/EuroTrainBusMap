@@ -15,6 +15,7 @@ share one quirk), applied at fixed points of every build.
 | `flixbus.ts` | eu/gb/tr-flixbus | FlixBus / FlixTrain only from their own feeds (`exclusive`) |
 | `gb-mixed-rail.ts` | country GB | GWR / EMR / ScotRail / TfW routes: category per trip (`classify.after`) |
 | `hu-volanbusz.ts` | hu-volanbusz | route_type 200 on nearly every line: coach types count as buses (`feedOptions.coachTypesAsBus`) |
+| `livnobus.ts` | ba-livnobus | Li-Bus Livno only from its own feed (`exclusive`; the redvoznje.ba boards list it too) |
 | `ma-oncf.ts` | ma-oncf, agency Supratours | "(suprat.)" marker removed from trip headsigns (`onLoad`, `setHeadsigns`) |
 | `se-train-operators.ts` | se-trafiklab, train operators' agencies | their bus routes are replacement buses: dropped (`classify.after`) |
 | `sncf.ts` | fr-sncf-national | feed options (category from trip_id, number in headsign, category names); CTE / CRE trips on rail routes are buses, CRE reservation only (`classify.before`) |

@@ -38,7 +38,7 @@ describe("operator adapters of the repository", () => {
     const i = cfg.feeds.findIndex((f) => f.id === "fr-transilien");
     expect(cfg.feeds[i + 1]?.id).toBe("fr-paca-zou-intermetropole");
     expect(cfg.feeds.find((f) => f.id === "fr-sncf-national")?.options?.prefixNames?.CRE).toBe("Car");
-    expect(cfg.dedicatedOperators.map((d) => d.pattern).sort()).toEqual(["blablacar|ouibus", "european sleeper", "eurostar|thalys", "flix"]);
+    expect(cfg.dedicatedOperators.map((d) => d.pattern).sort()).toEqual(["\\bli[- ]?bus\\b|livno ?bus", "blablacar|ouibus", "european sleeper", "eurostar|thalys", "flix"]);
   });
 
   it("sncf: Car TER / car à réservation trips on rail routes are buses, CRE with the booking caveat", () => {

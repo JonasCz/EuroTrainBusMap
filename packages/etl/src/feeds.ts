@@ -50,6 +50,12 @@ export interface FeedOptions {
   agencyName?: string;
   /** Priority in cross-feed dedup (higher wins ties). Default 0. */
   priority?: number;
+  /**
+   * The bus trips of this feed take part in the cross-feed dedup too (normally only rail and coach trips do; bus and
+   * coach then count as one class): for a regional bus feed whose lines an aggregated coach feed also lists
+   * (ba-centrotrans against the redvoznje.ba coaches).
+   */
+  dedupBus?: boolean;
 }
 
 export interface FeedDef {
