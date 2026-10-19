@@ -7,6 +7,7 @@ import { modeIcon } from "./icons.ts";
 import { CAT_LABEL } from "../logic/filters.ts";
 import { bookingCaveat } from "../logic/caveat.ts";
 import { sourceLinkText } from "../logic/source.ts";
+import { staleWarning } from "../logic/stale.ts";
 
 /** Time at a station, in that station's city tz; marks day shifts and foreign zones. */
 export function timeEl(net: Net, utc: number, station: number, opts: { refDate?: string; refTz?: string; strong?: boolean } = {}): HTMLElement {
@@ -61,9 +62,26 @@ export function routeBadge(r: Route, number?: string): HTMLElement {
   return h("span", { class: "badge", style: `--badge-bg:${bg};--badge-fg:${fg}`, title: label !== r.name ? `${r.agency} · ${r.name}` : r.agency }, name);
 }
 
-/** Mode pictogram + coloured pill: "[train] ICE 597" (the pill keeps the operator's colour), plus a booking caveat badge. */
+/**
+ * Mode pictogram + coloured pill: "[train] ICE 597" (the pill keeps the operator's colour), plus a booking caveat badge
+ * and an "out of date" badge for a route from an expired feed.
+ */
 export function routeTag(r: Route, number?: string): HTMLElement {
-  return h("span", { class: "route-tag" }, modeIcon(r.cat, 16, CAT_LABEL[r.cat]), routeBadge(r, number), caveatBadge(r));
+  return h("span", { class: "route-tag" }, modeIcon(r.cat, 16, CAT_LABEL[r.cat]), routeBadge(r, number), caveatBadge(r), staleBadge(r));
+}
+
+/** Small warning badge for a route whose timetable is out of date (Route.expired, logic/stale.ts); null otherwise. */
+export function staleBadge(r: Route): HTMLElement | null {
+  const w = staleWarning(r);
+  if (!w) return null;
+  return h("span", { class: "stale", role: "img", title: `${w.text}. ${w.title}`, "aria-label": w.text }, icon("alert", 13), h("span", { class: "stale-label", "aria-hidden": "true" }, w.label));
+}
+
+/** The out-of-date warning as a line (trip schedule, journey legs): "Timetables out of date — expired 15 Jul 2025". */
+export function staleNote(r: Route): HTMLElement | null {
+  const w = staleWarning(r);
+  if (!w) return null;
+  return h("p", { class: "stale-note", title: w.title }, icon("alert", 14), h("span", null, w.text));
 }
 
 /** Small info badge for a service with a booking caveat (logic/caveat.ts); null for ordinary ones. */

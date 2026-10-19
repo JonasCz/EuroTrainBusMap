@@ -14,7 +14,8 @@ import type { Departure } from "../logic/timetable.ts";
 import { fmtDuration, fmtTime, localDate, toLocal } from "../logic/tz.ts";
 import { h, icon } from "./dom.ts";
 import { shortStationName } from "../map/features.ts";
-import { caveatBadge, caveatNote, fmtKm, routeBadge, routeDisplayName, routeTag, sourceLink, timeAt, timeEl } from "./format.ts";
+import { caveatBadge, caveatNote, fmtKm, routeBadge, routeDisplayName, routeTag, sourceLink, staleBadge, staleNote, timeAt, timeEl } from "./format.ts";
+import { earliestExpired } from "../logic/stale.ts";
 import { localIcon, modeIcon } from "./icons.ts";
 import { datePicker, focusPicker } from "./datepicker.ts";
 import { depCats, depsWith, type StationDeps } from "../logic/stations.ts";
@@ -985,7 +986,9 @@ export class Panel {
             const name = names.size === 1 && info ? routeDisplayName(info.route) : brand.startsWith("cat") ? (CAT_LABEL[cat] ?? brand) : brand;
             // a booking caveat when any journey of the group rides such a service on this leg
             const caveat = g.rows.reduce((f, r) => f | ((r.legs[i]?.info?.route.flags ?? 0) & CAVEAT_FLAGS), 0);
-            tags.push(info ? routeTag({ ...info.route, name, flags: (info.route.flags & ~CAVEAT_FLAGS) | caveat }) : modeIcon(cat, 16, CAT_LABEL[cat]));
+            // likewise an out-of-date timetable (Route.expired): the earliest expiry of the group's services
+            const expired = earliestExpired(g.rows.map((r) => r.legs[i]?.info?.route));
+            tags.push(info ? routeTag({ ...info.route, name, flags: (info.route.flags & ~CAVEAT_FLAGS) | caveat, expired }) : modeIcon(cat, 16, CAT_LABEL[cat]));
           });
           const k = g.cities.length;
           const dur = g.minMin === g.maxMin ? fmtDuration(g.minMin) : `${fmtDuration(g.minMin)} – ${fmtDuration(g.maxMin)}`;
@@ -1409,6 +1412,8 @@ export class Panel {
     );
     const caveat = caveatNote(sc.route);
     if (caveat) out.push(caveat);
+    const stale = staleNote(sc.route);
+    if (stale) out.push(stale);
     const counts: OnwardCount[] = [];
     const start = v.legs[0]!;
     const origin = n.file.stations[start.depStation]!.city;
@@ -1579,9 +1584,10 @@ export class Panel {
           h(
             "div",
             { class: "jsched-leg-main" },
-            h("span", { class: "sched-title" }, routeBadge(sc.route, sc.number), caveatBadge(sc.route), h("span", { class: "headsign" }, h("span", { class: "muted" }, "towards "), sc.headsign)),
+            h("span", { class: "sched-title" }, routeBadge(sc.route, sc.number), caveatBadge(sc.route), staleBadge(sc.route), h("span", { class: "headsign" }, h("span", { class: "muted" }, "towards "), sc.headsign)),
             h("span", { class: "jsched-leg-meta" }, [sc.route.agency || null, fmtDuration(mins), stopsBetween(sc)].filter(Boolean).join(" · "), sc.route.src ? [" · ", sourceLink(sc.route)] : null),
             caveatNote(sc.route),
+            staleNote(sc.route),
           ),
           k0 > 1 && (li === 0 || li === k0 - 1) ? this.removeLegButton(js, li) : null,
         ),
