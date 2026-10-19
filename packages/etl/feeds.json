@@ -1046,10 +1046,7 @@
     }
    ],
    "notes": "route_type 200 (2.8k) + 3.",
-   "approxMB": 92,
-   "options": {
-    "coachTypesAsBus": true
-   }
+   "approxMB": 92
   },
   {
    "id": "si-nap",

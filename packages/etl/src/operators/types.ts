@@ -71,6 +71,12 @@ export interface LoadApi {
    * scope (its agencies' routes), logs `reason` with the count and returns the number of trips dropped.
    */
   dropTrips(selectTripKeys: string, reason: string): Promise<number>;
+  /**
+   * Replaces trip headsigns: `selectTripKeyHeadsign` is a query returning (trip_key, headsign) rows over the tables
+   * above. Limited to the adapter's scope like dropTrips; logs `reason` with the count and returns the number of
+   * trips whose headsign changed.
+   */
+  setHeadsigns(selectTripKeyHeadsign: string, reason: string): Promise<number>;
 }
 
 /** A route as the build stage sees it (build.ts, when the route of a trip is created). */

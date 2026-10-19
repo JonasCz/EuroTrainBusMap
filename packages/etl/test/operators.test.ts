@@ -66,6 +66,21 @@ describe("operator adapters of the repository", () => {
     expect(classifyIn("no-entur", route(3, "60629", "", "SJ"))?.cls).toBe("bus");
   });
 
+  it("hu-volanbusz: coach route types count as buses (option from the adapter, not feeds.json)", () => {
+    expect(cfg.feeds.find((f) => f.id === "hu-volanbusz")?.options?.coachTypesAsBus).toBe(true);
+    expect(classifyIn("hu-volanbusz", route(200, "9", "", "MÁV Személyszállítási Zrt. - Helyközi busz"))?.cls).toBe("bus");
+  });
+
+  it("ma-oncf: the Supratours marker leaves the headsigns, other agencies' headsigns stay", async () => {
+    const db = await Db.open(":memory:");
+    await db.run(`CREATE TABLE t_kt AS SELECT * FROM (VALUES (1, 10, 'Agadir (suprat.)'), (2, 10, 'Inezgane (suprat)'), (3, 10, 'Fnideq (supra.)'),
+        (4, 10, 'Marrakech'), (5, 20, 'Tanger Ville (suprat.)')) v(trip_key, rc, headsign)`);
+    const def = cfg.feeds.find((f) => f.id === "ma-oncf")!;
+    await runLoadHooks(db, cfg.operators!.forFeed(ref(def)), "ma-oncf", new Map(), [[10, 0, "coach", 4, 0, "Supratours"], [20, 0, "rail", 1, 0, "ONCF"]]);
+    expect((await db.all<{ headsign: string }>(`SELECT headsign FROM t_kt ORDER BY trip_key`)).map((r) => r.headsign)).toEqual(["Agadir", "Inezgane", "Fnideq", "Marrakech", "Tanger Ville (suprat.)"]);
+    db.close();
+  });
+
   it("trenitalia / eurostar: brand and high speed of routes named by their ends", () => {
     const fr = extras("fr-trenitalia", "Trenitalia", "Paris-Gare-de-Lyon/Marseille-St-Charles", Cat.LongDistance);
     expect(fr).toEqual({ brand: "Frecciarossa", highSpeed: true });

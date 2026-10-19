@@ -539,6 +539,18 @@ function loadApi(db: Db, a: OperatorAdapter, ops: FeedOperators, key: string, fi
       }
       return n;
     },
+    setHeadsigns: async (sql, reason) => {
+      readOnly(sql);
+      const scope = scoped ? ` AND t_kt.rc IN (${scoped.join(",")})` : "";
+      await db.run(`DROP TABLE IF EXISTS t_hs; CREATE TEMP TABLE t_hs AS SELECT DISTINCT ON (trip_key) trip_key::INTEGER AS trip_key, headsign::VARCHAR AS headsign FROM (${sql}) ORDER BY trip_key`);
+      const n = await db.scalar(`SELECT count(*) FROM t_kt JOIN t_hs USING (trip_key) WHERE t_kt.headsign IS DISTINCT FROM t_hs.headsign${scope}`);
+      await db.run(`UPDATE t_kt SET headsign = t_hs.headsign FROM t_hs WHERE t_kt.trip_key = t_hs.trip_key AND t_kt.headsign IS DISTINCT FROM t_hs.headsign${scope}; DROP TABLE t_hs`);
+      if (n) {
+        log(`feed ${key}: operator ${a.id}: ${n} trip headsigns changed (${reason})`);
+        ops.registry.record(a.id, key, "onLoad.setHeadsigns", n);
+      }
+      return n;
+    },
   };
 }
 
