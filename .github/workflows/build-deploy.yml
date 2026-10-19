@@ -42,8 +42,9 @@ env:
 jobs:
   build-deploy:
     runs-on: ubuntu-latest
-    # full data build from scratch on a 4-core runner: feed download + load ~20 min, stages ~20 min, transit
-    # transfers ~14 min and local transport ~10 min (their per-feed caches start empty in CI), ~70 min in all
+    # full data build from scratch (measured on 4 cores / 15 GB, Oct 2026): feed download + load 12 min, cities…mapdata
+    # 22 min, transit transfers 14 min and local transport 25 min (their per-feed caches start empty in CI), 75 min in
+    # all; peak RSS 9.5 GB, work/ 14.5 GB at its peak (hence the free-disk step), output 2.0 GB / 14k files
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
@@ -109,13 +110,13 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           mkdir -p work/assets
-          if ! npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/manifest.json" --file work/assets/manifest.json --remote; then
+          get() { for i in 1 2 3; do npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/$1" --file "$2" --remote && return 0; rm -f "$2"; sleep $((i * 10)); done; return 1; }
+          if ! get manifest.json work/assets/manifest.json; then
             echo "::warning::no asset manifest in R2 – the ETL will fetch inputs from source"; exit 0
           fi
           for key in $(node -e 'console.log(require(process.argv[1]).files.join("\n"))' "$PWD/work/assets/manifest.json"); do
             mkdir -p "work/assets/$(dirname "$key")"
-            npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/$key" --file "work/assets/$key" --remote \
-              || echo "::warning::asset $key missing"
+            get "$key" "work/assets/$key" || echo "::warning::asset $key missing"
           done
           ls -laR work/assets
 
@@ -131,7 +132,7 @@ jobs:
           pnpm --filter @etbm/etl run build-data -- --out "$WORK/out-new" --work "$WORK" --assets "$WORK/assets" --subset "${{ steps.mode.outputs.subset }}"
           rm -rf work/out && mv work/out-new work/out
           rm -rf work/etl.duckdb work/etl.duckdb.wal work/cache/feeds work/tmp
-          du -sh work/out; find work/out -type f | wc -l
+          du -sh work/out; find work/out -type f | wc -l; df -h /
 
       - name: Build report
         if: always() && steps.mode.outputs.rebuild == 'true'
@@ -166,6 +167,7 @@ jobs:
           echo "files: $(find "$site" -type f | wc -l)"; du -sh "$site"
           # Cloudflare static assets: max 25 MiB per file, 20k files (free plan)
           big=$(find "$site" -type f -size +25M); if [ -n "$big" ]; then echo "Files over 25 MiB:"; echo "$big"; exit 1; fi
+          n=$(find "$site" -type f | wc -l); if [ "$n" -gt 20000 ]; then echo "::error::$n files, over the 20k per deployment"; exit 1; fi
 
       - name: Deploy to Cloudflare
         env:

@@ -7,8 +7,8 @@ description: Run the full EuroTrainBusMap data build, preview it and deploy it t
 
 Mirrors `.github/workflows/build-deploy.yml` step by step. Needs `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID` in the environment for the R2 download and the deploy (never print them).
-Machine used so far: 4 cores, 15 GB RAM, ~30 GB free disk. The build peaks at ~6 GB RSS and
-uses ~12 GB of disk in `work/` (`work/` and `dist/` are git-ignored).
+Machine used so far: 4 cores, 15 GB RAM, ~30 GB free disk. The build peaks at ~9.5 GB RSS and
+uses ~15 GB of disk in `work/` (`work/` and `dist/` are git-ignored).
 
 All commands run from the repo root unless noted. `node --import tsx` only resolves when the
 current directory is inside `packages/etl` (tsx is a dependency of that package only).
@@ -58,6 +58,16 @@ to iterate: the DuckDB file and the feed cache are what make `--reuse-db` and re
 seconds, stats, failed feeds and sanity checks is written to `work/build-report.json`.
 Feeds are downloaded from Transitous/Mobility Database through the session proxy; if a download
 fails with TLS/403 see `/root/.ccr/README.md`.
+
+### From scratch, as CI does (measured Oct 2026)
+
+Fresh clone (`git clone . work/fresh`), `pnpm install --frozen-lockfile`, `work/assets` with only the R2 manifest's keys,
+empty feed cache / DuckDB / `work/urban`, the workflow's "Build data" step verbatim: exit 0 in 74.5 min — download + load
+12.4 min (164 feed files, ~20 MB/s through the proxy, 0 failed), cities…mapdata ~22 min, transit 13.8 min (216 feeds extracted),
+urban 25.4 min (cold), sanity clean. Peak RSS 9.5 GB, `work/` peak 14.5 GB (during urban), output 2.0 GB / 14 045 files, site
+14 070 files, `wrangler deploy --dry-run` OK. Counts within ~1 % of a `--reuse-db` build of the same code (trips −4 %: two days
+later start date and newer feeds). Stats that a `--reuse-db` run reports as 0 (`replacementBusTrips`) are deletions an earlier
+build already made in the reused DuckDB file: build stages modify the database, so a filter that drops fewer rows needs a reload.
 
 ## 3. Iterate without a full rebuild
 

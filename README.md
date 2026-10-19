@@ -371,7 +371,7 @@ with a synthetic all-land tile (`web/src/map/basemap.ts`). The tiles are built b
 
 Typical full build: ~150 feed files, ~920k stops → ~73k stations (served) in ~41k cities, ~125k corridors on ~176k line-graph segments, ~2.1M trips,
 ~1.4 GB in ~12.9k files incl. ~4.9k basemap tiles and ~2.4k local-transport tiles (Cloudflare limit: 20k files per deployment); ~12 min on a 4-core machine with a warm DuckDB
-(`--reuse-db`; ~16 min on a runner incl. loading, plus ~1 min to download assets). The local-transport stage adds ~7 min when its per-feed caches are cold
+(`--reuse-db`; ~75 min from scratch on a runner, see "Building from scratch"). The local-transport stage adds ~25 min when its per-feed caches are cold
 (129 feeds with local lines: 21k lines / 25k alignments, 179k stations, 2 384 tiles / 11 MB gz, largest tile 86 KB).
 
 ## Running locally
@@ -382,7 +382,7 @@ pnpm install
 pnpm --filter @etbm/etl run build-data -- --out packages/web/public/data --feeds de-gtfsde-fv,de-gtfsde-rv,at-rail,ch-national,eu-flixbus
 pnpm dev                       # http://localhost:5173
 
-# full Europe (≈ 15 min, ~8 GB RAM, ~10 GB disk in ./work)
+# full Europe (≈ 75 min from scratch, ~10 GB RAM, ~15 GB disk in ./work at the peak)
 pnpm --filter @etbm/etl run build-data -- --out work/out
 # rail/coach only
 pnpm --filter @etbm/etl run build-data -- --out work/out --subset core
@@ -448,8 +448,11 @@ Nothing outside the repository and the R2 bucket is needed; every input is publi
    Mobility Database / operator URLs; no feed needs a key), and runs `build-data --subset full`. No local state is used:
    the DuckDB database, the feed cache and the per-feed local-transport / transit caches (`work/urban/`) all start empty
    (`--reuse-db`, `db-state.json`, `LOAD_VERSION` / `EXTRACT_VERSION` only matter for local iteration). Measured
-   from-scratch on 4 cores: see the `local-build-deploy` skill; ~70 min, peak RSS ~8.5 GB, `work/` ~10 GB at its peak,
-   output ~1.7 GB / ~14k files. The job's timeout is 240 min.
+   from scratch on 4 cores / 15 GB (fresh clone, empty work dir, CI command; Oct 2026): 75 min (download + load 12, the
+   build stages 22, transit transfers 14, local transport 25), peak RSS 9.5 GB, `work/` 14.5 GB at its peak (the job frees
+   runner disk first), output 2.0 GB / 14k files, site 14.1k files. The job's timeout is 240 min. Feeds and the start date
+   (yesterday, Berlin) change from run to run, so two builds on different days differ by a few percent of trips.
+   Without `geonames/villages-europe.tsv.gz` in R2 the build makes it from the GeoNames dumps itself (~1.5 min).
 
 Secrets: `CLOUDFLARE_API_TOKEN` (Workers deploy + R2) and `CLOUDFLARE_ACCOUNT_ID`.
 
@@ -457,7 +460,7 @@ Secrets: `CLOUDFLARE_API_TOKEN` (Workers deploy + R2) and `CLOUDFLARE_ACCOUNT_ID
 
 Designed to run for free:
 
-- **GitHub Actions** – free for public repositories (weekly ~20–30 min job, monthly asset refresh).
+- **GitHub Actions** – free for public repositories (weekly ~75 min job, monthly asset refresh).
 - **Cloudflare Workers static assets** – requests to static assets are free; ~10k files ≈ 1.1 GB per
   build (limits: 25 MiB per file, 20k files per deployment on the free plan).
 - **Cloudflare R2** – ~200 MB stored, a handful of operations per week: well inside the free tier
