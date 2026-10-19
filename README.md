@@ -137,8 +137,14 @@ Pipeline in short:
      in importance order within an ink budget (3000 px of line per 256 × 256 px, checked on a
      64 px grid over a 192 px window, so a sparse region next to a dense one – Northern Ireland,
      Northern England, the Balkans – fills up on its own), never in dense areas beyond the
-     budget, and only connected to the visible network (by city); computed globally in the ETL, so
-     neighbouring tiles always agree. **Mode filters**: the levels are computed for every subset of
+     budget, and only connected to the visible network (by city) – except in *empty regions* the network
+     cannot grow into (Iceland, an island's or a remote valley's bus network): up to z6, where nothing
+     is visible within 2 cells (128–160 px), the most important unconnected line *seeds* a network of its own (from z4,
+     below the category floors) and the region grows from it; computed globally in the ETL, so
+     neighbouring tiles always agree. City markers likewise: the importance tiers (`cityTierZoom`) are global, so
+     `cityProps` makes them locally relative (`localTierZooms`): in importance order a city may show from z4 on as
+     soon as no city shown at that zoom lies within 140 px, never later than its tier (Reykjavík, Tromsø, Akureyri
+     show with their lines; in Germany or Benelux the tiers already fill that spacing). **Mode filters**: the levels are computed for every subset of
      the four modes (15 scenarios sharing one pass, ~40 s; only the subset's own ink counts, so
      with "Coach" alone the coaches fill the room the trains left; a subset never shows a line later
      than a superset). Tiles store the all-modes level `l{k}` plus, where it differs, the subset levels

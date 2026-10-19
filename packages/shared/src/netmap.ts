@@ -293,6 +293,17 @@ export function cityProps(net: MapNet, idx: NetIndex, segProps: (Record<string, 
       if (w > width[city]!) width[city] = w;
     }
   }
+  // tier zoom: global importance tier, earlier where the map around the city is empty
+  const tz = net.cities.map((c) => cityTierZoom(c.importance));
+  const order = net.cities.map((c) => c.id).filter((id) => Object.keys(m[id]!).length);
+  order.sort((a, b) => net.cities[b]!.importance - net.cities[a]!.importance || a - b);
+  const local = localTierZooms(
+    order.map((id) => {
+      const c = net.cities[id]!;
+      return { lon: c.lon, lat: c.lat, tier: tz[id]!, line: Math.min(...CAT_BITS.map((k) => m[id]![`m${k}`] ?? Infinity)) };
+    }),
+  );
+  order.forEach((id, i) => (tz[id] = local[i]!));
   return net.cities.map((c) => {
     const r = m[c.id]!;
     if (!Object.keys(r).length) return null;
@@ -302,8 +313,62 @@ export function cityProps(net: MapNet, idx: NetIndex, segProps: (Record<string, 
       const ds = sl[c.id]?.[k];
       if (ds && r[`m${k}`] !== undefined && ds.some((v) => LEVELS[v] !== r[`m${k}`])) n[`n${k}`] = packScenario(ds);
     }
-    return { id: c.id, name: c.name, imp: c.importance, ns: c.stations.length, mw: Math.round(width[c.id]! * 100) / 100, tz: cityTierZoom(c.importance), ...r, ...n };
+    return { id: c.id, name: c.name, imp: c.importance, ns: c.stations.length, mw: Math.round(width[c.id]! * 100) / 100, tz: tz[c.id]!, ...r, ...n };
   });
+}
+
+/** Locally relative city tiers (localTierZooms): a city may show early while no city shown then lies within this many px. */
+export const CITY_SPACING_PX = 140;
+/** Earliest zoom of a locally promoted city. */
+export const CITY_LOCAL_FLOOR = 4;
+
+/**
+ * Locally relative tier zooms. The importance tiers (cityTierZoom) are global: importance comes from
+ * population and departures relative to the busiest city of Europe, so in a sparse region (Iceland,
+ * northern Scandinavia, an island) even the regional capital only shows from z7 or later, next to an
+ * empty map. Here, in priority order (most important first), a point takes the earliest zoom from
+ * `floor` on at which no point already shown at that zoom lies within `spacing` px – like the
+ * stations' thinning – but never later than its own tier: dense regions keep the global tiers, a
+ * sparse one shows its most important places as early as the room allows.
+ * `line` = zoom of the earliest line at the point (it is shown from max(tier, line)).
+ * Returns the tier zoom per point (≤ `tier`).
+ */
+export function localTierZooms(pts: readonly { lon: number; lat: number; tier: number; line: number }[], spacing = CITY_SPACING_PX, floor = CITY_LOCAL_FLOOR): number[] {
+  const out = pts.map((p) => p.tier);
+  const L0 = levelIndex(floor);
+  // per level: grid of the points shown there, cell = spacing px at the level's zoom (mercator units)
+  const grids = LEVELS.map(() => new Map<string, number[]>());
+  const cell = LEVELS.map((z) => spacing / (512 * 2 ** z));
+  const mx = (lon: number) => (lon + 180) / 360;
+  const my = (lat: number) => {
+    const sn = Math.sin((Math.max(-85, Math.min(85, lat)) * Math.PI) / 180);
+    return 0.5 - Math.log((1 + sn) / (1 - sn)) / (4 * Math.PI);
+  };
+  const xs = pts.map((p) => mx(p.lon)), ys = pts.map((p) => my(p.lat));
+  const free = (i: number, L: number) => {
+    const cs = cell[L]!, gx = Math.floor(xs[i]! / cs), gy = Math.floor(ys[i]! / cs);
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (const j of grids[L]!.get(`${gx + dx},${gy + dy}`) ?? []) if (Math.hypot(xs[i]! - xs[j]!, ys[i]! - ys[j]!) < cs) return false;
+    return true;
+  };
+  pts.forEach((p, i) => {
+    for (let L = L0; L < LEVELS.length && LEVELS[L]! < p.tier; L++) {
+      const z = Math.max(LEVELS[L]!, p.line);
+      if (z >= p.tier) break;
+      if (free(i, levelIndex(z))) {
+        out[i] = z;
+        break;
+      }
+    }
+    const shown = Math.max(out[i]!, p.line);
+    for (let L = 0; L < LEVELS.length; L++) {
+      if (LEVELS[L]! < shown) continue;
+      const cs = cell[L]!, key = `${Math.floor(xs[i]! / cs)},${Math.floor(ys[i]! / cs)}`;
+      (grids[L]!.get(key) ?? grids[L]!.set(key, []).get(key)!).push(i);
+    }
+  });
+  return out;
 }
 
 /** Zoom from which a city marker may be shown (under some mode filter). */

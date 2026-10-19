@@ -14,7 +14,12 @@
  *  - the unit of promotion is a whole line (a chain of corridors, see lines.ts), never a single
  *    hop: a route is revealed at once, not piece by piece,
  *  - a promoted line must touch the visible network at one of its nodes (cities in the map
- *    data), so lines grow out of the network instead of appearing as floating pieces.
+ *    data), so lines grow out of the network instead of appearing as floating pieces,
+ *  - except in empty regions the network cannot grow into (up to SEED_MAX_ZOOM): where nothing at
+ *    all is visible within SEED_RADIUS cells, the most important line may start a network of its
+ *    own ("seed", from SEED_FLOOR) and the region grows from it. Without seeds a network without a
+ *    visible node – Iceland's buses, an island's bus network – stayed empty until its
+ *    lines' base levels (bus: z7.5–9.5), however empty the map around it.
  *
  * Promotion never goes earlier than a per-category floor (long-distance rail first, then regional
  * rail, coaches, buses), but otherwise as far as the budget allows: the target is a roughly even
@@ -50,6 +55,23 @@ export const MAX_PROMOTE = LEVELS.length;
 export const ROOM_SHARE = 0.75;
 /** Earliest zoom a promoted line of each category may get. */
 export const PROMOTE_FLOOR: Record<number, number> = { [Cat.LongDistance]: 3, [Cat.Regional]: 4, [Cat.Coach]: 4, [Cat.Bus]: 5 };
+/**
+ * Seeds (see promoteScenarios): up to this zoom, a line that does not touch the visible network may
+ * start a network of its own where nothing is visible within SEED_RADIUS cells (128–160 px) of any
+ * cell it crosses – the empty regions growth cannot reach (Iceland, islands, remote bus networks).
+ * Beyond it the base rules and growth fill the map; floating pieces would only add noise.
+ */
+export const SEED_MAX_ZOOM = 6;
+/** Neighbourhood (cells) that must be empty around a seed. */
+export const SEED_RADIUS = 2;
+/** Earliest zoom of a seed (below a category's floor: an empty region shows its main line early). */
+export const SEED_FLOOR = 4;
+/** Growth passes per round (a pass in importance order; a line may connect once its neighbour is in). */
+const MAX_PASSES = 64;
+/** Seed / grow rounds per level and scenario. */
+const MAX_SEED_ROUNDS = 4;
+/** A seed must add at least this much ink (px): a visible stretch of line, not a dot (a busy 4 km town hop). */
+const SEED_MIN_PX = 24;
 
 export interface DensityInput {
   /** Segment polylines (lon/lat); undefined for gaps in sparse networks. */
@@ -82,6 +104,8 @@ export interface DensityOptions {
   cellPx?: number;
   /** The neighbourhood of a cell is (2 radius + 1)² cells, default RADIUS. */
   radius?: number;
+  /** Seed lines in empty regions (default true); false: lines only grow out of the visible network. */
+  seed?: boolean;
 }
 
 export interface ScenarioResult extends DensityResult {
@@ -110,6 +134,8 @@ export function promoteScenarios(inp: DensityInput, masks: readonly number[], op
   const maxPromote = opts.maxPromote ?? MAX_PROMOTE;
   const cellPx = opts.cellPx ?? CELL_PX;
   const R = opts.radius ?? RADIUS;
+  const SR = SEED_RADIUS;
+  const seedOn = opts.seed !== false;
   // budget of a whole neighbourhood (sum of its cells)
   const budget = (opts.budget ?? INK_BUDGET) * ((cellPx * (2 * R + 1)) / BUDGET_PX) ** 2;
   const NC = inp.cats.length;
@@ -155,6 +181,7 @@ export function promoteScenarios(inp: DensityInput, masks: readonly number[], op
   }));
   lines.sort((a, b) => CAT_RANK[inp.cats[a.cat]!]! - CAT_RANK[inp.cats[b.cat]!]! || b.tpd - a.tpd || a.g - b.g);
   const floor = (k: number) => levelIndex(PROMOTE_FLOOR[inp.cats[k]!] ?? 0);
+  const seedFloor = levelIndex(SEED_FLOOR);
 
   // per scenario state
   const sc = masks.map((mask) => {
@@ -237,43 +264,95 @@ export function promoteScenarios(inp: DensityInput, masks: readonly number[], op
           }
         return sum;
       };
+      const seeding = seedOn && LEVELS[L]! <= SEED_MAX_ZOOM;
       let pending = s.lines.filter((ln) => {
         const lv = levels[ln.ms[0]!]!; // equal for all members once smoothed
-        return lv > L && lv - L <= maxPromote && L >= floor(ln.cat);
+        return lv > L && lv - L <= maxPromote && L >= (seeding ? Math.min(floor(ln.cat), seedFloor) : floor(ln.cat));
       });
-      // passes: a line rejected only for lack of a connection may connect once its neighbour is in
-      for (let pass = 0; pass < 8 && pending.length; pass++) {
+      // cells with visible ink within SEED_RADIUS (only needed while seeding)
+      const near = new Set<number>();
+      const markNear = (cell: number) => {
+        for (let dx = -SR; dx <= SR; dx++) for (let dy = -SR; dy <= SR; dy++) near.add(cell + dx * CELL_ROW + dy);
+      };
+      if (seeding) for (const [cell, px] of ink) if (px > 0) markNear(cell);
+      /** ink this line would add: its segments not yet drawn for this category at L */
+      const inkOf = (ln: Line) => {
+        const add = new Map<number, number>();
+        const seen: number[] = [];
+        for (const g of ln.segs) {
+          if (segLevel[g * NC + ln.cat]! <= L) continue;
+          seen.push(g);
+          for (const [cell, px] of cellsOf(g)) add.set(cell, (add.get(cell) ?? 0) + px);
+        }
+        return { add, seen };
+      };
+      const accept = (ln: Line, add: Map<number, number>, seen: number[]) => {
+        const k = ln.cat;
+        for (const [cell, px] of add) {
+          ink.set(cell, (ink.get(cell) ?? 0) + px);
+          if (seeding && px > 0) markNear(cell);
+        }
+        for (const ck of ln.ms) levels[ck] = L;
+        for (const g of seen) if (L < segLevel[g * NC + k]!) segLevel[g * NC + k] = L;
+        for (const c of ln.nodes) vis.add(c);
+        s.promoted[k]! += ln.ms.length;
+      };
+      // Rounds: grow the visible network until nothing more fits (passes: a line rejected only for lack of
+      // a connection may connect once its neighbour is in), then seed the empty regions the network
+      // cannot grow into, and grow again from the seeds.
+      for (let round = 0; pending.length; round++) {
+        let changed = true;
+        for (let pass = 0; changed && pending.length && pass < MAX_PASSES; pass++) {
+          const next: typeof pending = [];
+          changed = false;
+          for (const ln of pending) {
+            if (L < floor(ln.cat) || !ln.nodes.some((c) => vis.has(c))) {
+              next.push(ln);
+              continue;
+            }
+            const { add, seen } = inkOf(ln);
+            let total = 0, roomy = 0;
+            for (const [cell, px] of add) {
+              total += px;
+              if (around(cell, add) <= budget) roomy += px;
+            }
+            if (roomy < ROOM_SHARE * total) continue; // over budget: stays at its base level
+            accept(ln, add, seen);
+            changed = true;
+          }
+          pending = next;
+        }
+        if (!seeding || round >= MAX_SEED_ROUNDS) break;
+        // Seeds: an unconnected line whose surroundings show nothing at all at this level (an island
+        // such as Iceland, a remote bus network whose link to the rest is minor) may start
+        // a network of its own; most important first, and a seed fills its surroundings, so a region
+        // gets one seed and grows from it. Never where anything is visible nearby: no floating pieces
+        // beside the network.
+        let seeded = false;
         const next: typeof pending = [];
-        let changed = false;
         for (const ln of pending) {
-          const k = ln.cat;
-          if (!ln.nodes.some((c) => vis.has(c))) {
+          if (ln.nodes.some((c) => vis.has(c))) {
+            next.push(ln); // connected (to a seed of this round): the next growth round decides
+            continue;
+          }
+          const { add, seen } = inkOf(ln);
+          let total = 0, empty = true;
+          for (const [cell, px] of add) {
+            total += px;
+            if (near.has(cell)) {
+              empty = false;
+              break;
+            }
+          }
+          if (!empty || total < SEED_MIN_PX) {
             next.push(ln);
             continue;
           }
-          // ink this line would add: its segments not yet drawn for this category at L
-          const add = new Map<number, number>();
-          const seen: number[] = [];
-          for (const g of ln.segs) {
-            if (segLevel[g * NC + k]! <= L) continue;
-            seen.push(g);
-            for (const [cell, px] of cellsOf(g)) add.set(cell, (add.get(cell) ?? 0) + px);
-          }
-          let total = 0, roomy = 0;
-          for (const [cell, px] of add) {
-            total += px;
-            if (around(cell, add) <= budget) roomy += px;
-          }
-          if (roomy < ROOM_SHARE * total) continue; // over budget: stays at its base level
-          for (const [cell, px] of add) ink.set(cell, (ink.get(cell) ?? 0) + px);
-          for (const ck of ln.ms) levels[ck] = L;
-          for (const g of seen) if (L < segLevel[g * NC + k]!) segLevel[g * NC + k] = L;
-          for (const c of ln.nodes) vis.add(c);
-          s.promoted[k]! += ln.ms.length;
-          changed = true;
+          accept(ln, add, seen);
+          seeded = true;
         }
-        if (!changed) break;
         pending = next;
+        if (!seeded) break;
       }
       refVis ??= vis;
     }

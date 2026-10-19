@@ -20,7 +20,7 @@ import {
   type MapNet,
   type NetworkFile,
 } from "@etbm/shared";
-import { CAT_BITS, cityMinZoom, levelIndex, mergeLines, packScenario, scenarioDigit, scenarioMask, segmentMinZoom, SCEN_DIGITS, TILE_MAXZOOM, unpackScenario, TT_VERSION, type TtIndex } from "@etbm/shared";
+import { CAT_BITS, CITY_LOCAL_FLOOR, cityMinZoom, localTierZooms, levelIndex, mergeLines, packScenario, scenarioDigit, scenarioMask, segmentMinZoom, SCEN_DIGITS, TILE_MAXZOOM, unpackScenario, TT_VERSION, type TtIndex } from "@etbm/shared";
 import { forZoom, tileProps, writeMapData } from "../src/mapdata.ts";
 
 const net: NetworkFile = {
@@ -182,5 +182,31 @@ describe("map data (netmap)", () => {
     } finally {
       await rm(dir, { recursive: true });
     }
+  });
+});
+
+describe("locally relative city tiers", () => {
+  it("shows the main place of an empty region early, but keeps the global tiers where places are dense", () => {
+    // in priority order: a big hub, 20 towns around it (0.3° ≈ 20–30 km apart), an isolated capital
+    // (Reykjavik-like) and a second place 3 km from it
+    const pts = [
+      { lon: 8, lat: 50, tier: 0, line: 3 },
+      ...Array.from({ length: 20 }, (_, i) => ({ lon: 7 + (i % 5) * 0.3, lat: 49.4 + Math.floor(i / 5) * 0.3, tier: 7, line: 4 })),
+      { lon: -21.9, lat: 64.1, tier: 7, line: 4 },
+      { lon: -21.85, lat: 64.11, tier: 8, line: 4 },
+    ];
+    const z = localTierZooms(pts);
+    expect(z[0]).toBe(0); // never later than its own tier
+    const towns = z.slice(1, 21);
+    // around the hub, towns only show early where the hub leaves room: most keep their tier
+    expect(towns.filter((x) => x === 7).length).toBeGreaterThan(14);
+    expect(towns.every((x) => x <= 7)).toBe(true);
+    expect(z[21]).toBe(CITY_LOCAL_FLOOR); // the isolated capital, as early as its lines
+    expect(z[22]).toBeGreaterThan(CITY_LOCAL_FLOOR); // its neighbour waits until there is room
+    expect(z[22]).toBeLessThanOrEqual(8);
+  });
+  it("never shows a place before its first line", () => {
+    const z = localTierZooms([{ lon: 0, lat: 60, tier: 8, line: 6.5 }]);
+    expect(z[0]).toBe(6.5);
   });
 });

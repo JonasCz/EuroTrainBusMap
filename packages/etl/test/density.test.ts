@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CAT_BITS, Cat, LEVELS, PROMOTE_FLOOR, levelIndex, monotoneLevels, promoteScenarios, promoteSparse } from "@etbm/shared";
+import { CAT_BITS, Cat, LEVELS, PROMOTE_FLOOR, SEED_FLOOR, SEED_MAX_ZOOM, levelIndex, monotoneLevels, promoteScenarios, promoteSparse } from "@etbm/shared";
 
 const NC = CAT_BITS.length;
 const bus = CAT_BITS.indexOf(Cat.Bus);
@@ -35,11 +35,58 @@ describe("density-aware LOD", () => {
     expect(dense[dense.length - 1]).toBeLessThan(9.5);
   });
 
-  it("does not promote lines that touch nothing visible", () => {
+  it("does not promote lines that touch nothing visible next to the visible network", () => {
+    // the visible long-distance line runs 0.1° (~11 km) beside the bus line, without a common node
     const levels = new Int8Array(2 * NC).fill(127);
+    levels[ld] = 0;
     levels[1 * NC + bus] = base;
-    promoteSparse({ segCoords: [segCoords[0]!], corridors: [corridors[0]!, { ...corridors[1]!, a: 5, b: 6 }], cats: CAT_BITS, levels });
+    const segs = [segCoords[0]!, segCoords[0]!.map(([x, y]) => [x, y + 0.1] as [number, number])];
+    promoteSparse({ segCoords: segs, corridors: [{ ...corridors[0]!, segs: [1] }, { ...corridors[1]!, a: 5, b: 6 }], cats: CAT_BITS, levels });
     expect(levels[1 * NC + bus]).toBe(base);
+  });
+
+  it("seeds an unconnected network in an empty region (an island) and grows it from there", () => {
+    // mainland: a visible long-distance line at lon 0; island (Iceland-like, 64° N, 20° further west):
+    // two bus lines meeting at node 21, not connected to the mainland, base levels 9.5 / 8.5
+    const segs: [number, number][][] = [
+      [[0, 50], [2, 50]],
+      [[-23, 64], [-20, 64]], // island line A (busiest)
+      [[-20, 64], [-18, 65]], // island line B
+    ];
+    const cors = [
+      { a: 0, b: 1, segs: [0], cats: Cat.LongDistance, tpd: { [Cat.LongDistance]: 20 } },
+      { a: 20, b: 21, segs: [1], cats: Cat.Bus, tpd: { [Cat.Bus]: 60 } },
+      { a: 21, b: 22, segs: [2], cats: Cat.Bus, tpd: { [Cat.Bus]: 3 } },
+    ];
+    const mk = () => {
+      const levels = new Int8Array(cors.length * NC).fill(127);
+      levels[ld] = 0;
+      levels[1 * NC + bus] = levelIndex(8.5);
+      levels[2 * NC + bus] = base;
+      return levels;
+    };
+    const levels = mk();
+    promoteSparse({ segCoords: segs, corridors: cors, cats: CAT_BITS, levels });
+    expect(LEVELS[levels[1 * NC + bus]!]).toBe(SEED_FLOOR); // the island's main line, below the bus floor
+    expect(LEVELS[levels[2 * NC + bus]!]).toBe(PROMOTE_FLOOR[Cat.Bus]); // grows out of it from the bus floor
+    // without seeds the island stays empty until the base levels
+    const off = mk();
+    promoteSparse({ segCoords: segs, corridors: cors, cats: CAT_BITS, levels: off }, { seed: false });
+    expect(LEVELS[off[1 * NC + bus]!]).toBe(8.5);
+    expect(LEVELS[off[2 * NC + bus]!]).toBe(8.5); // grows from line A only once that one is in
+  });
+
+  it("seeds one line per empty neighbourhood, the most important one", () => {
+    // 20 unconnected parallel bus lines, 1 km apart, 2° long, in an otherwise empty map; the busiest
+    // one is a short town hop (too short to stand for the region)
+    const segs = Array.from({ length: 20 }, (_, i) => [[10, 45 + i * 0.01], [i === 19 ? 10.05 : 12, 45 + i * 0.01]] as [number, number][]);
+    const cors = segs.map((_, i) => ({ a: 100 + 2 * i, b: 101 + 2 * i, segs: [i], cats: Cat.Bus, tpd: { [Cat.Bus]: 10 + i } }));
+    const levels = new Int8Array(cors.length * NC).fill(127);
+    cors.forEach((_, i) => (levels[i * NC + bus] = base));
+    promoteSparse({ segCoords: segs, corridors: cors, cats: CAT_BITS, levels });
+    const z = cors.map((_, i) => LEVELS[levels[i * NC + bus]!]);
+    expect(z[18]).toBe(SEED_FLOOR); // the busiest long enough to be seen
+    expect([...z.slice(0, 18), z[19]].every((x) => x! > SEED_MAX_ZOOM)).toBe(true); // the others stay at their base level
   });
 
   it("is deterministic", () => {
