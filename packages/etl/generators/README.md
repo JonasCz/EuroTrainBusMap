@@ -24,11 +24,31 @@ through the normal pipeline (load, stations, dedup, patterns, …) like a downlo
   `WARN generator <id> FAILED, feed <feed> skipped: <reason>`, deletes the zip of an earlier run (so no stage uses
   stale data) and lists the feed under `failedFeeds`; `work/build-report.json` has a `generated` entry per generator
   (ok, error, warnings, counts, seconds). Nothing of a failed source is published: fix the script and rebuild.
-- The app shows where such data comes from: every route of the feed carries `Route.src` (the timetable page), linked as
-  "Timetable: zfbh.ba" in the trip schedule and the journey legs, and the data sources dialog links the feed's name to
-  the page.
+- The app shows where such data comes from and when it was read: the registry stamps the feed with the time the
+  generator started (`feed_info.txt` `feed_version`, e.g. `2026-10-19T17:53:12Z`; `retrievedAt` in the build report);
+  every route of the feed carries `Route.src` (the timetable page) and `Route.srcAt` (that time), shown as
+  "Timetable: zfbh.ba · retrieved 19 Oct 2026" in the trip schedule and the journey legs, and the data sources dialog
+  links the feed's name to the page with "· retrieved 19 Oct 2026" (`retrieved` in `attribution.json`). With
+  `--reuse-db` the time is read back from the cached zip.
 - The generators' source text is part of the `--reuse-db` key (`gens` in `work/db-state.json`); with `--reuse-db` the
   load stage, and so the generators, do not run at all.
+
+## The header comment (required)
+
+Every generator starts with a doc comment that lets another agent (or you, months later) re-run, check and repair it
+without reverse-engineering the site. Sections, in this order:
+
+1. **SOURCE** – the page / API and its URL(s), who publishes it, licence and robots rules if any.
+2. **SHAPE OF THE SOURCE** – the structure the script relies on, with *concrete examples copied from the live source*
+   and the date they were checked: table header and sample rows, the exact footnote texts, JSON field names with a real
+   object, form fields. When the source changes, a diff against this section shows what moved.
+3. **WHAT THIS SCRIPT DOES** – the steps from source to GTFS (requests, filters, calendar rules, coordinates).
+4. **KNOWN QUIRKS** – oddities of the source and how they are handled (with examples: dates, train / line numbers).
+5. **FAILS ON PURPOSE** – every condition that makes the generator throw (so the build skips the feed).
+6. **HOW TO RE-CHECK / UPDATE** – the commands to run it live (`generate -- <id>`), to look at the source by hand, what
+   to update when a check fails (texts, tables, thresholds) and where the tests and fixtures are.
+
+Keep the examples current: when you update a rule, update the copied source text in the header in the same change.
 
 ## Writing one
 

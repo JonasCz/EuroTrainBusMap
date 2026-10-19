@@ -224,6 +224,8 @@ export interface Route {
    * exists, the ETL reads the operator's web page); the app links it from the trip so travellers can check the source.
    */
   src?: string;
+  /** When the ETL read that page (ISO time, UTC, e.g. "2026-10-19T17:53:12Z"): shown with the link ("retrieved 19 Oct 2026"). */
+  srcAt?: string;
 }
 
 /**
@@ -335,7 +337,8 @@ export interface CityShardFile {
 }
 
 export interface AttributionFile {
-  sources: { name: string; license: string; url?: string; attribution?: string }[];
+  /** `retrieved`: when the ETL read a source it generates a feed from (ISO time, UTC; generated feeds only). */
+  sources: { name: string; license: string; url?: string; attribution?: string; retrieved?: string }[];
 }
 
 /** StopLimit bits of stop `i` of a pattern (`limits`: Pattern.limits). */

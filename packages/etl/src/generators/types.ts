@@ -62,5 +62,7 @@ export interface GeneratorReport {
   /** Warnings of the run (data the script kept out, fallbacks). */
   warnings: string[];
   seconds: number;
+  /** When the generator started reading its source (ISO, UTC): the feed's feed_info feed_version, shown in the app. */
+  retrievedAt?: string;
   counts?: { stops: number; routes: number; trips: number; stopTimes: number; serviceDays: number; firstDate?: string; lastDate?: string };
 }

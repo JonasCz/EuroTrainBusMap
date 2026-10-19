@@ -6,6 +6,7 @@ import { h, icon } from "./dom.ts";
 import { modeIcon } from "./icons.ts";
 import { CAT_LABEL } from "../logic/filters.ts";
 import { bookingCaveat } from "../logic/caveat.ts";
+import { sourceLinkText } from "../logic/source.ts";
 
 /** Time at a station, in that station's city tz; marks day shifts and foreign zones. */
 export function timeEl(net: Net, utc: number, station: number, opts: { refDate?: string; refTz?: string; strong?: boolean } = {}): HTMLElement {
@@ -73,22 +74,14 @@ export function caveatBadge(r: Route): HTMLElement | null {
 }
 
 /**
- * Link to the operator's timetable page for a route the ETL generated from that page (Route.src: the operator
- * publishes no open timetable data); null for routes from GTFS feeds.
+ * Link to the timetable page a route was generated from (Route.src: no open timetable data exists, the ETL reads the
+ * page), with the day it was read (Route.srcAt): "Timetable: zfbh.ba · retrieved 19 Oct 2026"; null for routes from
+ * GTFS feeds.
  */
 export function sourceLink(r: Route): HTMLElement | null {
-  if (!r.src || !/^https?:\/\//.test(r.src)) return null;
-  let host = r.src;
-  try {
-    host = new URL(r.src).hostname.replace(/^www\./, "");
-  } catch {
-    /* keep the URL */
-  }
-  return h(
-    "a",
-    { class: "src-link", href: r.src, target: "_blank", rel: "noopener", title: "Read from the operator's timetable page (no open data feed exists): check it there before travelling" },
-    `Timetable: ${host}`,
-  );
+  const t = sourceLinkText(r);
+  if (!t) return null;
+  return h("a", { class: "src-link", href: r.src!, target: "_blank", rel: "noopener", title: t.title }, t.text);
 }
 
 /** The booking caveat as a sentence (trip schedule, journey legs); null for ordinary services. */

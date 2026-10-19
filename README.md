@@ -44,8 +44,9 @@ Pipeline in short:
    in `feeds.json`): a script per source fetches the operator's timetable page, parses it strictly (known table
    structure, footnote texts mapped to hard-coded calendar rules, a check that the timetable is current) and writes a
    validated GTFS zip into the feed cache, which then goes through the normal pipeline. A generator that fails (page
-   changed, unknown footnote, network) is logged and its feed skipped; the build goes on without it. Its routes carry
-   the source page (`Route.src`), linked as "Timetable: zfbh.ba" in the trip schedule.
+   changed, unknown footnote, stale data, network) is logged and its feed skipped; the build goes on without it. Its
+   routes carry the source page and the time it was read (`Route.src`, `Route.srcAt`), shown as
+   "Timetable: zfbh.ba · retrieved 19 Oct 2026" in the trip schedule and the journey legs (and in the data sources).
 2. **Load** – each zip is unzipped, filtered and loaded into a DuckDB file, then deleted. Kept:
    heavy rail (long distance, regional/suburban), coaches and *intercity* buses (≥ 15 km span,
    urban modes/operators dropped). Rail is classified LongDistance/Regional from extended route types,

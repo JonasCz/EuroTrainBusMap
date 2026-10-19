@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import { fetchPage } from "../download.ts";
 import type { FeedDef } from "../feeds.ts";
 import { log as defaultLog, warn as defaultWarn } from "../util/log.ts";
-import { addDays, feedCounts, validateGtfs, writeGtfsZip, type GtfsFeed } from "./gtfs.ts";
+import { addDays, feedCounts, retrievalTime, validateGtfs, writeGtfsZip, type GtfsFeed } from "./gtfs.ts";
 import type { FeedGenerator, GeneratorContext, GeneratorReport } from "./types.ts";
 
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -126,10 +126,12 @@ export async function runGenerator(g: FeedGenerator, feedKey: string, o: RunOpti
   const t0 = Date.now();
   const warnings: string[] = [];
   const ctx = generatorContext({ ...o, id: g.id, warnings });
-  const report: GeneratorReport = { id: g.id, feed: feedKey, sourceUrl: g.sourceUrl, ok: false, warnings, seconds: 0 };
+  const retrievedAt = retrievalTime(new Date(t0));
+  const report: GeneratorReport = { id: g.id, feed: feedKey, sourceUrl: g.sourceUrl, ok: false, warnings, seconds: 0, retrievedAt };
   try {
     ctx.log(`fetching ${g.sourceUrl}`);
     const feed = await g.generate(ctx);
+    feed.info.retrievedAt ??= retrievedAt;
     validateGtfs(feed, serviceWindow(o.startDate, o.days));
     await writeGtfsZip(feed, o.dest, o.tmpDir);
     report.ok = true;

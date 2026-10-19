@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Db } from "../src/db.ts";
 import { GENERATORS_DIR, loadFeedsConfig, resolveFeeds, type FeedDef, type FeedsConfig } from "../src/feeds.ts";
 import { initSchema, loadFeed } from "../src/gtfs/load.ts";
-import { dateRange, gtfsFiles, isoWeekday, timetableChange, timetablePeriod, validateGtfs, type GtfsFeed } from "../src/generators/gtfs.ts";
+import { dateRange, gtfsFiles, readRetrievedAt, isoWeekday, timetableChange, timetablePeriod, validateGtfs, type GtfsFeed } from "../src/generators/gtfs.ts";
 import { applyGenerators, generatorContext, loadGeneratorFiles, runGenerator, serviceWindow, type GeneratorSet } from "../src/generators/registry.ts";
 import { GeneratorError, type FeedGenerator, type GeneratorContext } from "../src/generators/types.ts";
 import zfbih, { FOOTNOTES, STATIONS, parseMainPage, parsePairPage } from "../generators/ba-zfbih.ts";
@@ -80,7 +80,7 @@ describe("GTFS helpers", () => {
         { trip_id: "t", stop_sequence: 2, stop_id: "y", arr: 630, dep: 630 },
       ],
       services: new Map([["s", ["2026-10-20"]]]),
-      info: { publisher: "p", publisherUrl: "https://p.example", lang: "en", version: "1", sourceUrl: "https://p.example" },
+      info: { publisher: "p", publisherUrl: "https://p.example", lang: "en", sourceUrl: "https://p.example" },
     };
     expect(() => validateGtfs(feed, { from: "2026-10-17", to: "2026-12-17" })).not.toThrow();
     expect(() => validateGtfs(feed, { from: "2026-11-01", to: "2026-12-17" })).toThrow(/no trip runs/);
@@ -260,6 +260,9 @@ describe("generator registry and build integration", () => {
     const { report } = await runGenerator(g, "ba-zfbih", { userAgent: "t", startDate: START, days: DAYS, dest, tmpDir: dir, log: () => {}, warn: () => {} });
     expect(report.ok).toBe(true);
     expect(report.counts).toMatchObject({ trips: 32, firstDate: "2026-10-17", lastDate: "2026-12-12" });
+    // the retrieval time is the feed's version (shown with the source link in the app)
+    expect(report.retrievedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(readRetrievedAt(dest)).toBe(report.retrievedAt);
     const cfg: FeedsConfig = await loadFeedsConfig(join(here, "../feeds.json"));
     const [rf] = await resolveFeeds(cfg, { only: ["ba-zfbih"], tiers: ["core"], cacheDir: dir });
     const db = await Db.open(":memory:");

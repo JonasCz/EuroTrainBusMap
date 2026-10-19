@@ -1,27 +1,77 @@
 /**
- * ŽFBiH (Željeznice Federacije Bosne i Hercegovine): the railway of the Federation of Bosnia and Herzegovina publishes
- * no GTFS (Transitous' community feed ba_ZFBiH ended in December 2025), only an HTML timetable:
+ * ŽFBiH (Željeznice Federacije Bosne i Hercegovine): trains of the Federation of Bosnia and Herzegovina, generated from
+ * the operator's HTML timetable (no GTFS is published; Transitous' community feed ba_ZFBiH ended on 2025-12-13).
  *
- *  - https://www.zfbh.ba/en/time-table/ holds one <table> "Train number | Train type | Relation | Departure |
- *    Arrival" (one row per train: "720 | Fast train | Čapljina - Sarajevo | 06:03 | 08:35"), followed by a "Note:"
- *    block of footnotes keyed by asterisks ("392*", "2150***": "*** Trains do not operate on weekends and public
- *    holidays.").
- *  - The same page answers a POST of two stations (form fields redvoznje_pol / redvoznje_dol, the station names of
- *    its "Choose a station" lists) with the trains between them in both directions and their times there – the
- *    only place the intermediate stops are published.
+ * SOURCE
+ *   https://www.zfbh.ba/en/time-table/ (GET: the table and the footnotes; POST with a station pair: the trains between
+ *   them with their times there). Published by the operator for travellers; no licence stated.
  *
- * The generator reads the table generically (any number of rows; the relation separator may be "-" or "–"), maps
- * each footnote text to a hard-coded calendar rule (FOOTNOTES below: the texts must match *exactly*) and asks the
- * station form for the stops: for a few anchor stations (the trains' end stations; Sarajevo covers nearly all) it
- * queries the anchor with every other station, so each train gets its time at every station it calls at. A train
- * whose stops do not agree with the table (other times at its end stations, impossible speeds) keeps only its two
- * end stations (warning). Trains listed by the form but not in the table (old numbers) are ignored.
+ * SHAPE OF THE SOURCE (live, checked 2026-10-19)
+ *   - Heading `<h2 class="relacije">ŽFBH Timetable for 2025/2026</h2>`.
+ *   - One `<table class="red_voz">`, header "Train number | Train type | Relation | Departure | Arrival", 39 rows:
+ *       <tr><td>720</td><td>Fast train</td><td>Čapljina - Sarajevo</td><td>06:03</td><td>08:35</td></tr>
+ *       <tr><td>392*</td><td>Fast train</td><td>Ploče - Sarajevo</td><td>05:05</td><td>08:35</td></tr>
+ *       <tr><td>710******</td><td>Fast train</td><td>Sarajevo - Maglaj</td><td>16:28</td><td>19:01</td></tr>
+ *       <tr><td>2150***</td><td>Local train</td><td>Sarajevo - Zenica</td><td>04:44</td><td>06:28</td></tr>
+ *       <tr><td>2402***</td><td>Local train</td><td>Pazarić - Sarajevo</td><td>06:37</td><td>07:11</td></tr>
+ *     (Sarajevo – Mostar – Čapljina (– Ploče): 720–723, 390–393, 1390/1391; Sarajevo – Zenica – Maglaj: 710/711,
+ *     2101/2102, 2150/2151, 2156–2158; Sarajevo – Visoko: 2160–2171; Sarajevo – Pazarić: 2402–2413.)
+ *   - Right after it `<div class="alert alert-warning mt-3"><strong>Note:</strong><br><br><a>* Trains 390 and …</a>…`,
+ *     the footnotes, exactly (whitespace collapsed):
+ *       *       Trains 390 and 391 operate on Sundays until 25.06.2025. Train 392 operates on Saturdays until 25.06.2026.
+ *               Train 393 operates on Fridays until 25.06.2026.
+ *       **      Trains operate from 26.06. to 27.09.2026. on Fridays, Saturdays and Sundays.            (1390, 1391)
+ *       ***     Trains do not operate on weekends and public holidays.
+ *       ****    Train number 2158 operates from 26.06.2026. to 27.09.2026. on Fridays, Saturdays and Sundays.
+ *       *****   Trains 2170 and 2171 operate every day, except from 26.06.2026. until 27.09.2026., when they do not
+ *               operate on Friday, Saturday and Sunday.
+ *       ******  Train 710 does not operate on Saturdays.
+ *       ******* Train 711 does not operate on Sundays.
+ *   - The station form `<select name="redvoznje_pol">` / `redvoznje_dol` (54 stations, "Choose a station" first, some
+ *     names with a trailing space: "Begov Han "). A POST of two stations answers with up to two tables:
+ *       <h2 class='relacije'><strong>Sarajevo</strong> - <strong>Konjic</strong> (Departure)</h2>
+ *       <table class='red_voz'><tr><th>Train number</th><th colspan='2'>Relation</th><th>Departure</th><th>Arrival</th></tr>
+ *       <tr class='relacija'><td><i class='fa fa-train'></i>721</td><td>Sarajevo</td><td>Konjic</td><td>16:46</td><td>17:55</td>…
+ *     and "(Arrival)" for the other direction, or "There is an arror! … no trains for this trip at all." – the only
+ *     place the intermediate stops are published.
  *
- * Fails (the source is skipped, someone updates this file) when: the table's header or a row cannot be read, a
- * train type or station is unknown, a footnote text differs from the known list or a new one appears, a train has an
- * asterisk count without a known footnote, or the footnotes' dates all lie before the current annual timetable
- * (outdated page). Service is generated for the build window up to the end of the current annual timetable (the
- * December timetable change): the page says nothing about the next one.
+ * WHAT THIS SCRIPT DOES
+ *   Reads the table generically (any number of rows; the relation separator may be "-" or "–"), maps each footnote
+ *   text to a hard-coded calendar rule (FOOTNOTES below: the texts must match exactly) and asks the station form for
+ *   the stops: for a few anchor stations (the trains' end stations; Sarajevo and Maglaj cover all) it queries the anchor
+ *   with every other station (≈ 106 requests, ~4 s each, two at a time), so each train gets its time at every station
+ *   it calls at. Coordinates from STATIONS below. Service for the build window up to the end of the current annual
+ *   timetable (the December timetable change: the page says nothing about the next one); weekday trains skip the FBiH
+ *   public holidays (HOLIDAYS_MD).
+ *
+ * KNOWN QUIRKS
+ *   - Ploče footnote dates: the page says 390 / 391 run on Sundays "until 25.06.2025" (a year before the others, probably
+ *     meant 2026) and 392 / 393 until 25.06.2026, and 1390 / 1391 only 26.06. – 27.09.2026 – so as published no train to
+ *     Ploče runs between October and December. HŽPP's own feed (hr-hz) has 390 – 393 between Ploče and Metković on
+ *     Fridays to Sundays until the December 2026 timetable change. The rules follow the page as printed; the Croatian
+ *     part stays on the map from hr-hz.
+ *   - The station form lists two old train numbers not in the table (2172, 2173 of the 2025 timetable; ignored) and
+ *     does not know the Ploče trains.
+ *   - The site sometimes cuts an answer off half-way with HTTP 200: only a page ending in </html> counts (retried).
+ *   - A train whose station-form stops disagree with the table (other times at its end stations, impossible speeds)
+ *     keeps only its two end stations (warning).
+ *   - Briješće (a halt in Sarajevo, Novi Grad) has no point in any source: placed on the track by its running times.
+ *
+ * FAILS ON PURPOSE (the build skips the feed and keeps going) when
+ *   the heading does not name the current annual timetable (from 13 Dec 2026 the page must say "2026/2027"; while it
+ *   still shows 2025/2026 the source is skipped), the table header or a row cannot be read, a
+ *   train type or station is unknown, a footnote text differs from FOOTNOTES or a new footnote appears, a train has an
+ *   asterisk count without a footnote or a footnote that does not name it, the footnotes' dates all lie before the
+ *   current annual timetable (outdated page), or a station-form answer has an unexpected heading / header / row.
+ *
+ * HOW TO RE-CHECK / UPDATE
+ *   - `pnpm --filter @etbm/etl run generate -- ba-zfbih` runs it against the live page and prints one line per train;
+ *     the error names what changed.
+ *   - `curl -s https://www.zfbh.ba/en/time-table/ | grep -A30 "Note:"` shows the footnotes: when one changed, update its
+ *     text and rule in FOOTNOTES together (and the copy in this header); after the December timetable change expect a
+ *     new heading, new train numbers and new footnotes – re-check every rule, and the Ploče trains against hr-hz.
+ *   - A new station: add it to STATIONS (OSM / GeoNames, checked against the rail graph).
+ *   - Tests: test/generators.test.ts with the page copies in test/fixtures/zfbih/ (refresh them with the live page).
  */
 import { defineGenerator, GeneratorError, type GeneratorContext } from "../src/generators/types.ts";
 import { dateRange, haversineKm, isoWeekday, parseHm, timetablePeriod, type GtfsFeed, type GtfsStopTime } from "../src/generators/gtfs.ts";
@@ -460,7 +510,7 @@ export function buildFeed(o: BuildInput): GtfsFeed {
     trips: [],
     stopTimes: [],
     services: new Map(),
-    info: { publisher: "EuroTrainBusMap (generated from the ŽFBiH timetable page)", publisherUrl: SOURCE_URL, lang: "bs", version: o.startDate, sourceUrl: SOURCE_URL },
+    info: { publisher: "EuroTrainBusMap (generated from the ŽFBiH timetable page)", publisherUrl: SOURCE_URL, lang: "bs", sourceUrl: SOURCE_URL },
   };
   const stopIds = new Map<string, string>();
   const stop = (name: string) => {

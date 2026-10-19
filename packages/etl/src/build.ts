@@ -59,6 +59,7 @@ import { loadUrbanFeedDefs, writeUrbanLayer } from "./urban/index.ts";
 import { computeTransit, gatherTransitFeeds } from "./urban/transit.ts";
 import { BASEMAP_DIR, BASEMAP_MAXZOOM, BASEMAP_MINZOOM, BASEMAP_TILES_KEY, BASEMAP_VERSION, installBasemapTiles } from "./basemap/tiles.ts";
 import type { GeneratorReport } from "./generators/types.ts";
+import { readRetrievedAt } from "./generators/gtfs.ts";
 
 export interface BuildCtx {
   db: Db;
@@ -445,6 +446,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const agencyOverride = new Map<number, string>();
   // the timetable page of a feed generated from an operator's website (FeedDef.timetableUrl → Route.src)
   const timetableUrl = new Map<number, string>();
+  // when the generator read that page (the generated zip's feed_info feed_version → Route.srcAt)
+  const retrievedAt = new Map<number, string>();
   /** feed number → the feed as the operator adapters see it */
   const feedRef = new Map<number, FeedRef>();
   for (const r of await db.all<{ feed: number; key: string; id: string; country: string }>(`SELECT feed, key, id, country FROM feeds ORDER BY feed`)) {
@@ -452,6 +455,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const name = def?.options?.agencyName;
     if (name) agencyOverride.set(r.feed, name);
     if (def?.timetableUrl) timetableUrl.set(r.feed, def.timetableUrl);
+    const at = generatedRetrievedAt(ctx, r.key);
+    if (at) retrievedAt.set(r.feed, at);
     feedRef.set(r.feed, { key: r.key, id: r.id, country: r.country });
   }
   for (const r of await db.all<{ rc: number; feed: number; cls: string; agency: string; route_short: string; route_long: string; color: string | null; tz: string; pname: string | null; route_type: number | null }>(
@@ -771,7 +776,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     // operator adapters (packages/etl/operators): brand / high-speed of routes their data does not name
     const ex = cfg.operators?.routeExtras({ feed: feedRef.get(rc.feed)!, agency: rc.agency, name: dn.name, short: rc.short, long: rc.long, cat, routeType: rc.routeType }) ?? {};
     const src = timetableUrl.get(rc.feed);
-    const rkey = `${dn.name}\u0001${rc.agency}\u0001${cat}\u0001${flags}\u0001${color ?? ""}\u0001${ex.brand ?? ""}\u0001${src ?? ""}`;
+    const srcAt = src ? retrievedAt.get(rc.feed) : undefined;
+    const rkey = `${dn.name}\u0001${rc.agency}\u0001${cat}\u0001${flags}\u0001${color ?? ""}\u0001${ex.brand ?? ""}\u0001${src ?? ""}\u0001${srcAt ?? ""}`;
     let route = routeIndex.get(rkey);
     if (route === undefined) {
       route = routes.length;
@@ -779,6 +785,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       if (color) r.color = color;
       if (ex.brand) r.brand = ex.brand;
       if (src) r.src = src;
+      if (srcAt) r.srcAt = srcAt;
       routes.push(r);
       routeHs.push(cat !== Cat.Bus && cat !== Cat.Coach && isHighSpeedService({ routeType: rc.routeType, agency: rc.agency, names: [rc.pname ?? "", rc.short, rc.long, dn.name, tShort[tk] ?? ""], highSpeed: ex.highSpeed }));
       routeIndex.set(rkey, route);
@@ -1618,6 +1625,12 @@ interface LicenseEntry {
   operators?: string[];
 }
 
+/** When a generated feed's source was read (its zip in the feed cache; null for downloaded feeds). */
+function generatedRetrievedAt(ctx: Pick<BuildCtx, "feeds" | "cacheDir">, key: string): string | null {
+  const rf = ctx.feeds.find((f) => f.key === key);
+  return rf?.generator ? readRetrievedAt(join(ctx.cacheDir, "feeds", `${key}.zip`)) : null;
+}
+
 function buildAttribution(ctx: BuildCtx): AttributionFile {
   const lic = new Map<string, LicenseEntry>();
   for (const e of ctx.licenses as LicenseEntry[]) if (e.filename) lic.set(e.filename, e);
@@ -1637,6 +1650,8 @@ function buildAttribution(ctx: BuildCtx): AttributionFile {
           attribution: e.publisher?.name,
         }
       : { name: rf.def.name, license: rf.def.license ?? "see source", url: rf.def.timetableUrl ?? rf.def.licenseUrl, attribution: rf.def.attribution };
+    const retrieved = rf.generator ? generatedRetrievedAt(ctx, rf.key) : null;
+    if (retrieved) src.retrieved = retrieved;
     if (!src.url) delete src.url;
     if (!src.attribution || rf.def.name.toLowerCase().includes(src.attribution.toLowerCase())) delete src.attribution;
     sources.push(src);

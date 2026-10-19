@@ -1,5 +1,6 @@
 import type { AttributionFile } from "@etbm/shared";
 import { h } from "./dom.ts";
+import { sourceMeta } from "../logic/source.ts";
 
 /** Footer line + dialog listing all data sources. */
 export function mountAttribution(footer: HTMLElement, dialog: HTMLDialogElement, load: () => Promise<AttributionFile>, generatedAt: string): void {
@@ -52,7 +53,7 @@ function fill(dialog: HTMLDialogElement, file: AttributionFile, generatedAt: str
             "li",
             null,
             s.url ? h("a", { href: s.url, target: "_blank", rel: "noopener" }, s.name) : h("strong", null, s.name),
-            h("span", { class: "muted" }, ` — ${s.license}`),
+            h("span", { class: "muted" }, sourceMeta(s)),
             s.attribution ? h("div", { class: "small muted" }, s.attribution) : null,
           ),
         ),

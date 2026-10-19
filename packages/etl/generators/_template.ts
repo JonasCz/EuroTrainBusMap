@@ -1,6 +1,6 @@
 // Template for a new feed generator: copy to <id>.ts (the id below must equal the file name), add the feed to
-// feeds.json with "sources": [{ "generated": "<id>" }] and describe the source in the doc comment. Files starting
-// with "_" are not loaded. See the README of this directory.
+// feeds.json with "sources": [{ "generated": "<id>" }] and fill in every section of the doc comment (README of this
+// directory, "The header comment"). Files starting with "_" are not loaded.
 import { defineGenerator, GeneratorError } from "../src/generators/types.ts";
 import type { GtfsFeed } from "../src/generators/gtfs.ts";
 import { serviceWindow } from "../src/generators/registry.ts";
@@ -8,8 +8,28 @@ import { serviceWindow } from "../src/generators/registry.ts";
 const SOURCE_URL = "https://operator.example/timetable";
 
 /**
- * <Operator> publishes no GTFS: what the page shows (with a real example row), how it becomes GTFS and when the
- * generator fails.
+ * <Operator / area>: what the feed is, in one or two sentences (and why it is generated: no GTFS exists).
+ *
+ * SOURCE
+ *   <URL(s)> – publisher, licence / terms, robots.txt if relevant.
+ *
+ * SHAPE OF THE SOURCE (live, checked YYYY-MM-DD)
+ *   Copy real samples here: the table header and two or three rows, the exact footnote / legend texts, a JSON object
+ *   with its field names, the form fields – whatever the parser relies on.
+ *
+ * WHAT THIS SCRIPT DOES
+ *   1. … 2. … (requests and their number, filters, calendar rules, coordinates, the service window)
+ *
+ * KNOWN QUIRKS
+ *   - Oddities of the source and how they are handled, with an example each.
+ *
+ * FAILS ON PURPOSE (the build skips the feed and keeps going) when
+ *   - every condition that throws: changed header, unknown footnote text, outdated timetable, stale data, …
+ *
+ * HOW TO RE-CHECK / UPDATE
+ *   - `pnpm --filter @etbm/etl run generate -- <id>` runs it against the live source;
+ *   - how to look at the source by hand (curl …) and what to update when a check fails;
+ *   - tests: test/generators.test.ts with fixtures in test/fixtures/<id>/.
  */
 export default defineGenerator({
   id: "template",
@@ -30,7 +50,7 @@ export default defineGenerator({
       trips: [],
       stopTimes: [],
       services: new Map(),
-      info: { publisher: "EuroTrainBusMap (generated from the operator's timetable page)", publisherUrl: SOURCE_URL, lang: "en", version: ctx.startDate, sourceUrl: SOURCE_URL },
+      info: { publisher: "EuroTrainBusMap (generated from the operator's timetable page)", publisherUrl: SOURCE_URL, lang: "en", sourceUrl: SOURCE_URL },
     };
     return feed;
   },

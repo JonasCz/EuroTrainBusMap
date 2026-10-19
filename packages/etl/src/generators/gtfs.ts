@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { epochDayToIso, isoToEpochDay } from "../core/time.ts";
 import { weekday } from "../core/calendar.ts";
 import { GeneratorError } from "./types.ts";
+import { csvLine } from "../gtfs/validity.ts";
 
 export interface GtfsAgency {
   agency_id: string;
@@ -59,8 +60,12 @@ export interface GtfsFeed {
   stopTimes: GtfsStopTime[];
   /** service_id → service dates (YYYY-MM-DD) */
   services: Map<string, string[]>;
-  /** feed_info.txt: publisher of the generated feed and where the data came from. */
-  info: { publisher: string; publisherUrl: string; lang: string; version: string; sourceUrl: string };
+  /**
+   * feed_info.txt: publisher of the generated feed and where the data came from. `retrievedAt` (ISO time, UTC, set by
+   * the registry when the generator starts reading the source) is written as feed_version: the version of a feed made
+   * from a web page is the moment it was read; the build shows it next to the source link (readRetrievedAt).
+   */
+  info: { publisher: string; publisherUrl: string; lang: string; sourceUrl: string; retrievedAt?: string };
 }
 
 /** YYYY-MM-DD ± n days. */
@@ -208,7 +213,7 @@ export function gtfsFiles(feed: GtfsFeed): Record<string, string> {
     "calendar_dates.txt": csv(["service_id", "date", "exception_type"], [...feed.services].flatMap(([id, ds]) => [...ds].sort().map((d) => [id, ymd(d), 1]))),
     "feed_info.txt": csv(
       ["feed_publisher_name", "feed_publisher_url", "feed_lang", "feed_start_date", "feed_end_date", "feed_version"],
-      [[feed.info.publisher, feed.info.publisherUrl, feed.info.lang, dates.length ? ymd(dates[0]!) : undefined, dates.length ? ymd(dates[dates.length - 1]!) : undefined, feed.info.version]],
+      [[feed.info.publisher, feed.info.publisherUrl, feed.info.lang, dates.length ? ymd(dates[0]!) : undefined, dates.length ? ymd(dates[dates.length - 1]!) : undefined, feed.info.retrievedAt]],
     ),
   };
 }
@@ -226,6 +231,30 @@ export async function writeGtfsZip(feed: GtfsFeed, dest: string, tmpRoot: string
     await rename(tmpZip, dest);
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** "2026-10-19T17:53:12Z": a retrieval time as written to feed_info.txt. */
+export const RETRIEVED_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+/** The current time as a retrieval time (UTC, whole seconds). */
+export function retrievalTime(d = new Date()): string {
+  return d.toISOString().replace(/\.\d+Z$/, "Z");
+}
+
+/**
+ * When the source of a generated feed zip was read (feed_info.txt feed_version, see GtfsFeed.info), or null for a
+ * zip without one (an older generated zip, or any downloaded feed).
+ */
+export function readRetrievedAt(zip: string): string | null {
+  try {
+    const text = execFileSync("unzip", ["-p", zip, "feed_info.txt"], { stdio: ["ignore", "pipe", "ignore"] }).toString("utf8");
+    const [head, row] = text.split(/\r?\n/);
+    const i = csvLine(head ?? "").indexOf("feed_version");
+    const v = i >= 0 ? csvLine(row ?? "")[i]?.trim() : undefined;
+    return v && RETRIEVED_RE.test(v) ? v : null;
+  } catch {
+    return null;
   }
 }
 
