@@ -1,7 +1,7 @@
 # EuroTrainBusMap
 
 A transit-diagram style map of intercity rail and bus connections across Europe (incl. UK,
-CH, NO, the Balkans, Turkey and Ukraine). Click a city to see every city reachable by a
+CH, NO, the Balkans, Turkey and Ukraine, the Canary Islands and Morocco). Click a city to see every city reachable by a
 *direct* train/coach/bus – and, if you switch it on, every city reachable with one or two same-day
 connections –, click a pair for the timetable (or the journeys with changes), click a departure for the trip's stops and
 the onward connections from any of them. Fully static: a weekly pipeline turns ~150 public GTFS feeds into JSON files
@@ -437,6 +437,16 @@ rebuilt from public sources by refresh-assets (`only` = the part name):
 | `rail/rail-graph-v1.bin` | `rail` | rail routing graph | Overture Maps transportation (S3, ~30 min extraction) | 27 MB | draws rail lines as unsnapped curves (warning) |
 | `rail/urbanrail-graph-v1.bin` | `urbanrail` | tram / metro track graph | Overture Maps (~25 min extraction) | 2 MB | draws local lines without shapes as dashed chords |
 | `road/road-graph-v1.bin` | `road` | motorway…tertiary road graph | Overture Maps (~30 min extraction) | 114 MB | draws coach / bus lines as unsnapped curves (warning) |
+
+**Coverage.** The area is defined once, in `packages/shared/src/coverage.ts`: `COVERAGE_BOXES` (Europe
+[-25, 34, 45, 72] and the Canary Islands / Madeira / Morocco incl. Western Sahara [-19, 20.5, -0.9, 34]), the box around
+them `MAP_BBOX` (point filters for GeoNames places and GTFS stops, basemap tiles, borders / labels, the web map's source
+and pan bounds) and `COVERAGE_ID`. Assets record the coverage they were built for (the first line of the GeoNames files,
+`coverage` in borders.json / labels.json, the basemap `index.json` and the graph headers), so after a coverage change a
+build with old R2 assets still works: it rebuilds the GeoNames files and borders / labels from source by itself (~2 min),
+and warns that the basemap tiles (no land outside the old box) and the graphs (unsnapped curves outside it) are stale
+until refresh-assets has run with `only=tiles,rail,urbanrail,road`. The Overture extraction takes the boxes, not the
+enclosing box (that would add every road of Egypt and Arabia); cached extracts are named `<kind>-<COVERAGE_ID>-<release>`.
 
 A first run of refresh-assets with all parts takes ~2 h (mostly the three Overture extractions; later runs within one
 Overture release reuse the cached extracts). Changing a format means a new key (`RAIL_FORMAT`, `BASEMAP_TILES_KEY`):

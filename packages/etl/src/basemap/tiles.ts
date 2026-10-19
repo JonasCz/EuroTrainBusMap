@@ -23,13 +23,16 @@ import vtpbf from "vt-pbf";
 import { boxesOverlap, clipRingFlat, quantize, ringBox, simplifyRing, type Poly, type Ring } from "./geom.ts";
 import { readPolygons, type Box } from "./shp.ts";
 import { tarEntries, untar } from "./tar.ts";
-import type { BasemapIndex } from "@etbm/shared";
+import { COVERAGE_ID, MAP_BBOX, type BasemapIndex } from "@etbm/shared";
 
 export const BASEMAP_TILES_KEY = "basemap/tiles-v2.tar";
 /** Directory (below the data root, next to manifest.json) the tiles are unpacked to. */
 export const BASEMAP_DIR = "basemap-v2";
 export const BASEMAP_VERSION = 2;
-export const EUROPE_BBOX: Box = [-25, 34, 45, 72];
+/** Area the tiles are cut for: the box around the map's coverage (packages/shared/src/coverage.ts). */
+export const BASEMAP_BBOX: Box = [...MAP_BBOX];
+/** Area of tiles built before the index recorded it (Europe only). */
+export const LEGACY_BASEMAP_BBOX: Box = [-25, 34, 45, 72];
 export const BASEMAP_MINZOOM = 2;
 export const BASEMAP_MAXZOOM = 9;
 
@@ -226,7 +229,7 @@ export interface TilesOptions {
 /** Build all tiles; returns the tar bytes (index.json + tiles/…) and the index. */
 export async function buildBasemapTiles(o: TilesOptions): Promise<{ tar: Buffer; index: BasemapIndex; stats: Record<string, { files: number; bytes: number; pure: number }> }> {
   const log = o.log ?? console.log;
-  const bbox = o.bbox ?? EUROPE_BBOX;
+  const bbox = o.bbox ?? BASEMAP_BBOX;
   const minZoom = o.minZoom ?? BASEMAP_MINZOOM, maxZoom = o.maxZoom ?? BASEMAP_MAXZOOM;
   await mkdir(o.cacheDir, { recursive: true });
   const land = await loadLand(o.cacheDir, bbox, log);
@@ -266,7 +269,10 @@ export async function buildBasemapTiles(o: TilesOptions): Promise<{ tar: Buffer;
     log(`basemap: ${nb} blocks cut in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   }
 
-  const index: BasemapIndex = { version: BASEMAP_VERSION, minzoom: minZoom, maxzoom: maxZoom, tiles: {}, land: {} };
+  const index: BasemapIndex = {
+    version: BASEMAP_VERSION, minzoom: minZoom, maxzoom: maxZoom, tiles: {}, land: {},
+    bounds: [bbox[0], bbox[1], bbox[2], bbox[3]], ...(o.bbox ? {} : { coverage: COVERAGE_ID }),
+  };
   const entries: { name: string; data: Uint8Array }[] = [];
   const stats: Record<string, { files: number; bytes: number; pure: number }> = {};
   const pure = new Map<number, Set<string>>();
@@ -307,12 +313,17 @@ export async function buildBasemapTiles(o: TilesOptions): Promise<{ tar: Buffer;
   return { tar: tarEntries(entries), index, stats };
 }
 
-/** Unpack the tiles asset into `<outRoot>/basemap-v2/`; returns the file count. */
-export async function installBasemapTiles(tarFile: string, outRoot: string): Promise<number> {
+/**
+ * Unpack the tiles asset into `<outRoot>/basemap-v2/`; returns the file count and the area and coverage the tiles
+ * were cut for (tiles from before the index recorded them: the Europe-only box, no coverage).
+ */
+export async function installBasemapTiles(tarFile: string, outRoot: string): Promise<{ files: number; bounds: Box; coverage: string | null }> {
   const dir = join(outRoot, BASEMAP_DIR);
   await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true });
-  return untar(await readFile(tarFile), dir);
+  const files = untar(await readFile(tarFile), dir);
+  const index = JSON.parse(await readFile(join(dir, "index.json"), "utf8")) as BasemapIndex;
+  return { files, bounds: index.bounds ?? LEGACY_BASEMAP_BBOX, coverage: index.coverage ?? null };
 }
 
 // CLI

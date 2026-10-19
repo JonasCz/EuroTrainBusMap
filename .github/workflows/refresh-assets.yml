@@ -91,14 +91,15 @@ jobs:
       # The Overture extracts (rail ~190 MB, major roads ~2 GB, urban rail ~25 MB) are cached, so re-runs within the
       # same Overture release skip the slow S3 scan (a new release is detected and re-extracted; old extracts are
       # deleted). Bump the key prefix when the extract definition changes (v3: rail keeps disused/under-construction
-      # segments, roads include `tertiary`), otherwise a stale extract of the same release is reused.
+      # segments, roads include `tertiary`; v4: coverage boxes incl. the Canary Islands and Morocco, files named
+      # <kind>-<COVERAGE_ID>-<release>.parquet), otherwise a stale extract of the same release is reused.
       - name: Restore Overture extracts
         uses: actions/cache@v4
         with:
           path: work/overture
-          key: overture-v3-${{ github.run_id }}
+          key: overture-v4-${{ github.run_id }}
           restore-keys: |
-            overture-v3-
+            overture-v4-
 
       # Builds the parts in `only` into work/assets (deleting the old copies first), removes files that are not current
       # asset keys and writes work/assets/manifest.json listing exactly the current keys (src/assets.ts). Any failure

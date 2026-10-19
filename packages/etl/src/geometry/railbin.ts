@@ -36,6 +36,8 @@ export interface RailBinHeader {
   release: string;
   /** [xmin, ymin, xmax, ymax] of the extraction */
   bbox: readonly number[];
+  /** `COVERAGE_ID` (packages/shared/src/coverage.ts) of the extracted area; absent in graphs of the Europe-only box */
+  coverage?: string;
   created: string;
   compression: 'zstd' | 'gzip';
   nodeCount: number;
@@ -79,7 +81,7 @@ const hasZstd = typeof (zlib as { zstdCompressSync?: unknown }).zstdCompressSync
 
 export function serializeRailGraph(
   g: RailGraph,
-  meta: { kind?: GraphKind; release: string; bbox: readonly number[]; simplifyTol: number; minComponent: number },
+  meta: { kind?: GraphKind; release: string; bbox: readonly number[]; coverage?: string; simplifyTol: number; minComponent: number },
 ): Buffer {
   const E = g.edgeCount, G = g.geoX.length;
   const geoCount = new Int32Array(E);
@@ -101,7 +103,7 @@ export function serializeRailGraph(
       })
     : gzipSync(payload, { level: 9 });
   const header: RailBinHeader = {
-    format: RAIL_FORMAT, kind: meta.kind ?? 'rail', release: meta.release, bbox: meta.bbox, created: new Date().toISOString(), compression,
+    format: RAIL_FORMAT, kind: meta.kind ?? 'rail', release: meta.release, bbox: meta.bbox, ...(meta.coverage ? { coverage: meta.coverage } : {}), created: new Date().toISOString(), compression,
     nodeCount: g.nodeCount, edgeCount: E, geoCount: G, simplifyTol: meta.simplifyTol, minComponent: meta.minComponent,
     sections: secs.map(([name, a]) => ({ name, type: a instanceof Float32Array ? 'f32' : 'i32', length: a.length })),
   };

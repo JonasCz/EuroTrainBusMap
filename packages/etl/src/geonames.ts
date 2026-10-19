@@ -6,16 +6,31 @@ import { join } from "node:path";
 import { downloadCached, mapLimit } from "./download.ts";
 import type { Place } from "./core/cities.ts";
 import { log, warn } from "./util/log.ts";
+import { COVERAGE_ID, MAP_BBOX } from "@etbm/shared";
 
 const BASE = "https://download.geonames.org/export/dump/";
 
-/** Countries considered part of the map (Europe incl. TR, UA, Caucasus edge cases excluded). */
+/**
+ * Countries considered part of the map (Europe incl. TR, UA, Caucasus edge cases excluded; plus Morocco and Western
+ * Sahara, GeoNames "EH": Laâyoune, Dakhla). The Canary Islands and Madeira are ES / PT.
+ */
 export const EURO_COUNTRIES = new Set(
   (
-    "AD AL AT BA BE BG BY CH CY CZ DE DK EE ES FI FO FR GB GG GI GR HR HU IE IM IS IT JE LI LT LU LV MC MD ME MK MT NL NO PL PT RO RS RU SE SI SJ SK SM TR UA VA XK AX"
+    "AD AL AT BA BE BG BY CH CY CZ DE DK EE ES FI FO FR GB GG GI GR HR HU IE IM IS IT JE LI LT LU LV MC MD ME MK MT NL NO PL PT RO RS RU SE SI SJ SK SM TR UA VA XK AX MA EH"
   ).split(" "),
 );
-export const BBOX = { minLon: -25, minLat: 34, maxLon: 45, maxLat: 72 };
+/** Box around the map (packages/shared/src/coverage.ts): places and stops outside it are dropped. */
+export const BBOX = { minLon: MAP_BBOX[0], minLat: MAP_BBOX[1], maxLon: MAP_BBOX[2], maxLat: MAP_BBOX[3] };
+/**
+ * Local-name languages that replace GeoNames' country languages: Morocco's places are known in Latin script by their
+ * French names (Fès, Tanger, Marrakech) – the Arabic ones would win over them wherever no stop name decides.
+ */
+const LANG_OVERRIDE: Record<string, string[]> = { XK: ["sq", "sr"], MA: ["fr"], EH: ["fr"] };
+/**
+ * Area and countries a GeoNames asset was built for, written as its first line ("#coverage …"): an asset made for
+ * another area (an older R2 copy) is rebuilt from source instead of silently lacking the new countries.
+ */
+export const GEONAMES_COVERAGE = `${COVERAGE_ID} ${MAP_BBOX.join(",")} ${[...EURO_COUNTRIES].sort().join(",")} ${JSON.stringify(LANG_OVERRIDE)}`;
 
 const DROP_FCODES = new Set(["PPLH", "PPLQ", "PPLW", "PPLCH", "PPLR", "STLMT"]);
 
@@ -35,13 +50,19 @@ export function serializePlaces(places: Place[]): Buffer {
   const lines = places.map((p) =>
     [p.id, clean(p.name), p.lat, p.lon, p.country, p.population, p.tz, p.fcode, ...p.admin, (p.altNames ?? []).map(clean).join("|")].join("\t"),
   );
-  return gzipSync(lines.join("\n") + "\n", { level: 9 });
+  return gzipSync(`#coverage ${GEONAMES_COVERAGE}\n` + lines.join("\n") + "\n", { level: 9 });
+}
+
+/** The coverage line of a places / villages file (null: none, a file from before the line existed). */
+export function placesCoverage(buf: Buffer): string | null {
+  const head = gunzipSync(buf).subarray(0, 4096).toString("utf8");
+  return head.startsWith("#coverage ") ? head.slice(10).split("\n")[0]! : null;
 }
 
 export function parsePlaces(buf: Buffer): Place[] {
   const out: Place[] = [];
   for (const line of gunzipSync(buf).toString("utf8").split("\n")) {
-    if (!line) continue;
+    if (!line || line.startsWith("#")) continue;
     const c = line.split("\t");
     const p: Place = {
       id: Number(c[0]),
@@ -70,12 +91,13 @@ export async function loadPlaces(cacheDir: string, ua: string, assetsDir?: strin
     const f = join(assetsDir, PLACES_ASSET);
     if (existsSync(f)) {
       try {
-        const places = parsePlaces(await readFile(f));
-        if (places.length > 10_000) {
+        const buf = await readFile(f);
+        const places = placesCoverage(buf) === GEONAMES_COVERAGE ? parsePlaces(buf) : [];
+        if (!places.length) warn(`geonames asset ${f} was built for another area or country list, rebuilding from source`);
+        else if (places.length > 10_000) {
           log(`geonames: ${places.length} places from asset ${f}`);
           return places;
-        }
-        warn(`geonames asset ${f} looks truncated (${places.length} places), rebuilding from source`);
+        } else warn(`geonames asset ${f} looks truncated (${places.length} places), rebuilding from source`);
       } catch (e) {
         warn(`geonames asset ${f} unreadable: ${(e as Error).message}`);
       }
@@ -103,7 +125,7 @@ async function loadPlacesFromSource(cacheDir: string, ua: string, strict: boolea
     const langs = (c[15] ?? "").split(",").map((l) => l.split("-")[0]!.trim()).filter((l) => /^[a-z]{2,3}$/.test(l));
     countryLangs.set(c[0]!, [...new Set(langs)]);
   }
-  countryLangs.set("XK", ["sq", "sr"]);
+  for (const [cc, langs] of Object.entries(LANG_OVERRIDE)) countryLangs.set(cc, langs);
 
   const places: Place[] = [];
   const text = unzipText(join(dir, "cities1000.zip"), "cities1000.txt");
@@ -202,12 +224,13 @@ export async function loadVillages(cacheDir: string, ua: string, assetsDir?: str
     const f = join(assetsDir, VILLAGES_ASSET);
     if (existsSync(f)) {
       try {
-        const v = parsePlaces(await readFile(f));
-        if (v.length > 100_000) {
+        const buf = await readFile(f);
+        const v = placesCoverage(buf) === GEONAMES_COVERAGE ? parsePlaces(buf) : [];
+        if (!v.length) warn(`geonames villages asset ${f} was built for another area or country list, rebuilding from source`);
+        else if (v.length > 100_000) {
           log(`geonames: ${v.length} villages from asset ${f}`);
           return v;
-        }
-        warn(`geonames villages asset ${f} looks truncated (${v.length} places), rebuilding from source`);
+        } else warn(`geonames villages asset ${f} looks truncated (${v.length} places), rebuilding from source`);
       } catch (e) {
         warn(`geonames villages asset ${f} unreadable: ${(e as Error).message}`);
       }

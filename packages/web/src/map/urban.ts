@@ -7,7 +7,7 @@
  */
 import { URBAN_LAYERS, UMODE, type UrbanInfo } from "@etbm/shared";
 import type { ExpressionSpecification, FilterSpecification, LayerSpecification } from "maplibre-gl";
-import { FONT_MEDIUM, FONT_REGULAR } from "./style.ts";
+import { FONT_MEDIUM, FONT_REGULAR, SOURCE_BOUNDS } from "./style.ts";
 import type { Theme } from "./theme.ts";
 
 type Expr = ExpressionSpecification;
@@ -18,7 +18,7 @@ export const URBAN_SOURCES = ["urb-rail", "urb-bus"] as const;
 const FADE = 0.6;
 
 export function urbanSources(info: UrbanInfo, url: (p: string) => string): Record<string, { type: "vector"; tiles: string[]; minzoom: number; maxzoom: number; bounds: [number, number, number, number] }> {
-  const mk = (s: UrbanInfo["rail"]) => ({ type: "vector" as const, tiles: [`etbmgz://${url("")}${s.url}`], minzoom: s.zoom, maxzoom: s.zoom, bounds: [-32, 26, 62, 75] as [number, number, number, number] });
+  const mk = (s: UrbanInfo["rail"]) => ({ type: "vector" as const, tiles: [`etbmgz://${url("")}${s.url}`], minzoom: s.zoom, maxzoom: s.zoom, bounds: SOURCE_BOUNDS });
   return { "urb-rail": mk(info.rail), "urb-bus": mk(info.bus) };
 }
 

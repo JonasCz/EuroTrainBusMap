@@ -15,7 +15,8 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { EUROPE_BBOX, ensureRailExtract, ensureRoadExtract, ensureUrbanRailExtract, loadRailGraph, loadRoadGraph } from './overture.ts';
+import { COVERAGE_ID } from '@etbm/shared';
+import { EXTRACT_BBOX, ensureRailExtract, ensureRoadExtract, ensureUrbanRailExtract, extractPrefix, loadRailGraph, loadRoadGraph } from './overture.ts';
 import { bridgeGaps, graphBytes } from './graph.ts';
 import { pruneGraph, RAIL_FORMAT, serializeRailGraph, type GraphKind } from './railbin.ts';
 
@@ -56,7 +57,8 @@ export async function buildGraphAsset(
 ): Promise<GraphAsset> {
   const t0 = Date.now();
   const parquet = kind === 'rail' ? await ensureRailExtract(workDir, log) : kind === 'urbanrail' ? await ensureUrbanRailExtract(workDir, log) : await ensureRoadExtract(workDir, log);
-  const release = basename(parquet).match(/-europe-(.+)\.parquet$/)?.[1] ?? 'unknown';
+  const name = basename(parquet);
+  const release = name.startsWith(extractPrefix(kind)) ? name.slice(extractPrefix(kind).length).replace(/\.parquet$/, '') : 'unknown';
   const tol = kind === 'road' ? ROAD_SIMPLIFY_TOL : RAIL_SIMPLIFY_TOL;
   const minComponent = kind === 'road' ? ROAD_MIN_COMPONENT : kind === 'urbanrail' ? URBAN_RAIL_MIN_COMPONENT : RAIL_MIN_COMPONENT;
   const g0 = kind !== 'road'
@@ -65,7 +67,7 @@ export async function buildGraphAsset(
   const gap = kind === 'road' ? ROAD_BRIDGE_GAP : kind === 'urbanrail' ? URBAN_RAIL_BRIDGE_GAP : RAIL_BRIDGE_GAP;
   const g = pruneGraph(gap > 0 ? bridgeGaps(g0, { maxGap: gap, log }) : g0, minComponent);
   log(`${kind}: pruned ${g0.nodeCount}→${g.nodeCount} nodes, ${g0.edgeCount}→${g.edgeCount} edges, ${g0.compSize.length}→${g.compSize.length} components (${(graphBytes(g) / 1e6).toFixed(0)} MB in memory, rss ${(process.memoryUsage().rss / 1e6).toFixed(0)} MB)`);
-  const buf = serializeRailGraph(g, { kind, release, bbox: EUROPE_BBOX, simplifyTol: tol, minComponent });
+  const buf = serializeRailGraph(g, { kind, release, bbox: EXTRACT_BBOX, coverage: COVERAGE_ID, simplifyTol: tol, minComponent });
   mkdirSync(dirname(outFile), { recursive: true });
   writeFileSync(outFile + '.tmp', buf);
   renameSync(outFile + '.tmp', outFile);

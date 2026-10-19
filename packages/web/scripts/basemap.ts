@@ -1,6 +1,7 @@
 /**
  * Builds the small basemap GeoJSON layers used by the web map from Natural
- * Earth data (public domain), clipped to Europe + Turkey. Land and lakes are NOT
+ * Earth data (public domain), clipped to the map's box (Europe + Turkey + Macaronesia and Morocco,
+ * packages/shared/src/coverage.ts). Land and lakes are NOT
  * made here any more: they are vector tiles built from OSM land polygons
  * (packages/etl/src/basemap/tiles.ts). With `legacyLayers` (dev fixtures without tiles)
  * the old 1:50m land / lakes GeoJSON is written as well.
@@ -18,9 +19,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { COVERAGE_ID, MAP_BBOX } from "../../shared/src/coverage.ts";
 
 export type BBox = [minLon: number, minLat: number, maxLon: number, maxLat: number];
-export const EUROPE_BBOX: BBox = [-25, 34, 45, 72];
+export const MAP_BOX: BBox = [...MAP_BBOX];
 
 const NE_BASE = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson";
 
@@ -34,6 +36,19 @@ interface Feature {
 interface FC {
   type: "FeatureCollection";
   features: Feature[];
+  /** GeoJSON bbox member: the area the layer was clipped to */
+  bbox?: number[];
+  /** `COVERAGE_ID` of that area (an asset of another area is rebuilt by the ETL) */
+  coverage?: string;
+}
+
+/** The coverage a borders.json / labels.json was built for (null: unknown, built before it was recorded). */
+export function basemapFileCoverage(json: string): string | null {
+  try {
+    return (JSON.parse(json) as FC).coverage ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export interface BasemapOptions {
@@ -220,7 +235,7 @@ export function clipLines(fc: FC, bbox: BBox, precision: number, keep: (p: Recor
 // ---------------------------------------------------------------------------
 
 export async function buildBasemap(opts: BasemapOptions): Promise<void> {
-  const bbox = opts.bbox ?? EUROPE_BBOX;
+  const bbox = opts.bbox ?? MAP_BOX;
   const precision = opts.precision ?? 3;
   const log = opts.log ?? ((m: string) => console.log(m));
   await mkdir(opts.outDir, { recursive: true });
@@ -260,7 +275,7 @@ export async function buildBasemap(opts: BasemapOptions): Promise<void> {
   }
 
   for (const [name, fc] of Object.entries(out)) {
-    const json = JSON.stringify(fc);
+    const json = JSON.stringify({ type: fc.type, bbox, ...(opts.bbox ? {} : { coverage: COVERAGE_ID }), features: fc.features });
     await writeFile(join(opts.outDir, `${name}.json`), json);
     log(`basemap/${name}.json: ${fc.features.length} features, ${(json.length / 1024).toFixed(0)} KiB`);
   }

@@ -42,7 +42,7 @@ Corridor geometries for the map: `buildGeometries(reqs, { workDir, log })` (see 
 
 | file | |
 |---|---|
-| `overture.ts` | resolves the latest Overture release (STAC), extracts Europe rail to `<workDir>/overture/rail-europe-<release>.parquet` (cached; ~13 min, ~220 MB), loads it into a graph |
+| `overture.ts` | resolves the latest Overture release (STAC), extracts rail inside the coverage boxes (`COVERAGE_BOXES`, packages/shared/src/coverage.ts: Europe + Canary Islands / Madeira / Morocco) to `<workDir>/overture/rail-<COVERAGE_ID>-<release>.parquet` (cached; ~13 min, ~220 MB), loads it into a graph |
 | `graph.ts` | typed-array graph: vertices shared between segments = junctions, degree-2 chains contracted, edge geometry Douglas-Peucker simplified (20 m), grid index over edge sub-segments |
 | `route.ts` | multi-candidate station snapping (≤1.5 km) + A* over directed edges with detour bound and an optional reversal cost at forks; optional per-query edge cost multipliers (`RouteOptions.edgeMult`), returns the path's edges |
 | `guide.ts` | steering rail routes: feed shapes on the track (`onTrack`, `shapeEdgeMult`, `coverage`), track usage (`TrackUsage`, `usageMult`) and high-speed lines (`highSpeedEdges`, `avoidHighSpeed`) |

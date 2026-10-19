@@ -2,6 +2,10 @@
 import type { LayerSpecification, StyleSpecification } from "maplibre-gl";
 import { absUrl } from "../data/load.ts";
 import type { Theme } from "./theme.ts";
+import { MAP_BBOX } from "@etbm/shared";
+
+/** Tile sources never ask for tiles outside the map's box (packages/shared/src/coverage.ts) plus a margin. */
+export const SOURCE_BOUNDS: [number, number, number, number] = [MAP_BBOX[0] - 7, MAP_BBOX[1] - 2, MAP_BBOX[2] + 17, MAP_BBOX[3] + 3];
 
 export const FONT_REGULAR = ["Noto Sans Regular"];
 export const FONT_MEDIUM = ["Noto Sans Medium"];

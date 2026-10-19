@@ -1,7 +1,9 @@
 /**
  * Overture Maps rail extraction (DuckDB) + loading into a RailGraph.
  *
- * Cache: <workDir>/overture/rail-europe-<release>.parquet (raw Overture columns, ~220 MB).
+ * Cache: <workDir>/overture/<kind>-<coverage id>-<release>.parquet (raw Overture columns, rail ~220 MB); the
+ * coverage id (`COVERAGE_ID`, packages/shared/src/coverage.ts) is in the name so a cached extract of another area
+ * is never reused.
  * Env overrides: ETBM_RAIL_PARQUET (use this file), ETBM_OVERTURE_RELEASE (force a release).
  */
 import { execFileSync } from 'node:child_process';
@@ -9,11 +11,18 @@ import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, write
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
+import { COVERAGE_BOXES, COVERAGE_ID, MAP_BBOX } from '@etbm/shared';
 import { RailGraphBuilder, type RailGraph } from './graph.ts';
 import { haversine } from './geo.ts';
 
 export const FALLBACK_RELEASE = '2026-09-23.1';
-export const EUROPE_BBOX = [-25, 34, 45, 72] as const; // xmin ymin xmax ymax
+/** Box around the extracted area (stored in the graph header); the extraction itself takes `COVERAGE_BOXES`. */
+export const EXTRACT_BBOX = MAP_BBOX; // xmin ymin xmax ymax
+/** File name prefix of a cached extract: `<kind>-<coverage id>-<release>.parquet`. */
+export const extractPrefix = (kind: string): string => `${kind}-${COVERAGE_ID}-`;
+/** SQL: an Overture row's bbox struct intersects one of the coverage boxes. */
+export const coverageWhere = (): string =>
+  '(' + COVERAGE_BOXES.map(([x0, y0, x1, y1]) => `(bbox.xmin < ${x1} AND bbox.xmax > ${x0} AND bbox.ymin < ${y1} AND bbox.ymax > ${y0})`).join(' OR ') + ')';
 const STAC = 'https://stac.overturemaps.org/catalog.json';
 /** Overture rail classes kept (tram, subway, light_rail, funicular, monorail are dropped). */
 const KEEP_CLASSES = ['standard_gauge', 'narrow_gauge', 'unknown', 'high_speed'];
@@ -120,7 +129,7 @@ export async function resolveRelease(c: DuckDBConnection | null, log: Log): Prom
 
 /** What to extract from Overture transportation segments. */
 export interface ExtractSpec {
-  /** file prefix: <kind>-europe-<release>.parquet */
+  /** file prefix: <kind>-<coverage id>-<release>.parquet */
   kind: 'rail' | 'road' | 'urbanrail';
   /** env var with a parquet path that overrides the extraction */
   env: string;
@@ -170,7 +179,7 @@ export async function ensureOvertureExtract(workDir: string, log: Log, spec: Ext
   if (process.env[spec.env]) return process.env[spec.env]!;
   const dir = join(workDir, 'overture');
   mkdirSync(dir, { recursive: true });
-  const re = new RegExp(`^${spec.kind}-europe-.*\\.parquet$`);
+  const re = new RegExp(`^${extractPrefix(spec.kind)}.*\\.parquet$`);
   const cached = readdirSync(dir).filter((f) => re.test(f)).sort();
   // The Overture bucket is public. DuckDB would send AWS_* credentials from the environment (e.g.
   // a CI role or a sandbox placeholder) and get 403, so hide them while DuckDB runs.
@@ -196,7 +205,7 @@ async function extractWith(c: DuckDBConnection, spec: ExtractSpec, dir: string, 
     if (cached.length) { log(`  overture: using cached ${cached[cached.length - 1]}`); return join(dir, cached[cached.length - 1]!); }
     release = FALLBACK_RELEASE;
   }
-  const file = join(dir, `${spec.kind}-europe-${release}.parquet`);
+  const file = join(dir, `${extractPrefix(spec.kind)}${release}.parquet`);
   if (existsSync(file) && statSync(file).size > 0) {
     log(`  overture: cached extract ${file}`);
     return file;
@@ -205,7 +214,6 @@ async function extractWith(c: DuckDBConnection, spec: ExtractSpec, dir: string, 
   const t0 = Date.now();
   // Anonymous S3 access: an explicit secret without keys, so DuckDB doesn't send the AWS_* env credentials.
   await c.run(`CREATE OR REPLACE SECRET overture (TYPE s3, PROVIDER config, KEY_ID '', SECRET '', REGION 'us-west-2')`);
-  const [x0, y0, x1, y1] = EUROPE_BBOX;
   const src = `s3://overturemaps-us-west-2/release/${release}/theme=transportation/type=segment/*.parquet`;
   const tmp = file + '.tmp';
   rmSync(tmp, { force: true });
@@ -213,7 +221,7 @@ async function extractWith(c: DuckDBConnection, spec: ExtractSpec, dir: string, 
     await c.run(`COPY (
       SELECT ${spec.select}
       FROM read_parquet('${src}', hive_partitioning=false)
-      WHERE bbox.xmin < ${x1} AND bbox.xmax > ${x0} AND bbox.ymin < ${y1} AND bbox.ymax > ${y0}
+      WHERE ${coverageWhere()}
         AND ${spec.where}
     ) TO '${tmp}' (FORMAT parquet, COMPRESSION zstd)`);
   } catch (e) {

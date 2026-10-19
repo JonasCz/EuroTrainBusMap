@@ -28,6 +28,7 @@ import {
   type CatBit,
   TRANSFER_MAX_M,
   StopLimit,
+  COVERAGE_ID,
 } from "@etbm/shared";
 import type { Db } from "./db.ts";
 import type { FeedsConfig, ResolvedFeed } from "./feeds.ts";
@@ -56,7 +57,7 @@ import { runSanity } from "./sanity.ts";
 import { writeMapData } from "./mapdata.ts";
 import { loadUrbanFeedDefs, writeUrbanLayer } from "./urban/index.ts";
 import { computeTransit, gatherTransitFeeds } from "./urban/transit.ts";
-import { BASEMAP_DIR, BASEMAP_MAXZOOM, BASEMAP_MINZOOM, BASEMAP_TILES_KEY, BASEMAP_VERSION, EUROPE_BBOX, installBasemapTiles } from "./basemap/tiles.ts";
+import { BASEMAP_DIR, BASEMAP_MAXZOOM, BASEMAP_MINZOOM, BASEMAP_TILES_KEY, BASEMAP_VERSION, installBasemapTiles } from "./basemap/tiles.ts";
 
 export interface BuildCtx {
   db: Db;
@@ -1400,11 +1401,28 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       const tarFile = join(args.assets, BASEMAP_TILES_KEY);
       const haveTiles = existsSync(tarFile);
       const files = haveTiles ? BASEMAP_FILES : [...BASEMAP_FILES, "land.json", "lakes.json"];
-      const have = files.every((f) => existsSync(join(bmAsset, f)));
-      if (have || existsSync(modPath)) {
+      const exists = files.every((f) => existsSync(join(bmAsset, f)));
+      // borders / labels clipped to another area (an R2 copy from before the coverage changed) are rebuilt from Natural Earth
+      const mod = existsSync(modPath)
+        ? ((await import(modPath)) as {
+            buildBasemap: (o: { outDir: string; cacheDir?: string; legacyLayers?: boolean; log?: (s: string) => void }) => Promise<void>;
+            basemapFileCoverage: (json: string) => string | null;
+          })
+        : null;
+      let have = exists;
+      if (exists && mod) {
+        for (const f of BASEMAP_FILES) {
+          const cov = mod.basemapFileCoverage(await readFile(join(bmAsset, f), "utf8"));
+          if (cov !== COVERAGE_ID) {
+            warn(`basemap: asset ${f} was built for ${cov ?? "the Europe-only box"}, not ${COVERAGE_ID}: rebuilding borders / labels from Natural Earth`);
+            have = false;
+            break;
+          }
+        }
+      }
+      if (have || mod) {
         if (have) log(`basemap: using asset ${bmAsset}`);
-        else {
-          const mod = (await import(modPath)) as { buildBasemap: (o: { outDir: string; cacheDir?: string; legacyLayers?: boolean; log?: (s: string) => void }) => Promise<void> };
+        else if (mod) {
           await mod.buildBasemap({ outDir: bmAsset, cacheDir: join(ctx.cacheDir, "basemap"), legacyLayers: !haveTiles, log });
         }
         await mkdir(bmOut, { recursive: true });
@@ -1415,9 +1433,12 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
         }
       } else warn("basemap script not found, skipping");
       if (haveTiles) {
-        const n = await installBasemapTiles(tarFile, outRoot);
+        const { files: n, bounds, coverage } = await installBasemapTiles(tarFile, outRoot);
         const bytes = (await readFile(join(outRoot, BASEMAP_DIR, "index.json"), "utf8")).length;
-        basemapInfo = { version: BASEMAP_VERSION, dir: BASEMAP_DIR, minzoom: BASEMAP_MINZOOM, maxzoom: BASEMAP_MAXZOOM, bounds: EUROPE_BBOX };
+        basemapInfo = { version: BASEMAP_VERSION, dir: BASEMAP_DIR, minzoom: BASEMAP_MINZOOM, maxzoom: BASEMAP_MAXZOOM, bounds: [...bounds] };
+        if (coverage !== COVERAGE_ID) {
+          warn(`basemap: ${BASEMAP_TILES_KEY} was cut for ${coverage ?? "the Europe-only box"} [${bounds.join(", ")}], not ${COVERAGE_ID}: no land drawn outside it (run the refresh-assets workflow with only=tiles)`);
+        }
         stats.basemapTiles = n - 1;
         log(`basemap: ${n} tile files unpacked to ${join(outRoot, BASEMAP_DIR)} (index ${(bytes / 1024).toFixed(0)} KiB)`);
       } else warn(`basemap: ${BASEMAP_TILES_KEY} not in the assets; drawing the coarse 1:50m land / lakes (run the refresh-assets workflow)`);

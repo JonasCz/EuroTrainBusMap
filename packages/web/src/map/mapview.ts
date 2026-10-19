@@ -6,7 +6,7 @@ import type { Net } from "../data/net.ts";
 import { sameFilters, type Filters } from "../logic/filters.ts";
 import { contextData, focusCityData, highlightData, stationData, trackHitData, xferData, type Emphasis } from "./features.ts";
 import { CITY_AREA_LAYER, CITY_LAYERS, FOCUS_LAYERS, STATION_LAYERS, STATION_ZOOM, TRACK_HIT_LAYER, cityFilter, geojsonSources, hlDimPaint, networkLayers, type LayerState } from "./layers.ts";
-import { CAT_BITS, tpdFromWidth } from "@etbm/shared";
+import { CAT_BITS, MAP_BBOX, tpdFromWidth } from "@etbm/shared";
 import { CAT_LABEL } from "../logic/filters.ts";
 import { fmtTpd } from "../logic/tracks.ts";
 import { URBAN_HIT_LAYERS, URBAN_LAYER_IDS, urbanLayers, urbanSources, urbanTileKeys, type UrbanHit } from "./urban.ts";
@@ -14,7 +14,7 @@ import { urbanPopup } from "../ui/urbanpopup.ts";
 import { ALL_CATS, DEFAULT_FILTERS, localOn } from "../logic/filters.ts";
 import { prefetchBasemapIndex, registerBasemapProtocol } from "./basemap.ts";
 import { prefetchGz, registerGzProtocol } from "./protocol.ts";
-import { baseLayers, baseStyle, glyphPrefetchUrls } from "./style.ts";
+import { SOURCE_BOUNDS, baseLayers, baseStyle, glyphPrefetchUrls } from "./style.ts";
 import { currentTheme, type Theme } from "./theme.ts";
 
 export type { Emphasis };
@@ -79,6 +79,11 @@ const EUROPE: [[number, number], [number, number]] = [
 const EUROPE_MOBILE: [[number, number], [number, number]] = [
   [-5, 41],
   [24, 56.5],
+];
+/** How far the camera may pan: the box with room to centre its edges (the Canary Islands, Western Sahara, Iceland). */
+const MAX_BOUNDS: [[number, number], [number, number]] = [
+  [MAP_BBOX[0] - 20, MAP_BBOX[1] - 10],
+  [MAP_BBOX[2] + 20, MAP_BBOX[3] + 6],
 ];
 
 /** Distance (px) a label hit counts as (dots: the distance to their centre). */
@@ -146,7 +151,7 @@ export class MapView {
       tiles: [this.netUrl(this.state.filters)],
       minzoom: tiles.minzoom,
       maxzoom: tiles.maxzoom,
-      bounds: [-32, 26, 62, 75],
+      bounds: SOURCE_BOUNDS,
     };
     Object.assign(style.sources, geojsonSources());
     if (urban) {
@@ -164,10 +169,7 @@ export class MapView {
       attributionControl: false,
       maxZoom: 15,
       minZoom: 2.6,
-      maxBounds: [
-        [-45, 25],
-        [65, 78],
-      ],
+      maxBounds: MAX_BOUNDS,
       dragRotate: false,
       pitchWithRotate: false,
       renderWorldCopies: false,

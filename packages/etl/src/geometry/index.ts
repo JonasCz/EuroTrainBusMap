@@ -8,6 +8,7 @@
  * rounded to 5 decimals.
  */
 import { existsSync, readFileSync } from 'node:fs';
+import { COVERAGE_ID } from '@etbm/shared';
 import { ensureRailExtract, ensureRoadExtract, loadRailGraph, loadRoadGraph } from './overture.ts';
 import { join } from 'node:path';
 import { deserializeRailGraph, pruneGraph, type GraphKind } from './railbin.ts';
@@ -98,6 +99,9 @@ export async function loadRouter(opts: BuildOptions, kind: GraphKind = 'rail'): 
     if (file) {
       const { graph, header } = deserializeRailGraph(readFileSync(file));
       log(`geometry: ${kind} graph ${file} (Overture ${header.release}, built ${header.created}) loaded in ${((Date.now() - t0) / 1000).toFixed(1)} s: ${graph.nodeCount} nodes, ${graph.edgeCount} edges, ${(graphBytes(graph) / 1e6).toFixed(0)} MB`);
+      if (header.coverage !== COVERAGE_ID) {
+        log(`geometry: WARNING ${kind} graph covers ${header.coverage ?? 'the Europe-only box'}, not ${COVERAGE_ID} — ${what} outside it will be unsnapped curves (run the refresh-assets workflow with only=rail,urbanrail,road)`);
+      }
       return new Router(graph, ropts);
     }
     if (opts.noExtract) {

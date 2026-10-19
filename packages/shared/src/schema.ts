@@ -377,4 +377,8 @@ export interface BasemapIndex {
   tiles: Record<string, number[]>;
   /** topmost tiles completely covered by land without lakes (no file; descendants are land too) */
   land: Record<string, number[]>;
+  /** [xmin, ymin, xmax, ymax] the tiles were cut for (absent in tiles of the Europe-only box [-25, 34, 45, 72]) */
+  bounds?: [number, number, number, number];
+  /** `COVERAGE_ID` of that area (packages/shared/src/coverage.ts) */
+  coverage?: string;
 }

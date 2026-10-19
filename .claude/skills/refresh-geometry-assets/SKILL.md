@@ -37,7 +37,7 @@ also runs monthly on the 4th.
   with all graph parts, so run it with `only=rail,urbanrail,road` right after merging a format change, before the weekly build.
 - The Overture extracts are kept in the Actions cache. A re-run on the same
   release skips the S3 scan; a new release is detected through the STAC catalog and re-extracted.
-- The Actions cache key is `overture-v3-*`: bump it whenever the extract definition (classes, flags) changes, or an old extract of the same release is reused.
+- The Actions cache key is `overture-v4-*`: bump it whenever the extract definition (classes, flags, coverage boxes) changes, or an old extract of the same release is reused (v4: Canary Islands + Morocco).
 - Check the log for these lines: `rail: wrote …`, `road: wrote … (NN MB, release …)`, and `pruned … components`.
 
 ## Local build / debugging
@@ -52,7 +52,9 @@ pnpm assets -- --out ../../work/assets --work ../../work --only rail,road
 ```
 
 - The latest release comes from https://stac.overturemaps.org/catalog.json. To pin one, set
-  `ETBM_OVERTURE_RELEASE`. Extracts are cached as `<work>/overture/{rail,road}-europe-<release>.parquet`.
+  `ETBM_OVERTURE_RELEASE`. Extracts are cached as `<work>/overture/{rail,road,urbanrail}-<COVERAGE_ID>-<release>.parquet` (`COVERAGE_ID` and the
+  extracted boxes are in `packages/shared/src/coverage.ts`; graphs record it as `coverage` in their header, and a build that
+  loads a graph of another coverage logs `WARNING … graph covers …`).
   To reuse an existing file, set `ETBM_RAIL_PARQUET` / `ETBM_ROAD_PARQUET`.
 - DuckDB memory is capped by `ETBM_GEOMETRY_DUCKDB_MEMORY` (default 4GB). It uses 4 threads, spills to disk and
   keeps no external file cache. `AWS_*` env vars are hidden from DuckDB, because the bucket is public and

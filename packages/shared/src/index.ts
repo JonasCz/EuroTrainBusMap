@@ -8,3 +8,4 @@ export * from "./urban.ts";
 export * from "./tt.ts";
 export * from "./walk.ts";
 export * from "./transit.ts";
+export * from "./coverage.ts";
