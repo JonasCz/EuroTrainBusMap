@@ -84,3 +84,27 @@ Sahara. Feeds checked (downloaded, calendars read):
 No GTFS found (Transitous, Mobility Database): Global (Gran Canaria interurban), Lanzarote / Fuerteventura buses,
 CTM coaches, Rabat–Salé tram, Naviera Armas, FRS Tarifa – Tanger. Madeira (`pt_Funchal`, valid to 2026-11-30) is inside
 the coverage now but not added.
+
+## 6. Generated feeds: Bosnia and Herzegovina (checked 19 Oct 2026)
+
+No current GTFS exists for the railways of Bosnia and Herzegovina. Transitous' `ba_ZFBiH` (unofficial, by Petr Novak;
+ŽFBiH and ŽRS trains) was last updated in August 2025 and its service ended on 2025-12-13. ŽFBiH publishes its
+timetable only as a web page, so the feed `ba-zfbih` is **generated** from it on every build
+(`packages/etl/generators/ba-zfbih.ts`, see the README there):
+
+| Part of <https://www.zfbh.ba/en/time-table/> | Use |
+|---|---|
+| Heading "ŽFBH Timetable for 2025/2026" | must name the current annual timetable (else the source fails); service is generated up to the December timetable change |
+| Table "Train number \| Train type \| Relation \| Departure \| Arrival" (39 trains: Sarajevo – Mostar – Čapljina (– Ploče), Sarajevo – Zenica – Maglaj, Sarajevo – Visoko, Sarajevo – Pazarić, Zenica – Maglaj) | one trip per train; "Fast train" → route type 103 (long distance), "Local train" → 106 (regional) |
+| "Note:" footnotes keyed by asterisks (`*` … `*******`) | exact texts mapped to hard-coded calendar rules; weekday trains skip the FBiH public holidays (1–2 Jan, 1 Mar, 1–2 May, 25 Nov) |
+| Station form (POST `redvoznje_pol` / `redvoznje_dol`, 54 stations) | the trains between two stations with their times there: queried for Sarajevo and Maglaj with every other station (106 requests, ~4 s each, two at a time: ~4 min), giving every train's intermediate stops |
+
+Findings: the station form also lists two old train numbers not in the table (2172, 2173 of the 2025 timetable;
+ignored) and not the Ploče trains. The footnotes date the Ploče trains (390–393 until 25.06., 1390 / 1391 26.06. –
+27.09.2026) in the past, so none of them runs in an October – December window; HŽPP's feed (`hr-hz`) has 390 – 393
+between Ploče and Metković on Fridays to Sundays until December 2026, so their Croatian part is still on the map.
+Station coordinates come from the stops of the 2025 community feed (they lie on the OSM track of the rail graph within
+25 m) plus Briješće (estimated); Ploče as in the HŽPP feed. The Transitous file stays in `feeds.json` as `ba-zrs`, limited
+to the ŽRS agency (Republika Srpska: Banja Luka – Doboj …), which has no other source; it loads nothing until it is
+refreshed.
+

@@ -1311,7 +1311,26 @@
   {
    "id": "ba-zfbih",
    "country": "BA",
-   "name": "ŽFBiH (Bosnia rail)",
+   "name": "ŽFBiH (Bosnia and Herzegovina rail, from the zfbh.ba timetable)",
+   "tier": "core",
+   "keep": [
+    "rail"
+   ],
+   "sources": [
+    {
+     "generated": "ba-zfbih"
+    }
+   ],
+   "license": "timetable published by the operator",
+   "licenseUrl": "https://www.zfbh.ba/en/time-table/",
+   "attribution": "Željeznice Federacije Bosne i Hercegovine",
+   "notes": "Generated on every build by packages/etl/generators/ba-zfbih.ts from the HTML timetable (no GTFS published). Replaces the Transitous community feed ba_ZFBiH for the FBiH trains (that feed ended 2025-12-13).",
+   "approxMB": 0.01
+  },
+  {
+   "id": "ba-zrs",
+   "country": "BA",
+   "name": "ŽRS (Republika Srpska rail, community feed)",
    "tier": "core",
    "keep": [
     "rail"
@@ -1321,7 +1340,10 @@
      "transitous": "ba_ZFBiH.gtfs.zip"
     }
    ],
-   "notes": "Last updated Aug 2025.",
+   "options": {
+    "onlyAgencies": "RSrp|Republike Srpske"
+   },
+   "notes": "Transitous ba_ZFBiH (unofficial, Petr Novak) also has the ŽRS trains (Banja Luka - Doboj - ...); only those are kept, the FBiH ones come from ba-zfbih. Last updated Aug 2025, service ended 2025-12-13: loads nothing until it is refreshed.",
    "approxMB": 0.2
   },
   {

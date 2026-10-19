@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-title" content="Railways - Federation of Bosnia and Herzegovina">
+	<link rel="profile" href="https://gmpg.org/xfn/11">
+	<link rel="pingback" href="https://www.zfbh.ba/xmlrpc.php">
+	<link href="//fonts.googleapis.com/css?family=Open+Sans:300,400,400i,700" rel="stylesheet">
+	<title>Time Table &#8211; Railways</title>
+<link rel='dns-prefetch' href='//translate.google.com' />
+<link rel='dns-prefetch' href='//cdn.datatables.net' />
+<link rel='dns-prefetch' href='//cdnjs.cloudflare.com' />
+<link rel='dns-prefetch' href='//www.google.com' />
+<link rel='dns-prefetch' href='//s0.wp.com' />
+<link rel='dns-prefetch' href='//secure.gravatar.com' />
+<link rel='dns-prefetch' href='//s.w.org' />
+		<script type="text/javascript">
+			window._wpemojiSettings = {"baseUrl":"https:\/\/s.w.org\/images\/core\/emoji\/11\/72x72\/","ext":".png","svgUrl":"https:\/\/s.w.org\/images\/core\/emoji\/11\/svg\/","svgExt":".svg","source":{"concatemoji":"https:\/\/www.zfbh.ba\/wp-includes\/js\/wp-emoji-release.min.js?ver=4.9.26"}};
+			!function(e,a,t){var n,r,o,i=a.createElement("canvas"),p=i.getContext&&i.getContext("2d");function s(e,t){var a=String.fromCharCode;p.clearRect(0,0,i.width,i.height),p.fillText(a.apply(this,e),0,0);e=i.toDataURL();return p.clearRect(0,0,i.width,i.height),p.fillText(a.apply(this,t),0,0),e===i.toDataURL()}function c(e){var t=a.createElement("script");t.src=e,t.defer=t.type="text/javascript",a.getElementsByTagName("head")[0].appendChild(t)}for(o=Array("flag","emoji"),t.supports={everything:!0,everythingExceptFlag:!0},r=0;r<o.length;r++)t.supports[o[r]]=function(e){if(!p||!p.fillText)return!1;switch(p.textBaseline="top",p.font="600 32px Arial",e){case"flag":return s([55356,56826,55356,56819],[55356,56826,8203,55356,56819])?!1:!s([55356,57332,56128,56423,56128,56418,56128,56421,56128,56430,56128,56423,56128,56447],[55356,57332,8203,56128,56423,8203,56128,56418,8203,56128,56421,8203,56128,56430,8203,56128,56423,8203,56128,56447]);case"emoji":return!s([55358,56760,9792,65039],[55358,56760,8203,9792,65039])}return!1}(o[r]),t.supports.everything=t.supports.everything&&t.supports[o[r]],"flag"!==o[r]&&(t.supports.everythingExceptFlag=t.supports.everythingExceptFlag&&t.supports[o[r]]);t.supports.everythingExceptFlag=t.supports.everythingExceptFlag&&!t.supports.flag,t.DOMReady=!1,t.readyCallback=function(){t.DOMReady=!0},t.supports.everything||(n=function(){t.readyCallback()},a.addEventListener?(a.addEventListener("DOMContentLoaded",n,!1),e.addEventListener("load",n,!1)):(e.attachEvent("onload",n),a.attachEvent("onreadystatechange",function(){"complete"===a.readyState&&t.readyCallback()})),(n=t.source||{}).concatemoji?c(n.concatemoji):n.wpemoji&&n.twemoji&&(c(n.twemoji),c(n.wpemoji)))}(window,document,window._wpemojiSettings);
+		</script>
+		<style type="text/css">
+img.wp-smiley,
+img.emoji {
+	display: inline !important;
+	border: none !important;
+	box-shadow: none !important;
+	height: 1em !important;
+	width: 1em !important;
+	margin: 0 .07em !important;
+	vertical-align: -0.1em !important;
+	background: none !important;
+	padding: 0 !important;
+}
+</style>
+<link rel='stylesheet' id='foobox-free-min-css'  href='https://www.zfbh.ba/wp-content/plugins/foobox-image-lightbox/free/css/foobox.free.min.css?ver=2.6.0' type='text/css' media='all' />
+<link rel='stylesheet' id='google-language-translator-css'  href='https://www.zfbh.ba/wp-content/plugins/google-language-translator/css/style.css?ver=5.0.48' type='text/css' media='' />
+<link rel='stylesheet' id='glt-toolbar-styles-css'  href='https://www.zfbh.ba/wp-content/plugins/google-language-translator/css/toolbar.css?ver=5.0.48' type='text/css' media='' />
+<link rel='stylesheet' id='style-css'  href='https://www.zfbh.ba/wp-content/plugins/images-thumbnail-sliderv1-master/css/style.css?ver=4.9.26' type='text/css' media='all' />
+<link rel='stylesheet' id='jquery-datatables-css'  href='https://cdn.datatables.net/1.10.16/css/jquery.dataTables.min.css?ver=4.9.26' type='text/css' media='all' />
+<link rel='stylesheet' id='datatables-buttons-css'  href='https://cdn.datatables.net/buttons/1.4.2/css/buttons.dataTables.min.css?ver=4.9.26' type='text/css' media='all' />
+<link rel='stylesheet' id='datatables-select-css'  href='https://cdn.datatables.net/select/1.2.3/css/select.dataTables.min.css?ver=4.9.26' type='text/css' media='all' />
+<link rel='stylesheet' id='datatables-fixedheader-css'  href='https://cdn.datatables.net/fixedheader/3.1.3/css/fixedHeader.dataTables.min.css?ver=4.9.26' type='text/css' media='all' />
+<link rel='stylesheet' id='datatables-fixedcolumns-css'  href='https://cdn.datatables.net/fixedcolumns/3.2.3/css/fixedColumns.dataTables.min.css?ver=4.9.26' type='text/css' media='all' />
+<link rel='stylesheet' id='datatables-responsive-css'  href='https://cdn.datatables.net/responsive/2.2.0/css/responsive.dataTables.min.css?ver=4.9.26' type='text/css' media='all' />
+<link rel='stylesheet' id='rs-plugin-settings-css'  href='https://www.zfbh.ba/wp-content/plugins/revslider/public/assets/css/settings.css?ver=5.4.5.1' type='text/css' media='all' />
+<style id='rs-plugin-settings-inline-css' type='text/css'>
+#rs-demo-id {}
+</style>
+<link rel='stylesheet' id='megamenu-css'  href='https://www.zfbh.ba/wp-content/uploads/maxmegamenu/style.css?ver=7beeec' type='text/css' media='all' />
+<link rel='stylesheet' id='dashicons-css'  href='https://www.zfbh.ba/wp-includes/css/dashicons.min.css?ver=4.9.26' type='text/css' media='all' />
+<link rel='stylesheet' id='understrap-styles-css'  href='https://www.zfbh.ba/wp-content/themes/zfbih/css/theme.min.css?ver=1.0.0' type='text/css' media='all' />
+<link rel='stylesheet' id='easy_table_style-css'  href='https://www.zfbh.ba/wp-content/plugins/easy-table/themes/default/style.css?ver=1.8' type='text/css' media='all' />
+<link rel='stylesheet' id='js_composer_custom_css-css'  href='//www.zfbh.ba/wp-content/uploads/js_composer/custom.css?ver=5.2' type='text/css' media='all' />
+<link rel='stylesheet' id='rc_maint_frontend_bootstrap_css-css'  href='https://www.zfbh.ba/wp-content/plugins/maintenance-mode-by-ip-address/templates/assets/bootstrap/bootstrap.min.css?ver=4.9.26' type='text/css' media='all' />
+<link rel='stylesheet' id='jetpack_css-css'  href='https://www.zfbh.ba/wp-content/plugins/jetpack/css/jetpack.css?ver=6.9.4' type='text/css' media='all' />
+<link rel='stylesheet' id='wpglobus-css'  href='https://www.zfbh.ba/wp-content/plugins/wpglobus/includes/css/wpglobus.css?ver=2.1.6' type='text/css' media='all' />
+<script type='text/javascript' src='https://www.zfbh.ba/wp-includes/js/jquery/jquery.js?ver=1.12.4'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-includes/js/jquery/jquery-migrate.min.js?ver=1.4.1'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/images-thumbnail-sliderv1-master/js/jc.js?ver=4.9.26'></script>
+<script type='text/javascript' src='https://cdn.datatables.net/1.10.16/js/jquery.dataTables.min.js?ver=4.9.26'></script>
+<script type='text/javascript' src='https://cdn.datatables.net/buttons/1.4.2/js/dataTables.buttons.min.js?ver=4.9.26'></script>
+<script type='text/javascript' src='//cdn.datatables.net/buttons/1.4.2/js/buttons.colVis.min.js?ver=4.9.26'></script>
+<script type='text/javascript' src='//cdn.datatables.net/buttons/1.4.2/js/buttons.print.min.js?ver=4.9.26'></script>
+<script type='text/javascript' src='//cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.32/pdfmake.min.js?ver=4.9.26'></script>
+<script type='text/javascript' src='//cdnjs.cloudflare.com/ajax/libs/pdfmake/0.1.32/vfs_fonts.js?ver=4.9.26'></script>
+<script type='text/javascript' src='//cdnjs.cloudflare.com/ajax/libs/jszip/3.1.3/jszip.min.js?ver=4.9.26'></script>
+<script type='text/javascript' src='//cdn.datatables.net/buttons/1.4.2/js/buttons.html5.min.js?ver=4.9.26'></script>
+<script type='text/javascript' src='https://cdn.datatables.net/select/1.2.3/js/dataTables.select.min.js?ver=4.9.26'></script>
+<script type='text/javascript' src='https://cdn.datatables.net/fixedheader/3.1.3/js/dataTables.fixedHeader.min.js?ver=4.9.26'></script>
+<script type='text/javascript' src='https://cdn.datatables.net/fixedcolumns/3.2.3/js/dataTables.fixedColumns.min.js?ver=4.9.26'></script>
+<script type='text/javascript' src='https://cdn.datatables.net/responsive/2.2.0/js/dataTables.responsive.min.js?ver=4.9.26'></script>
+<script type='text/javascript'>
+/* <![CDATA[ */
+var igsv_plugin_vars = {"lang_dir":"https:\/\/www.zfbh.ba\/wp-content\/plugins\/inline-google-spreadsheet-viewer\/languages","datatables_classes":".google-table:not(.no-datatables)","datatables_defaults_object":{"dom":"B<'clear'>lfrtip","buttons":["colvis","copy","csv","excel","pdf","print"]}};
+/* ]]> */
+</script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/inline-google-spreadsheet-viewer/igsv-datatables.js?ver=4.9.26'></script>
+<script type='text/javascript' src='//www.google.com/jsapi?ver=4.9.26'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/inline-google-spreadsheet-viewer/igsv-gvizcharts.js?ver=4.9.26'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/revslider/public/assets/js/jquery.themepunch.tools.min.js?ver=5.4.5.1'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/revslider/public/assets/js/jquery.themepunch.revolution.min.js?ver=5.4.5.1'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/foobox-image-lightbox/free/js/foobox.free.min.js?ver=2.6.0'></script>
+<script type='text/javascript'>
+/* <![CDATA[ */
+var userSettings = {"url":"\/","uid":"0","time":"1792424180","secure":"1"};
+/* ]]> */
+</script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-includes/js/utils.min.js?ver=4.9.26'></script>
+<link rel='https://api.w.org/' href='https://www.zfbh.ba/en/wp-json/' />
+<link rel="canonical" href="https://www.zfbh.ba/en/time-table/" />
+<link rel="alternate" type="application/json+oembed" href="https://www.zfbh.ba/en/wp-json/oembed/1.0/embed?url=https%3A%2F%2Fwww.zfbh.ba%2Fen%2Ftime-table%2F" />
+<link rel="alternate" type="text/xml+oembed" href="https://www.zfbh.ba/en/wp-json/oembed/1.0/embed?url=https%3A%2F%2Fwww.zfbh.ba%2Fen%2Ftime-table%2F&#038;format=xml" />
+<!-- start Simple Custom CSS and JS -->
+<script type="text/javascript">
+ 
+
+jQuery(document).ready(function( $ ){
+    
+  $(".visa").click(function(){
+    window.open("https://www.visa.co.uk/pay-with-visa/featured-technologies/verified-by-visa.html","name",'width=540px,height=450px')
+  });
+  
+  $(".secure").click(function(){
+    window.open("https://www.mastercard.us/en-us/consumers/payment-technologies/securecode.html","name",'width=540px,height=450px')
+  });
+  
+  $(".visa").mouseover(function(){
+    $(".visa").css("cursor", "pointer");
+  });
+  
+  $(".secure").mouseover(function(){
+    $(".secure").css("cursor", "pointer");     
+  });
+
+});</script>
+<!-- end Simple Custom CSS and JS -->
+<style type="text/css">#glt-translate-trigger {
+    padding: 1em 3em;
+}
+
+.tool-container.tool-top.toolbar-primary.animate-standard {
+    margin-top: 1em;
+}p.hello { font-size:12px; color:darkgray; }#google_language_translator, #flags { text-align:left; }#google_language_translator, #language { clear:both; width:160px; text-align:right; }#language { float:right; }#flags { text-align:right; width:165px; float:right; clear:right; }#flags ul { float:right !important; }p.hello { text-align:right; float:right; clear:both; }.glt-clear { height:0px; clear:both; margin:0px; padding:0px; }#flags { width:165px; }#flags a { display:inline-block; margin-left:2px; }#google_language_translator select.goog-te-combo { color:#32373c; }#glt-translate-trigger { bottom:auto; top:0; }.tool-container.tool-top { top:50px !important; bottom:auto !important; }.tool-container.tool-top .arrow { border-color:transparent transparent #d0cbcb; top:-14px; }#glt-translate-trigger > span { color:#ffffff; }#glt-translate-trigger { background:#f89406; }.goog-te-gadget .goog-te-combo { width:100%; }</style>	<script>
+		
+		var rcmmipAjaxurl = 'https://www.zfbh.ba/wp-admin/admin-ajax.php';
+		var rcmmip_date = 'October 19, 2026 19:36:20';
+
+	</script>
+<script type="text/javascript">
+(function(url){
+	if(/(?:Chrome\/26\.0\.1410\.63 Safari\/537\.31|WordfenceTestMonBot)/.test(navigator.userAgent)){ return; }
+	var addEvent = function(evt, handler) {
+		if (window.addEventListener) {
+			document.addEventListener(evt, handler, false);
+		} else if (window.attachEvent) {
+			document.attachEvent('on' + evt, handler);
+		}
+	};
+	var removeEvent = function(evt, handler) {
+		if (window.removeEventListener) {
+			document.removeEventListener(evt, handler, false);
+		} else if (window.detachEvent) {
+			document.detachEvent('on' + evt, handler);
+		}
+	};
+	var evts = 'contextmenu dblclick drag dragend dragenter dragleave dragover dragstart drop keydown keypress keyup mousedown mousemove mouseout mouseover mouseup mousewheel scroll'.split(' ');
+	var logHuman = function() {
+		if (window.wfLogHumanRan) { return; }
+		window.wfLogHumanRan = true;
+		var wfscr = document.createElement('script');
+		wfscr.type = 'text/javascript';
+		wfscr.async = true;
+		wfscr.src = url + '&r=' + Math.random();
+		(document.getElementsByTagName('head')[0]||document.getElementsByTagName('body')[0]).appendChild(wfscr);
+		for (var i = 0; i < evts.length; i++) {
+			removeEvent(evts[i], logHuman);
+		}
+	};
+	for (var i = 0; i < evts.length; i++) {
+		addEvent(evts[i], logHuman);
+	}
+})('//www.zfbh.ba/en/?wordfence_lh=1&hid=684171B3F709EBE4BA0485572734D51E');
+</script>
+<link rel='dns-prefetch' href='//v0.wordpress.com'/>
+<link rel='dns-prefetch' href='//i0.wp.com'/>
+<link rel='dns-prefetch' href='//i1.wp.com'/>
+<link rel='dns-prefetch' href='//i2.wp.com'/>
+<style type='text/css'>img#wpstats{display:none}</style><!--[if lte IE 9]><link rel="stylesheet" type="text/css" href="https://www.zfbh.ba/wp-content/plugins/js_composer/assets/css/vc_lte_ie9.min.css" media="screen"><![endif]--><meta name="generator" content="Powered by Slider Revolution 5.4.5.1 - responsive, Mobile-Friendly Slider Plugin for WordPress with comfortable drag and drop interface." />
+
+<!-- Jetpack Open Graph Tags -->
+<meta property="og:type" content="article" />
+<meta property="og:title" content="Time Table" />
+<meta property="og:url" content="https://www.zfbh.ba/en/time-table/" />
+<meta property="og:description" content="Visit the post for more." />
+<meta property="article:published_time" content="2017-10-09T09:03:28+02:00" />
+<meta property="article:modified_time" content="2017-10-09T09:03:28+02:00" />
+<meta property="og:site_name" content="Railways" />
+<meta property="og:image" content="https://i0.wp.com/www.zfbh.ba/wp-content/uploads/2017/07/cropped-fikona.png?fit=512%2C512&amp;ssl=1" />
+<meta property="og:image:width" content="512" />
+<meta property="og:image:height" content="512" />
+<meta property="og:locale" content="en_GB" />
+<meta name="twitter:text:title" content="Time Table" />
+<meta name="twitter:image" content="https://i0.wp.com/www.zfbh.ba/wp-content/uploads/2017/07/cropped-fikona.png?fit=240%2C240&amp;ssl=1" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:description" content="Visit the post for more." />
+
+<!-- End Jetpack Open Graph Tags -->
+			<style type="text/css" media="screen">
+				.wpglobus_flag_bs{background-image:url(https://www.zfbh.ba/wp-content/plugins/wpglobus/flags/ba.png)}
+.wpglobus_flag_en{background-image:url(https://www.zfbh.ba/wp-content/plugins/wpglobus/flags/uk.png)}
+			</style>
+			<link rel="alternate" hreflang="bs-BA" href="https://www.zfbh.ba/time-table/" /><link rel="alternate" hreflang="en-GB" href="https://www.zfbh.ba/en/time-table/" /><link rel="icon" href="https://i0.wp.com/www.zfbh.ba/wp-content/uploads/2017/07/cropped-fikona.png?fit=32%2C32&#038;ssl=1" sizes="32x32" />
+<link rel="icon" href="https://i0.wp.com/www.zfbh.ba/wp-content/uploads/2017/07/cropped-fikona.png?fit=192%2C192&#038;ssl=1" sizes="192x192" />
+<link rel="apple-touch-icon-precomposed" href="https://i0.wp.com/www.zfbh.ba/wp-content/uploads/2017/07/cropped-fikona.png?fit=180%2C180&#038;ssl=1" />
+<meta name="msapplication-TileImage" content="https://i0.wp.com/www.zfbh.ba/wp-content/uploads/2017/07/cropped-fikona.png?fit=270%2C270&#038;ssl=1" />
+
+<!-- BEGIN ExactMetrics v5.3.7 Universal Analytics - https://exactmetrics.com/ -->
+<script>
+(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+	(i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+	m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+})(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+  ga('create', 'UA-132878050-1', 'auto');
+  ga('send', 'pageview');
+</script>
+<!-- END ExactMetrics Universal Analytics -->
+<script type="text/javascript">function setREVStartSize(e){
+				try{ var i=jQuery(window).width(),t=9999,r=0,n=0,l=0,f=0,s=0,h=0;					
+					if(e.responsiveLevels&&(jQuery.each(e.responsiveLevels,function(e,f){f>i&&(t=r=f,l=e),i>f&&f>r&&(r=f,n=e)}),t>r&&(l=n)),f=e.gridheight[l]||e.gridheight[0]||e.gridheight,s=e.gridwidth[l]||e.gridwidth[0]||e.gridwidth,h=i/s,h=h>1?1:h,f=Math.round(h*f),"fullscreen"==e.sliderLayout){var u=(e.c.width(),jQuery(window).height());if(void 0!=e.fullScreenOffsetContainer){var c=e.fullScreenOffsetContainer.split(",");if (c) jQuery.each(c,function(e,i){u=jQuery(i).length>0?u-jQuery(i).outerHeight(!0):u}),e.fullScreenOffset.split("%").length>1&&void 0!=e.fullScreenOffset&&e.fullScreenOffset.length>0?u-=jQuery(window).height()*parseInt(e.fullScreenOffset,0)/100:void 0!=e.fullScreenOffset&&e.fullScreenOffset.length>0&&(u-=parseInt(e.fullScreenOffset,0))}f=u}else void 0!=e.minHeight&&f<e.minHeight&&(f=e.minHeight);e.c.closest(".rev_slider_wrapper").css({height:f})					
+				}catch(d){console.log("Failure at Presize of Slider:"+d)}
+			};</script>
+			<style type="text/css" id="wp-custom-css">
+				input#broj8 {
+    text-align: center;
+    padding-left: 1em;
+    border: 1px solid #D4D4D4;
+}
+
+			</style>
+		<noscript><style type="text/css"> .wpb_animate_when_almost_visible { opacity: 1; }</style></noscript><style type="text/css">/** Mega Menu CSS: fs **/</style>
+	<link href="//ajax.googleapis.com/ajax/libs/jqueryui/1.8/themes/base/jquery-ui.css" rel="stylesheet" type="text/css"/>
+    <script src="//ajax.googleapis.com/ajax/libs/jqueryui/1.8/jquery-ui.min.js"></script>
+    <script src="//zfbih.studis.ba/wp-content/themes/zfbih/js/conditionize.flexible.jquery.min.js"></script>
+</head>
+
+<body class="page-template page-template-page-templates page-template-page-redvoznje-en page-template-page-templatespage-redvoznje-en-php page page-id-1480 mega-menu-primary group-blog wpb-js-composer js-comp-ver-5.2 vc_responsive" lang="bs_BA">
+
+<div class="hfeed site" id="page">
+    <div class="top-head">
+    <div id="wrapper" class="container">
+
+    19 October 2026
+    <span class="jezici"><div class="wpglobus-selector-box"><span class="jezik"><img class="pomjeri" src="https://www.zfbh.ba/wp-content/plugins/wpglobus/flags/uk.png" />  </span><a href="https://www.zfbh.ba/time-table/"><span class="jezik"><img class="pomjeri" src="https://www.zfbh.ba/wp-content/plugins/wpglobus/flags/ba.png" /> </span></a></div><!-- .wpglobus-selector-box --></span>
+    </div></div>
+    <div class="top-zaglavlje">
+    <div id="zaglavlje" class="container">
+        <div class="row">
+            <div class="col">
+                            <div class="logo"><a href="https://www.zfbh.ba/en/"><img src="https://www.zfbh.ba/zfbihlogo.svg">
+                          <span class="nas1">Railways</span><br>
+              <span class="nas2">Federation of Bosnia and Herzegovina</span></a></div>
+            </div>
+            <div class="col">
+
+                    <div class="col-md-4"><div class="icon-box"><h5 class="icon-box__title"><i class="fa  fa-envelope-o"></i> Email address</h5> <span class="icon-box__subtitle"><strong><a href="/cdn-cgi/l/email-protection#ec85828a83cacfdad8d7968a8ecacfdddcd8d7c2cacfd5d4d78d">&#105;nf&#111;&#64;zfb&#104;.b&#97;</a></strong></span></div></div>
+			<div class="col-md-4"><div class="icon-box"><h5 class="icon-box__title"><i class="fa  fa-phone"></i> Information</h5><span class="icon-box__subtitle"><strong> <a href="tel:+38733655330">+387 33 655 330</a></strong></span><span class="icon-box__subtitle"><strong> <a href="tel:+38761783664">+387 61 783 664</a></strong></span></div></div>
+			<div class="col-md-4 goredole text-center"><a href="/en/kontakt/" class="btn btn-info" role="button"><i class="fa  fa-phone"></i> CONTACT US</a></div>
+                    </div>
+        </div>
+    </div></div>
+
+	<!-- ******************* The Navbar Area ******************* -->
+	<div class="wrapper-fluid wrapper-navbar" id="wrapper-navbar">
+
+        <div class="container">
+            <div id="mega-menu-wrap-primary" class="mega-menu-wrap"><div class="mega-menu-toggle" tabindex="0"><div class="mega-toggle-blocks-left"></div><div class="mega-toggle-blocks-center"></div><div class="mega-toggle-blocks-right"><div class='mega-toggle-block mega-menu-toggle-block mega-toggle-block-1' id='mega-toggle-block-1'><span class='mega-toggle-label'><span class='mega-toggle-label-closed'>OTVORI MENI</span><span class='mega-toggle-label-open'>ZATVORI MENI</span></span></div></div></div><ul id="mega-menu-primary" class="mega-menu max-mega-menu mega-menu-horizontal mega-no-js" data-event="click" data-effect="fade_up" data-effect-speed="200" data-effect-mobile="disabled" data-effect-speed-mobile="200" data-mobile-force-width="false" data-second-click="go" data-document-click="collapse" data-vertical-behaviour="standard" data-breakpoint="600" data-unbind="true"><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-home mega-align-bottom-left mega-menu-flyout mega-has-icon mega-menu-item-31' id='mega-menu-item-31'><a class="dashicons-admin-home mega-menu-link" href="https://www.zfbh.ba/en/" tabindex="0">Main</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-has-children mega-align-bottom-left mega-menu-flyout mega-has-icon mega-disable-link mega-menu-item-157' id='mega-menu-item-157'><a class="dashicons-groups mega-menu-link" tabindex="0" aria-haspopup="true">About us<span class="mega-indicator"></span></a>
+<ul class="mega-sub-menu">
+<li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-237' id='mega-menu-item-237'><a class="mega-menu-link" href="https://www.zfbh.ba/en/o-nama/historija/">History</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-225' id='mega-menu-item-225'><a class="mega-menu-link" href="https://www.zfbh.ba/en/o-nama/osnovne-informacije/">Basic information</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-244' id='mega-menu-item-244'><a class="mega-menu-link" href="https://www.zfbh.ba/en/o-nama/uprava-drustva/">Management board</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-269' id='mega-menu-item-269'><a class="mega-menu-link" href="https://www.zfbh.ba/en/o-nama/nadzorni-odbor/">Supervisory board</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-7043' id='mega-menu-item-7043'><a class="mega-menu-link" href="https://www.zfbh.ba/en/o-nama/odbor-za-reviziju-2/">Audit Committee</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-268' id='mega-menu-item-268'><a class="mega-menu-link" href="https://www.zfbh.ba/en/o-nama/organizaciona-sema/">Organisation chart</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-267' id='mega-menu-item-267'><a class="mega-menu-link" href="https://www.zfbh.ba/en/o-nama/poslovna-podrucja/">Regional offices</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-7989' id='mega-menu-item-7989'><a class="mega-menu-link" href="https://www.zfbh.ba/en/o-nama/dokumenti/">Dokumenti</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-9282' id='mega-menu-item-9282'><a class="mega-menu-link" href="https://www.zfbh.ba/en/o-nama/zastita-licnih-podataka/">Zaštita ličnih podataka</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-9648' id='mega-menu-item-9648'><a class="mega-menu-link" href="https://www.zfbh.ba/en/o-nama/pravila-privatnosti/">Pravila privatnosti</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-9355' id='mega-menu-item-9355'><a class="mega-menu-link" href="https://www.zfbh.ba/en/o-nama/pristup-informacijama-2/">Pristup Informacijama</a></li><li class='mega-menu-item mega-menu-item-type-custom mega-menu-item-object-custom mega-menu-item-has-children mega-menu-item-8020' id='mega-menu-item-8020'><a class="mega-menu-link" href="#" aria-haspopup="true">Poslovne informacije<span class="mega-indicator"></span></a>
+	<ul class="mega-sub-menu">
+<li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-6922' id='mega-menu-item-6922'><a class="mega-menu-link" href="https://www.zfbh.ba/en/o-nama/finansijski-izvjestaji/">Finansijski izvještaji</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-8021' id='mega-menu-item-8021'><a class="mega-menu-link" href="https://www.zfbh.ba/en/o-nama/plan-poslovanja/">Plan poslovanja</a></li>	</ul>
+</li></ul>
+</li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-has-children mega-align-bottom-left mega-menu-flyout mega-has-icon mega-disable-link mega-menu-item-55' id='mega-menu-item-55'><a class="dashicons-admin-users mega-menu-link" tabindex="0" aria-haspopup="true">Passenger traffic<span class="mega-indicator"></span></a>
+<ul class="mega-sub-menu">
+<li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-60' id='mega-menu-item-60'><a class="mega-menu-link" href="https://www.zfbh.ba/en/putnicki-prijevoz/opsti-uslovi-prijevoza/">General terms</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-59' id='mega-menu-item-59'><a class="mega-menu-link" href="https://www.zfbh.ba/en/putnicki-prijevoz/medjunarodna-tarifa/">International tariff</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-58' id='mega-menu-item-58'><a class="mega-menu-link" href="https://www.zfbh.ba/en/putnicki-prijevoz/medjunarodne-veze/">International trains</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-has-children mega-disable-link mega-menu-item-57' id='mega-menu-item-57'><a class="mega-menu-link" tabindex="0" aria-haspopup="true">Prices<span class="mega-indicator"></span></a>
+	<ul class="mega-sub-menu">
+<li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-343' id='mega-menu-item-343'><a class="mega-menu-link" href="https://www.zfbh.ba/en/putnicki-prijevoz/cijena/unutrasnji-promet/">Domestic and inter-entity traffic</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-342' id='mega-menu-item-342'><a class="mega-menu-link" href="https://www.zfbh.ba/en/putnicki-prijevoz/cijena/medjunarodni-promet/">International traffic</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-4255' id='mega-menu-item-4255'><a class="mega-menu-link" href="https://www.zfbh.ba/en/putnicki-prijevoz/cijena/interrail/">Interrail</a></li>	</ul>
+</li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-56' id='mega-menu-item-56'><a class="mega-menu-link" href="https://www.zfbh.ba/en/putnicki-prijevoz/komercijalne-povlastice/">Preference</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-6948' id='mega-menu-item-6948'><a class="mega-menu-link" href="https://www.zfbh.ba/en/putnicki-prijevoz/obrazac-spisak-putnika/">Passenger list form </a></li></ul>
+</li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-has-children mega-align-bottom-left mega-menu-flyout mega-has-icon mega-disable-link mega-menu-item-149' id='mega-menu-item-149'><a class="dashicons-networking mega-menu-link" tabindex="0" aria-haspopup="true">Freight traffic<span class="mega-indicator"></span></a>
+<ul class="mega-sub-menu">
+<li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-156' id='mega-menu-item-156'><a class="mega-menu-link" href="https://www.zfbh.ba/en/cargo/vrste-i-obim-prijevoza/">Category and latitude of transport</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-155' id='mega-menu-item-155'><a class="mega-menu-link" href="https://www.zfbh.ba/en/cargo/stanice/">Stations</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-153' id='mega-menu-item-153'><a class="mega-menu-link" href="https://www.zfbh.ba/en/cargo/teretni-vagoni/">Freight wagons</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-152' id='mega-menu-item-152'><a class="mega-menu-link" href="https://www.zfbh.ba/en/cargo/narocite-posiljke/">Order shipments</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-151' id='mega-menu-item-151'><a class="mega-menu-link" href="https://www.zfbh.ba/en/cargo/prijevoz-opasnih-materija/">Transport of dangerous goods</a></li><li class='mega-menu-item mega-menu-item-type-custom mega-menu-item-object-custom mega-has-icon mega-menu-item-548' id='mega-menu-item-548'><a class="dashicons-media-default mega-menu-link" href="https://www.zfbh.ba/en/zfbhbax/images/Transportna%20ogranicenja/Transportna%20ogranicenja%20(20062017).pdf">Transport constraints (Bosnian)</a></li></ul>
+</li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-has-children mega-align-bottom-left mega-menu-flyout mega-has-icon mega-menu-item-300' id='mega-menu-item-300'><a class="dashicons-building mega-menu-link" href="https://www.zfbh.ba/en/infrastruktura/" aria-haspopup="true" tabindex="0">Infrastructure<span class="mega-indicator"></span></a>
+<ul class="mega-sub-menu">
+<li class='mega-menu-item mega-menu-item-type-custom mega-menu-item-object-custom mega-menu-item-573' id='mega-menu-item-573'><a class="mega-menu-link" href="/infrastruktura/#osnovna-djelatnost">Core activity</a></li><li class='mega-menu-item mega-menu-item-type-custom mega-menu-item-object-custom mega-menu-item-576' id='mega-menu-item-576'><a class="mega-menu-link" href="/infrastruktura/#sluzbena-mjesta">Official sites</a></li><li class='mega-menu-item mega-menu-item-type-custom mega-menu-item-object-custom mega-menu-item-577' id='mega-menu-item-577'><a class="mega-menu-link" href="/infrastruktura/#kategorizacija">Railway rank</a></li><li class='mega-menu-item mega-menu-item-type-custom mega-menu-item-object-custom mega-menu-item-578' id='mega-menu-item-578'><a class="mega-menu-link" href="/infrastruktura/#duzina-pruga">Railway lenght</a></li><li class='mega-menu-item mega-menu-item-type-custom mega-menu-item-object-custom mega-menu-item-579' id='mega-menu-item-579'><a class="mega-menu-link" href="/infrastruktura/#tuneli-mostovi">Tunnels and bridges</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-302' id='mega-menu-item-302'><a class="mega-menu-link" href="https://www.zfbh.ba/en/infrastruktura/etp/">ETS</a></li></ul>
+</li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-has-children mega-align-bottom-left mega-menu-flyout mega-has-icon mega-menu-item-651' id='mega-menu-item-651'><a class="dashicons-chart-bar mega-menu-link" href="https://www.zfbh.ba/en/marketing-2/" aria-haspopup="true" tabindex="0">Marketing<span class="mega-indicator"></span></a>
+<ul class="mega-sub-menu">
+<li class='mega-menu-item mega-menu-item-type-custom mega-menu-item-object-custom mega-menu-item-714' id='mega-menu-item-714'><a class="mega-menu-link" href="/marketing/#djelatnost">Activities</a></li><li class='mega-menu-item mega-menu-item-type-custom mega-menu-item-object-custom mega-menu-item-716' id='mega-menu-item-716'><a class="mega-menu-link" href="/marketing/#ugovaranje">Contracting</a></li><li class='mega-menu-item mega-menu-item-type-custom mega-menu-item-object-custom mega-menu-item-717' id='mega-menu-item-717'><a class="mega-menu-link" href="/marketing/#cijena-usluga">Service prices</a></li><li class='mega-menu-item mega-menu-item-type-custom mega-menu-item-object-custom mega-menu-item-718' id='mega-menu-item-718'><a class="mega-menu-link" href="/marketing/#partneri">Business partners</a></li></ul>
+</li><li class='mega-menu-item mega-menu-item-type-custom mega-menu-item-object-custom mega-menu-item-has-children mega-align-bottom-left mega-menu-flyout mega-has-icon mega-menu-item-625' id='mega-menu-item-625'><a class="dashicons-megaphone mega-menu-link" href="#" aria-haspopup="true" tabindex="0">Press<span class="mega-indicator"></span></a>
+<ul class="mega-sub-menu">
+<li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-2100' id='mega-menu-item-2100'><a class="mega-menu-link" href="https://www.zfbh.ba/en/aktuelnosti/">News</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-3415' id='mega-menu-item-3415'><a class="mega-menu-link" href="https://www.zfbh.ba/en/arhivske-vijesti/">Archived news</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-2507' id='mega-menu-item-2507'><a class="mega-menu-link" href="https://www.zfbh.ba/en/info-bilten/">ŽFBH Info magazine</a></li><li class='mega-menu-item mega-menu-item-type-post_type mega-menu-item-object-page mega-menu-item-1362' id='mega-menu-item-1362'><a class="mega-menu-link" href="https://www.zfbh.ba/en/video-arhiva/">Video Archive</a></li></ul>
+</li></ul></div>        </div>
+
+		</nav><!-- .site-navigation -->
+
+	</div><!-- .wrapper-navbar end -->
+
+<div class="wrapper" id="full-width-page-wrapper">
+
+	<div class="container" id="content">
+
+		<div class="row">
+
+			<div class="col-md-12 content-area" id="primary">
+
+				<main class="site-main" id="main" role="main">
+						
+						
+						
+<style>
+	.page-header {
+		margin: 0 !important;
+	}
+
+	table.red_voz {
+		width: 100%;
+	}
+
+	table.red_voz td {
+		border: 1px solid #B9B9B9;
+		padding: .5em;
+		text-align: center;
+	}
+
+	table.red_voz th {
+		background: #2E3A8F;
+		color: white;
+		text-align: center;
+		padding: 1em;
+	}
+
+	table.red_voz .fa {
+		color: #2E3A8F;
+		margin-right: 0.8em;
+	}
+
+	table.red_voz {
+		width: 100%;
+		margin-top: 1em;
+	}
+
+	tr.relacija td:nth-child(1) {
+		width: 16.6%;
+	}
+
+	tr.relacija td:nth-child(2) {
+		width: 25%;
+		text-align: right;
+		padding-right: 2em;
+		border-right: 1px solid transparent;
+	}
+
+	tr.relacija td:nth-child(3) {
+		width: 25%;
+		text-align: left;
+		padding-left: 2em;
+	}
+
+	tr.relacija td:nth-child(4) {
+		width: 16.6%;
+	}
+
+	tr.relacija td:nth-child(5) {
+		width: 16.6%;
+	}
+
+	tr.relacija td:nth-child(2):after {
+		content: "\f178";
+		position: relative;
+		left: 2.25em;
+		font-family: "FontAwesome";
+		color: #F59231;
+	}
+
+	span.dol {
+		background: #5AA1E3;
+		color: white;
+		padding: 0 .3em;
+		border-radius: .25em;
+	}
+
+	.red-voznje-button {
+		margin-top: 3em !important;
+	}
+</style>
+
+<header class="page-header">
+
+<h2 class='relacije'>Timetable</h2>
+</header>
+<h2 class="relacije">ŽFBH Timetable for 2025/2026</h2>
+
+<p>Trains operate at the times listed in the table, with accompanying notes.</p>
+
+<table class="red_voz">
+	<tr>
+		<th>Train number</th>
+		<th>Train type</th>
+		<th>Relation</th>
+		<th>Departure</th>
+		<th>Arrival</th>
+	</tr>
+	<tr><td>720</td><td>Fast train</td><td>Čapljina - Sarajevo</td><td>06:03</td><td>08:35</td></tr>
+	<tr><td>392*</td><td>Fast train</td><td>Ploče - Sarajevo</td><td>05:05</td><td>08:35</td></tr>
+	<tr><td>721</td><td>Fast train</td><td>Sarajevo - Čapljina</td><td>16:46</td><td>19:18</td></tr>
+	<tr><td>393*</td><td>Fast train</td><td>Sarajevo - Ploče</td><td>16:46</td><td>20:15</td></tr>
+	<tr><td>722</td><td>Fast train</td><td>Čapljina - Sarajevo</td><td>16:42</td><td>19:07</td></tr>
+	<tr><td>390*</td><td>Fast train</td><td>Ploče - Sarajevo</td><td>15:40</td><td>19:07</td></tr>
+	<tr><td>723</td><td>Fast train</td><td>Sarajevo - Čapljina</td><td>07:15</td><td>09:40</td></tr>
+	<tr><td>391*</td><td>Fast train</td><td>Sarajevo - Ploče</td><td>07:15</td><td>10:36</td></tr>
+	<tr><td>1390**</td><td>Fast train</td><td>Ploče - Sarajevo</td><td>18:26</td><td>21:54</td></tr>
+	<tr><td>1391**</td><td>Fast train</td><td>Sarajevo - Ploče</td><td>07:15</td><td>10:36</td></tr>
+	<tr><td>710******</td><td>Fast train</td><td>Sarajevo - Maglaj</td><td>16:28</td><td>19:01</td></tr>
+	<tr><td>711*******</td><td>Fast train</td><td>Maglaj - Sarajevo</td><td>06:07</td><td>08:47</td></tr>
+	<tr><td>2101</td><td>Local train</td><td>Maglaj - Zenica</td><td>04:48</td><td>06:21</td></tr>
+	<tr><td>2102</td><td>Local train</td><td>Zenica - Maglaj</td><td>15:36</td><td>17:08</td></tr>
+	<tr><td>2150***</td><td>Local train</td><td>Sarajevo - Zenica</td><td>04:44</td><td>06:28</td></tr>
+	<tr><td>2151</td><td>Local train</td><td>Zenica - Sarajevo</td><td>04:59</td><td>06:39</td></tr>
+	<tr><td>2156***</td><td>Local train</td><td>Sarajevo - Zenica</td><td>15:41</td><td>17:25</td></tr>
+	<tr><td>2157***</td><td>Local train</td><td>Zenica - Sarajevo</td><td>15:32</td><td>17:42</td></tr>
+	<tr><td>2160***</td><td>Local train</td><td>Sarajevo - Visoko</td><td>05:24</td><td>06:12</td></tr>
+	<tr><td>2161***</td><td>Local train</td><td>Visoko - Sarajevo</td><td>06:48</td><td>07:32</td></tr>
+	<tr><td>2162***</td><td>Local train</td><td>Sarajevo - Visoko</td><td>08:17</td><td>09:04</td></tr>
+	<tr><td>2163***</td><td>Local train</td><td>Visoko - Sarajevo</td><td>09:29</td><td>10:13</td></tr>
+	<tr><td>2168***</td><td>Local train</td><td>Sarajevo - Visoko</td><td>17:21</td><td>18:05</td></tr>
+	<tr><td>2169***</td><td>Local train</td><td>Visoko - Sarajevo</td><td>18:36</td><td>19:20</td></tr>
+	<tr><td>2170*****</td><td>Local train</td><td>Sarajevo - Visoko</td><td>19:45</td><td>20:29</td></tr>
+	<tr><td>2171*****</td><td>Local train</td><td>Visoko - Sarajevo</td><td>20:40</td><td>21:24</td></tr>
+	<tr><td>2158****</td><td>Local train</td><td>Sarajevo - Zenica</td><td>22:02</td><td>23:42</td></tr>
+	<tr><td>2402***</td><td>Local train</td><td>Pazarić - Sarajevo</td><td>06:37</td><td>07:11</td></tr>
+	<tr><td>2403</td><td>Local train</td><td>Sarajevo - Pazarić</td><td>07:34</td><td>08:08</td></tr>
+	<tr><td>2404***</td><td>Local train</td><td>Pazarić - Sarajevo</td><td>08:25</td><td>08:59</td></tr>
+	<tr><td>2405***</td><td>Local train</td><td>Sarajevo - Pazarić</td><td>09:56</td><td>10:30</td></tr>
+	<tr><td>2406</td><td>Local train</td><td>Pazarić - Sarajevo</td><td>11:01</td><td>11:35</td></tr>
+	<tr><td>2407</td><td>Local train</td><td>Sarajevo - Pazarić</td><td>11:55</td><td>12:29</td></tr>
+	<tr><td>2408***</td><td>Local train</td><td>Pazarić - Sarajevo</td><td>12:44</td><td>13:18</td></tr>
+	<tr><td>2409***</td><td>Local train</td><td>Sarajevo - Pazarić</td><td>14:30</td><td>15:04</td></tr>
+	<tr><td>2410</td><td>Local train</td><td>Pazarić - Sarajevo</td><td>16:10</td><td>16:44</td></tr>
+	<tr><td>2411***</td><td>Local train</td><td>Sarajevo – Pazarić</td><td>17:00</td><td>17:34</td></tr>
+	<tr><td>2412***</td><td>Local train</td><td>Pazarić - Sarajevo</td><td>18:14</td><td>18:48</td></tr>
+	<tr><td>2413</td><td>Local train</td><td>Sarajevo - Pazarić</td><td>19:38</td><td>20:12</td></tr>
+</table>
+
+<div class="alert alert-warning mt-3">
+<strong>Note:</strong><br><br>
+<a>* Trains 390 and 391 operate on Sundays until 25.06.2025.</a><br>
+<a>Train 392 operates on Saturdays until 25.06.2026.</a><br>
+<a>Train 393 operates on Fridays until 25.06.2026.</a><br><br>
+<a>** Trains operate from 26.06. to 27.09.2026. on Fridays, Saturdays and Sundays.</a><br><br>
+<a>*** Trains do not operate on weekends and public holidays.</a><br><br>
+<a>**** Train number 2158 operates from 26.06.2026. to 27.09.2026. on Fridays, Saturdays and Sundays.</a><br><br>
+<a>***** Trains 2170 and 2171 operate every day, except from 26.06.2026. until 27.09.2026., when they do not operate on Friday, Saturday and Sunday.</a><br><br>
+<a>****** Train 710 does not operate on Saturdays.</a><br><br>
+<a>******* Train 711 does not operate on Sundays.</a>
+</div>
+
+
+
+<div class="col-sm-8 mt-3 mb-3">
+<form action="" name="prodaja" method="post">
+
+<select name="redvoznje_pol" class="s-forma" onchange="fetch_select(this.value);">
+<option disabled selected>Choose a station</option>
+
+<option>Alići</option><option>Alipašin Most</option><option>Begov Han </option><option>Binježevo</option><option>Bistričak</option><option>Blažuj</option><option>Bradići </option><option>Briješće</option><option>Buča Potok</option><option>Buzići</option><option>Čapljina</option><option>Ćatići</option><option>Dobrinje</option><option>Dolina</option><option>Drežnica Stara</option><option>Drivuša</option><option>Fojnica</option><option>Globarica</option><option>Gora</option><option>Hadžići</option><option>Ilidža</option><option>Ilijaš</option><option>Ilijaš Grad</option><option>Jablanica Grad</option><option>Janjići</option><option>Jelina</option><option>Kakanj</option><option>Konjic</option><option>Lašva</option><option>Lješevo</option><option>Maglaj</option><option>Modrinje</option><option>Mostar</option><option>Mračaj</option><option>Natron</option><option>Nemila</option><option>Pazarić</option><option>Podlugovi</option><option>Porječani</option><option>Rajlovac</option><option>Reljevo</option><option>Roščevina</option><option>Sarajevo</option><option>Semizovac</option><option>Tomići </option><option>Vinište</option><option>Visoko</option><option>Vogošća</option><option>Zavidovići</option><option>Želeće</option><option>Zenica</option><option>Zenica Teretna</option><option>Žepče</option><option>Žitomislići</option></select>
+
+
+<select name="redvoznje_dol" class="s-forma" onchange="fetch_select(this.value);">
+<option disabled selected>Choose a station</option>
+
+<option>Alići</option><option>Alipašin Most</option><option>Begov Han </option><option>Binježevo</option><option>Bistričak</option><option>Blažuj</option><option>Bradići </option><option>Briješće</option><option>Buča Potok</option><option>Buzići</option><option>Čapljina</option><option>Ćatići</option><option>Dobrinje</option><option>Dolina</option><option>Drežnica Stara</option><option>Drivuša</option><option>Fojnica</option><option>Globarica</option><option>Gora</option><option>Hadžići</option><option>Ilidža</option><option>Ilijaš</option><option>Ilijaš Grad</option><option>Jablanica Grad</option><option>Janjići</option><option>Jelina</option><option>Kakanj</option><option>Konjic</option><option>Lašva</option><option>Lješevo</option><option>Maglaj</option><option>Modrinje</option><option>Mostar</option><option>Mračaj</option><option>Natron</option><option>Nemila</option><option>Pazarić</option><option>Podlugovi</option><option>Porječani</option><option>Rajlovac</option><option>Reljevo</option><option>Roščevina</option><option>Sarajevo</option><option>Semizovac</option><option>Tomići </option><option>Vinište</option><option>Visoko</option><option>Vogošća</option><option>Zavidovići</option><option>Želeće</option><option>Zenica</option><option>Zenica Teretna</option><option>Žepče</option><option>Žitomislići</option></select>
+</div>
+
+<div class="col-sm-4 mt-3 mb-3 text-right red-voznje-button">
+	<input type="submit" value="Check Timetable" class="btn btn-warning btn-lg"/>
+</div>
+</div>
+
+<div class="col-sm-12 mt-3 mb-3">
+
+
+</div>
+				</main><!-- #main -->
+
+			</div><!-- #primary -->
+
+		</div><!-- .row end -->
+
+	</div><!-- Container end -->
+
+</div><!-- Wrapper end -->
+
+
+
+
+<div class="wrapper" id="wrapper-footer">
+
+<div class="container">
+  <div class="row">
+    <div class="col footer-jedan">
+      <aside id="text-7" class="widget widget_text">			<div class="textwidget"><p><img class="image wp-image-694 attachment-medium size-medium" style="max-width: 100%; height: auto;" src="/wp-content/uploads/2017/07/logobijeli.svg" alt="" data-mce-src="/wp-content/uploads/2017/07/logobijeli.svg" data-mce-style="max-width: 100%; height: auto;"></p>
+</div>
+		</aside>    </div>
+    <div class="col footer-dva">
+      <aside id="text-8" class="widget widget_text">			<div class="textwidget"><h2 class="footer-link"><a href="/galerija/">Galerija</a></h2>
+<h2 class="footer-link"><a href="/video-arhiva/">Video</a></h2>
+<h2 class="footer-link"><a href="/info-bilten/">ŽFBH Info magazin</a></h2>
+</div>
+		</aside>    </div>
+    <div class="col footer-tri">
+     <aside id="text-9" class="widget widget_text">			<div class="textwidget"><h2 class="footer-link"><a href="/javne-nabavke-2/">Javne nabavke</a></h2>
+<h2 class="footer-link"><a href="/javne-nabavke/">Javne nabavke &#8211; Arhiva</a></h2>
+<h2 class="footer-link"><a href="/web-linkovi/">Web linkovi</a></h2>
+<h2 class="footer-link"><a href="/drugi-o-nama/">Drugi o nama</a></h2>
+<p>&nbsp;</p>
+</div>
+		</aside>    </div>
+    <div class="col footer-cetiri">
+      <aside id="text-10" class="widget widget_text">			<div class="textwidget"><h2 class="footer-link"><a href="/kontakt/">Kontakt</a></h2>
+<p><span class="social-ikone"><br />
+<a href="https://www.facebook.com/bhvoz/"><i class="fa fa-facebook-official" aria-hidden="true"></i></a> <a href="https://twitter.com/zeljeznicefbih/"><i class="fa fa-twitter-square" aria-hidden="true"></i></a> <a href="https://plus.google.com/u/0/105935432824988523105"><i class="fa fa-google-plus-square" aria-hidden="true"></i></a> <a href="https://www.instagram.com/zeljeznicefbih/"><i class="fa fa-instagram" aria-hidden="true"></i></a><br />
+</span></p>
+</div>
+		</aside>    </div>
+  </div>
+  <div class="row slika-footer">
+	<a href="https://monri.com/" target="_blank"><img style="height:52px;" src="https://www.zfbh.ba/wp-content/uploads/2020/01/monri_pay.png" alt="PikPay sigurna kupovina"/></a>
+    <a href="https://www.mastercard.ba/bs-ba.html" target="_blank"><img src="https://www.zfbh.ba/wp-content/uploads/2020/01/mastercard.png" alt="PikPay sigurna kupovina"/></a>
+	<a href="https://www.mastercard.hr/hr-hr/consumers/find-card-products/debit-cards/maestro-debit.html" target="_blank"><img src="https://www.zfbh.ba/wp-content/uploads/2020/01/maestro.png" alt="PikPay sigurna kupovina"/></a>
+	<a href="https://www.visa.co.uk/about-visa/visa-in-europe.html" target="_blank"><img style="width:72px; height:52px;"src="https://www.zfbh.ba/wp-content/uploads/2020/01/Visa-2015-50.gif" alt="PikPay sigurna kupovina"/></a>
+    
+  </div>
+</div>
+
+</div><!-- wrapper end -->
+<div class="bottom-foot">
+   <div id="wrapper" class="container">
+   <a style='color:#cccccc;' target='_blank' href='https://www.zfbh.ba/sigurnost-kupovine/'> Credit card security / Terms of use / Privacy statement </a><br><br>Railways of the Federation of Bosnia and Herzegovina &copy;2026   </div>
+</div>
+</div><!-- #page -->
+
+<div id='glt-footer'><div id="google_language_translator" class="default-language-bs"></div></div><script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>function GoogleLanguageTranslatorInit() { new google.translate.TranslateElement({pageLanguage: 'bs', includedLanguages:'bs,en,fr,de,it,ja,ru,es,tr', autoDisplay: false}, 'google_language_translator');}</script>	<div style="display:none">
+	</div>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/jetpack/_inc/build/photon/photon.min.js?ver=20130122'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/google-language-translator/js/scripts.js?ver=5.0.48'></script>
+<script type='text/javascript' src='//translate.google.com/translate_a/element.js?cb=GoogleLanguageTranslatorInit'></script>
+<script type='text/javascript' src='https://s0.wp.com/wp-content/js/devicepx-jetpack.js?ver=202643'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/maintenance-mode-by-ip-address/templates/assets/js/modernizr.custom.js?ver=4.9.26'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/maintenance-mode-by-ip-address/templates/assets/js/bootstrap.min.js?ver=4.9.26'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/maintenance-mode-by-ip-address/templates/assets/js/flowtype.js?ver=4.9.26'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/maintenance-mode-by-ip-address/templates/assets/js/soon/plugins.js?ver=4.9.26'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/maintenance-mode-by-ip-address/templates/assets/js/soon/custom.js?ver=4.9.26'></script>
+<script type='text/javascript' src='https://secure.gravatar.com/js/gprofiles.js?ver=2026Octaa'></script>
+<script type='text/javascript'>
+/* <![CDATA[ */
+var WPGroHo = {"my_hash":""};
+/* ]]> */
+</script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/jetpack/modules/wpgroho.js?ver=4.9.26'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/themes/zfbih/js/theme.min.js?ver=1.0.0'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-includes/js/hoverIntent.min.js?ver=1.8.1'></script>
+<script type='text/javascript'>
+/* <![CDATA[ */
+var megamenu = {"timeout":"300","interval":"100"};
+/* ]]> */
+</script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/megamenu/js/maxmegamenu.js?ver=2.5.3.2'></script>
+<script type='text/javascript'>
+/* <![CDATA[ */
+var WPGlobus = {"version":"2.1.6","language":"en","enabledLanguages":["bs","en"]};
+/* ]]> */
+</script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-content/plugins/wpglobus/includes/js/wpglobus.min.js?ver=2.1.6'></script>
+<script type='text/javascript' src='https://www.zfbh.ba/wp-includes/js/wp-embed.min.js?ver=4.9.26'></script>
+<script type="text/javascript">
+/* <![CDATA[ */
+jQuery(document).ready( function($) {
+	$("ul.menu").not(":has(li)").closest('div').prev('h3.widget-title').hide();
+});
+/* ]]> */
+</script><script type='text/javascript' src='https://stats.wp.com/e-202643.js' async='async' defer='defer'></script>
+<script type='text/javascript'>
+	_stq = window._stq || [];
+	_stq.push([ 'view', {v:'ext',j:'1:6.9.4',blog:'150534761',post:'1480',tz:'2',srv:'www.zfbh.ba'} ]);
+	_stq.push([ 'clickTrackerInit', '150534761', '1480' ]);
+</script>
+<script type="text/foobox">/* Run FooBox FREE (v2.6.0) */
+(function( FOOBOX, $, undefined ) {
+  FOOBOX.o = {wordpress: { enabled: true }, countMessage:'image %index of %total', excludes:'.fbx-link,.nofoobox,.nolightbox,a[href*="pinterest.com/pin/create/button/"]', affiliate : { enabled: false }};
+  FOOBOX.init = function() {
+    $(".fbx-link").removeClass("fbx-link");
+    $(".foogallery-container.foogallery-lightbox-foobox, .foogallery-container.foogallery-lightbox-foobox-free, .gallery, .wp-block-gallery, .wp-caption, .wp-block-image, a:has(img[class*=wp-image-]), .foobox").foobox(FOOBOX.o);
+  };
+})( window.FOOBOX = window.FOOBOX || {}, FooBox.$ );
+
+FooBox.ready(function() {
+
+  jQuery("body").append("<span aria-hidden=\"true\" class=\"foobox_font_preload\" style=\"font-family:'foobox'; color:transparent; position:absolute; top:-9999px; left: -9999px;\">f</span>");
+  FOOBOX.init();
+  jQuery('body').on('post-load', function(){ FOOBOX.init(); });
+
+});
+</script>				<script type="text/javascript">
+					if (window.addEventListener){
+						window.addEventListener("DOMContentLoaded", function() {
+							var arr = document.querySelectorAll("script[type='text/foobox']");
+							for (var x = 0; x < arr.length; x++) {
+								var script = document.createElement("script");
+								script.type = "text/javascript";
+								script.innerHTML = arr[x].innerHTML;
+								arr[x].parentNode.replaceChild(script, arr[x]);
+							}
+						});
+					} else {
+						console.log("FooBox does not support the current browser.");
+					}
+				</script>
+				
+</body>
+
+</html>
+
