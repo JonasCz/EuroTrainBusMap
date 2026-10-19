@@ -14,7 +14,7 @@ import type { Departure } from "../logic/timetable.ts";
 import { fmtDuration, fmtTime, localDate, toLocal } from "../logic/tz.ts";
 import { h, icon } from "./dom.ts";
 import { shortStationName } from "../map/features.ts";
-import { caveatBadge, caveatNote, fmtKm, routeBadge, routeDisplayName, routeTag, timeAt, timeEl } from "./format.ts";
+import { caveatBadge, caveatNote, fmtKm, routeBadge, routeDisplayName, routeTag, sourceLink, timeAt, timeEl } from "./format.ts";
 import { localIcon, modeIcon } from "./icons.ts";
 import { datePicker, focusPicker } from "./datepicker.ts";
 import { depCats, depsWith, type StationDeps } from "../logic/stations.ts";
@@ -1401,6 +1401,7 @@ export class Panel {
         "p",
         { class: "sched-meta" },
         sc.route.agency ? h("span", null, sc.route.agency) : null,
+        sc.route.src ? h("span", null, sourceLink(sc.route)) : null,
         h("span", null, `${stops.length} stops`),
         before ? h("span", null, `from ${stopName(stops[0]!)}`) : null,
         after ? h("span", null, `continues to ${stopName(stops[stops.length - 1]!)}`) : null,
@@ -1579,7 +1580,7 @@ export class Panel {
             "div",
             { class: "jsched-leg-main" },
             h("span", { class: "sched-title" }, routeBadge(sc.route, sc.number), caveatBadge(sc.route), h("span", { class: "headsign" }, h("span", { class: "muted" }, "towards "), sc.headsign)),
-            h("span", { class: "jsched-leg-meta" }, [sc.route.agency || null, fmtDuration(mins), stopsBetween(sc)].filter(Boolean).join(" · ")),
+            h("span", { class: "jsched-leg-meta" }, [sc.route.agency || null, fmtDuration(mins), stopsBetween(sc)].filter(Boolean).join(" · "), sc.route.src ? [" · ", sourceLink(sc.route)] : null),
             caveatNote(sc.route),
           ),
           k0 > 1 && (li === 0 || li === k0 - 1) ? this.removeLegButton(js, li) : null,

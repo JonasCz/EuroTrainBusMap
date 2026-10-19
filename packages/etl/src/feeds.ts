@@ -4,9 +4,12 @@ import { fileURLToPath } from "node:url";
 import { fetchText } from "./download.ts";
 import { warn } from "./util/log.ts";
 import { applyOperators, loadOperatorFiles, type OperatorRegistry } from "./operators/registry.ts";
+import { applyGenerators, generatedSource, loadGeneratorFiles, type GeneratorSet } from "./generators/registry.ts";
 
 /** Operator adapters (one file per operator; see the README there). */
 export const OPERATORS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "operators");
+/** Feed generators (one file per source without GTFS; see the README there). */
+export const GENERATORS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "generators");
 
 export type ModeClass = "rail" | "coach" | "bus";
 export type Tier = "core" | "bus";
@@ -14,7 +17,9 @@ export type Tier = "core" | "bus";
 export type FeedSource =
   | { transitous: string }
   | { transitousMatch: string }
-  | { url: string };
+  | { url: string }
+  /** Built by a feed generator (packages/etl/generators/<id>.ts) on every build; the only source of its feed. */
+  | { generated: string };
 
 export interface FeedOptions {
   /** Force category of all rail routes in this feed. */
@@ -60,6 +65,11 @@ export interface FeedDef {
   license?: string;
   attribution?: string;
   licenseUrl?: string;
+  /**
+   * Page where the operator publishes the timetable the feed is made from (generated feeds: the generator's
+   * sourceUrl). Linked from the feed's trips in the app (Route.src) and from the data sources list.
+   */
+  timetableUrl?: string;
   notes?: string;
   approxMB?: number;
   disabled?: boolean;
@@ -83,6 +93,8 @@ export interface FeedsConfig {
   feeds: FeedDef[];
   /** The operator adapters (set by loadFeedsConfig). */
   operators?: OperatorRegistry;
+  /** The feed generators (set by loadFeedsConfig). */
+  generators?: GeneratorSet;
 }
 
 /** A concrete file to download and process (multi-file feeds expand into several). */
@@ -93,18 +105,24 @@ export interface ResolvedFeed {
   urls: string[];
   /** Transitous filename if from Transitous (for license lookup). */
   transitousFile?: string;
+  /** Id of the feed generator that builds this feed (no URLs then). */
+  generator?: string;
 }
 
 /**
  * feeds.json with the operator adapters applied (their extra feeds and feed options merged in, exclusive operators
- * added to dedicatedOperators); `operatorsDir: null` loads the file alone.
+ * added to dedicatedOperators) and the feed generators attached (checked against the feeds' `generated` sources);
+ * `operatorsDir: null` loads the file alone.
  */
-export async function loadFeedsConfig(path: string, operatorsDir: string | null = OPERATORS_DIR): Promise<FeedsConfig> {
+export async function loadFeedsConfig(path: string, operatorsDir: string | null = OPERATORS_DIR, generatorsDir: string = GENERATORS_DIR): Promise<FeedsConfig> {
   const cfg = JSON.parse(await readFile(path, "utf8")) as FeedsConfig;
   cfg.dedicatedOperators ??= [];
   if (operatorsDir === null) return cfg;
   const { adapters, sources } = await loadOperatorFiles(operatorsDir);
-  return applyOperators(cfg, adapters, sources);
+  const out = applyOperators(cfg, adapters, sources);
+  const generators = await loadGeneratorFiles(generatorsDir);
+  applyGenerators(out.feeds, generators);
+  return { ...out, generators };
 }
 
 /** Parse the nginx autoindex HTML of the Transitous mirror into a list of file names. */
@@ -167,6 +185,11 @@ export async function resolveFeeds(
           transitousFile: f,
         });
       }
+      continue;
+    }
+    const generator = generatedSource(def);
+    if (generator) {
+      out.push({ key: def.id, def, urls: [], generator });
       continue;
     }
     const urls: string[] = [];

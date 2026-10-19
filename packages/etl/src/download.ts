@@ -106,6 +106,51 @@ export async function fetchText(url: string, ua: string, cachePath: string): Pro
   return readFile(cachePath, "utf8");
 }
 
+/**
+ * Fetch a web page (GET, or POST of a urlencoded `form`) with the build's User-Agent, a timeout and retries with
+ * backoff (as downloadCached; 403 / 404 / 410 are not retried); `expect`: a pattern the complete answer contains
+ * (e.g. /<\/html>/), an answer without it is retried. Not cached: used by the feed generators, which must
+ * see the page as it is now. Throws after the last attempt.
+ */
+export async function fetchPage(
+  url: string,
+  ua: string,
+  opts: { form?: Record<string, string>; retries?: number; timeoutMs?: number; expect?: RegExp } = {},
+): Promise<string> {
+  const retries = opts.retries ?? 3;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt) await sleep(2000 * 2 ** (attempt - 1));
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 60_000);
+    try {
+      const init: RequestInit = { headers: { "user-agent": ua, accept: "text/html,*/*" }, redirect: "follow", signal: ctrl.signal };
+      if (opts.form) {
+        init.method = "POST";
+        init.body = new URLSearchParams(opts.form).toString();
+        (init.headers as Record<string, string>)["content-type"] = "application/x-www-form-urlencoded";
+      }
+      const res = await fetch(url, init);
+      if (!res.ok) {
+        const err = new Error(`HTTP ${res.status} for ${url}`);
+        if (res.status === 404 || res.status === 403 || res.status === 410) (err as Error & { fatal?: boolean }).fatal = true;
+        throw err;
+      }
+      const body = await res.text();
+      // a page cut off by the server (HTTP 200, half the HTML) is retried like an error
+      if (opts.expect && !opts.expect.test(body)) throw new Error(`incomplete answer from ${url} (${body.length} bytes, no ${opts.expect})`);
+      return body;
+    } catch (e) {
+      lastErr = ctrl.signal.aborted ? new Error(`timeout fetching ${url}`) : e;
+      warn(`fetch attempt ${attempt + 1} of ${url} failed: ${(lastErr as Error).message}`);
+      if ((e as { fatal?: boolean }).fatal) break;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
 /** Run async tasks with limited concurrency, preserving result order. */
 export async function mapLimit<T, R>(items: T[], limit: number, fn: (x: T, i: number) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);

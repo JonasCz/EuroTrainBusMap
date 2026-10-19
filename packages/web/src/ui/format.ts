@@ -72,6 +72,25 @@ export function caveatBadge(r: Route): HTMLElement | null {
   return h("span", { class: "caveat", role: "img", title: c.text, "aria-label": `${c.label}: ${c.text}` }, icon("info", 13), h("span", { class: "caveat-label", "aria-hidden": "true" }, c.label));
 }
 
+/**
+ * Link to the operator's timetable page for a route the ETL generated from that page (Route.src: the operator
+ * publishes no open timetable data); null for routes from GTFS feeds.
+ */
+export function sourceLink(r: Route): HTMLElement | null {
+  if (!r.src || !/^https?:\/\//.test(r.src)) return null;
+  let host = r.src;
+  try {
+    host = new URL(r.src).hostname.replace(/^www\./, "");
+  } catch {
+    /* keep the URL */
+  }
+  return h(
+    "a",
+    { class: "src-link", href: r.src, target: "_blank", rel: "noopener", title: "Read from the operator's timetable page (no open data feed exists): check it there before travelling" },
+    `Timetable: ${host}`,
+  );
+}
+
 /** The booking caveat as a sentence (trip schedule, journey legs); null for ordinary services. */
 export function caveatNote(r: Route): HTMLElement | null {
   const c = bookingCaveat(r);

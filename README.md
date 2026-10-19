@@ -16,6 +16,8 @@ packages/
     feeds.json          data-driven feed list (Transitous mirror + Mobility Database fallbacks, per-feed options)
     operators/          operator adapters: one re-runnable script per operator for what is not a generic rule
                         (SNCF coach categories, Entur replacement trains, Trenitalia brand, ZOU! feed…; see its README)
+    generators/         feed generators: one script per operator without GTFS that turns its timetable web page into
+                        a GTFS feed on every build (ŽFBiH Bosnia and Herzegovina rail; see its README)
     data/classify-keywords.json  generic multilingual keyword lists of the route classifier
     src/cli.ts          `build-data` entry: download → load (DuckDB) → build
     src/gtfs/load.ts    per-feed loading: only kept routes/trips/stop_times/stops, calendars → service days
@@ -34,6 +36,12 @@ Pipeline in short:
 1. **Feeds** – resolved from `feeds.json` (Transitous file names are looked up in its index, so
    year-suffixed names roll over automatically), downloaded with a custom User-Agent, 3 at a time,
    ETag-cached in `work/cache`. A stale primary source falls back to the next URL.
+   Operators that publish no GTFS get a **generated feed** (`packages/etl/generators/`, source `{ "generated": "<id>" }`
+   in `feeds.json`): a script per source fetches the operator's timetable page, parses it strictly (known table
+   structure, footnote texts mapped to hard-coded calendar rules, a check that the timetable is current) and writes a
+   validated GTFS zip into the feed cache, which then goes through the normal pipeline. A generator that fails (page
+   changed, unknown footnote, network) is logged and its feed skipped; the build goes on without it. Its routes carry
+   the source page (`Route.src`), linked as "Timetable: zfbh.ba" in the trip schedule.
 2. **Load** – each zip is unzipped, filtered and loaded into a DuckDB file, then deleted. Kept:
    heavy rail (long distance, regional/suburban), coaches and *intercity* buses (≥ 15 km span,
    urban modes/operators dropped). Rail is classified LongDistance/Regional from extended route types,

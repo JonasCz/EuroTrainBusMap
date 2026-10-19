@@ -219,6 +219,11 @@ export interface Route {
    * → "Frecciarossa"), set by an operator adapter of the ETL (packages/etl/operators); see routeBrand.
    */
   brand?: string;
+  /**
+   * Page where the operator publishes this timetable, for feeds generated from it (packages/etl/generators: no GTFS
+   * exists, the ETL reads the operator's web page); the app links it from the trip so travellers can check the source.
+   */
+  src?: string;
 }
 
 /**

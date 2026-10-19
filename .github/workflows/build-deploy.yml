@@ -50,10 +50,10 @@ jobs:
       - uses: actions/checkout@v4
 
       # Data built by different ETL/schema code is never reused (hashFiles is not allowed in workflow-level env):
-      # everything the ETL reads from the repo – sources, operator adapters, data files, feed lists, the basemap
-      # script it imports, the shared schema and the lockfile (DuckDB version).
+      # everything the ETL reads from the repo – sources, operator adapters, feed generators, data files, feed lists,
+      # the basemap script it imports, the shared schema and the lockfile (DuckDB version).
       - name: Data cache key
-        run: echo "DATA_KEY=data-out-${{ hashFiles('packages/etl/src/**', 'packages/etl/operators/**', 'packages/etl/data/**', 'packages/etl/feeds.json', 'packages/etl/urban-feeds.json', 'packages/etl/package.json', 'packages/web/scripts/basemap.ts', 'packages/shared/src/**', 'pnpm-lock.yaml') }}" >> "$GITHUB_ENV"
+        run: echo "DATA_KEY=data-out-${{ hashFiles('packages/etl/src/**', 'packages/etl/operators/**', 'packages/etl/generators/**', 'packages/etl/data/**', 'packages/etl/feeds.json', 'packages/etl/urban-feeds.json', 'packages/etl/package.json', 'packages/web/scripts/basemap.ts', 'packages/shared/src/**', 'pnpm-lock.yaml') }}" >> "$GITHUB_ENV"
 
       # GitHub disables scheduled workflows in public repos after 60 days without activity.
       - name: Keep the schedule alive
@@ -139,7 +139,9 @@ jobs:
         run: |
           [ -f work/build-report.json ] && node -e '
             const r = require(process.argv[1]);
-            console.log(JSON.stringify({ build: r.build, stats: r.stats, stageSeconds: r.stageSeconds, failedFeeds: r.failedFeeds, sanity: r.sanity }, null, 1));
+            console.log(JSON.stringify({ build: r.build, stats: r.stats, stageSeconds: r.stageSeconds, failedFeeds: r.failedFeeds, generated: r.generated, sanity: r.sanity }, null, 1));
+            // feeds generated from operator web pages (packages/etl/generators): a failure skips the feed, so flag it
+            for (const g of r.generated ?? []) if (!g.ok) console.log(`::warning::generated feed ${g.feed} skipped (generator ${g.id}): ${g.error}`);
           ' "$PWD/work/build-report.json" || echo "no build report"
 
       - name: Save built data

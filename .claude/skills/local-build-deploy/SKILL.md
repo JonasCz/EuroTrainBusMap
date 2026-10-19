@@ -194,6 +194,11 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
   `extraFeeds`, `exclusive`, `classify`, `onLoad`) is part of the `--reuse-db` key (`ops` in `work/db-state.json`), so
   editing one reloads all feeds (add `--max-age-h 100000`); adapters with only a `route` hook are build-time only. The build
   log ends with one `operator <id>: field@feed n, …` line per adapter (also `operators` in `work/build-report.json`).
+- Feed generators (`packages/etl/generators/*.ts`, feeds with a `{ "generated": id }` source such as `ba-zfbih`) fetch the
+  operator's web page on every load (not cached, `--max-age-h` does not apply; ŽFBiH ≈ 4 min of station-form requests,
+  run beside the downloads) and write `work/cache/feeds/<feed>.zip`; a failure is a `WARN generator … FAILED` line, the feed
+  is skipped (`failedFeeds`, `generated` in `work/build-report.json`). Their source is part of the `--reuse-db` key.
+  Try one alone with `pnpm --filter @etbm/etl run generate -- <id> --out /tmp/<id>.zip`.
 - `node --import tsx ...` fails ("Cannot find package 'tsx'") outside `packages/etl`.
 - The workflow's cleanup step (`rm -rf work/etl.duckdb ...`) defeat `--reuse-db`; skip it locally.
 - Measured full build (147 feeds, 0 failed): download+load 742 s, cities 35 s, stations 99 s, calendars 13 s, dedup 26 s, patterns 87 s,

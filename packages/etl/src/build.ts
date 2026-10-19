@@ -58,6 +58,7 @@ import { writeMapData } from "./mapdata.ts";
 import { loadUrbanFeedDefs, writeUrbanLayer } from "./urban/index.ts";
 import { computeTransit, gatherTransitFeeds } from "./urban/transit.ts";
 import { BASEMAP_DIR, BASEMAP_MAXZOOM, BASEMAP_MINZOOM, BASEMAP_TILES_KEY, BASEMAP_VERSION, installBasemapTiles } from "./basemap/tiles.ts";
+import type { GeneratorReport } from "./generators/types.ts";
 
 export interface BuildCtx {
   db: Db;
@@ -66,6 +67,8 @@ export interface BuildCtx {
   feeds: ResolvedFeed[];
   feedStats: FeedLoadStats[];
   failed: string[];
+  /** Outcome of the feed generators (packages/etl/generators); empty with --reuse-db. */
+  generated?: GeneratorReport[];
   licenses: unknown[];
   timer: StageTimer;
   cacheDir: string;
@@ -103,7 +106,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const D = args.days;
   const startDay = isoToEpochDay(args.startDate);
   const stats: Record<string, number> = {};
-  const report: Record<string, unknown> = { args: { ...args }, feeds: ctx.feedStats, failedFeeds: ctx.failed };
+  const report: Record<string, unknown> = { args: { ...args }, feeds: ctx.feedStats, failedFeeds: ctx.failed, ...(ctx.generated?.length ? { generated: ctx.generated } : {}) };
 
   // ------------------------------------------------------------------ categories
   timer.start("categories");
@@ -438,11 +441,15 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const rclass = new Map<number, { feed: number; cls: string; agency: string; short: string; long: string; color: string | null; tz: string; pname: string | null; routeType: number | null }>();
   // operator name override of a feed (options.agencyName, e.g. "TransDev RAIL_5241" → "Transdev")
   const agencyOverride = new Map<number, string>();
+  // the timetable page of a feed generated from an operator's website (FeedDef.timetableUrl → Route.src)
+  const timetableUrl = new Map<number, string>();
   /** feed number → the feed as the operator adapters see it */
   const feedRef = new Map<number, FeedRef>();
   for (const r of await db.all<{ feed: number; key: string; id: string; country: string }>(`SELECT feed, key, id, country FROM feeds ORDER BY feed`)) {
-    const name = ctx.feeds.find((f) => f.key === r.key)?.def.options?.agencyName;
+    const def = ctx.feeds.find((f) => f.key === r.key)?.def;
+    const name = def?.options?.agencyName;
     if (name) agencyOverride.set(r.feed, name);
+    if (def?.timetableUrl) timetableUrl.set(r.feed, def.timetableUrl);
     feedRef.set(r.feed, { key: r.key, id: r.id, country: r.country });
   }
   for (const r of await db.all<{ rc: number; feed: number; cls: string; agency: string; route_short: string; route_long: string; color: string | null; tz: string; pname: string | null; route_type: number | null }>(
@@ -761,13 +768,15 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const color = rc.color && /^[0-9a-fA-F]{6}$/.test(rc.color) ? rc.color.toUpperCase() : undefined;
     // operator adapters (packages/etl/operators): brand / high-speed of routes their data does not name
     const ex = cfg.operators?.routeExtras({ feed: feedRef.get(rc.feed)!, agency: rc.agency, name: dn.name, short: rc.short, long: rc.long, cat, routeType: rc.routeType }) ?? {};
-    const rkey = `${dn.name}\u0001${rc.agency}\u0001${cat}\u0001${flags}\u0001${color ?? ""}\u0001${ex.brand ?? ""}`;
+    const src = timetableUrl.get(rc.feed);
+    const rkey = `${dn.name}\u0001${rc.agency}\u0001${cat}\u0001${flags}\u0001${color ?? ""}\u0001${ex.brand ?? ""}\u0001${src ?? ""}`;
     let route = routeIndex.get(rkey);
     if (route === undefined) {
       route = routes.length;
       const r: Route = { name: dn.name, agency: rc.agency, cat: cat as CatBit, flags };
       if (color) r.color = color;
       if (ex.brand) r.brand = ex.brand;
+      if (src) r.src = src;
       routes.push(r);
       routeHs.push(cat !== Cat.Bus && cat !== Cat.Coach && isHighSpeedService({ routeType: rc.routeType, agency: rc.agency, names: [rc.pname ?? "", rc.short, rc.long, dn.name, tShort[tk] ?? ""], highSpeed: ex.highSpeed }));
       routeIndex.set(rkey, route);
@@ -1624,7 +1633,7 @@ function buildAttribution(ctx: BuildCtx): AttributionFile {
           url: e.license_url ?? e.publisher?.url ?? undefined,
           attribution: e.publisher?.name,
         }
-      : { name: rf.def.name, license: rf.def.license ?? "see source", url: rf.def.licenseUrl, attribution: rf.def.attribution };
+      : { name: rf.def.name, license: rf.def.license ?? "see source", url: rf.def.timetableUrl ?? rf.def.licenseUrl, attribution: rf.def.attribution };
     if (!src.url) delete src.url;
     if (!src.attribution || rf.def.name.toLowerCase().includes(src.attribution.toLowerCase())) delete src.attribution;
     sources.push(src);

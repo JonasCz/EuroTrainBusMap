@@ -2249,3 +2249,14 @@ dialog::backdrop {
   padding-top: 0;
   padding-bottom: 8px;
 }
+/* link to the operator's timetable page of a route generated from it (Route.src) */
+.src-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--faint);
+  text-underline-offset: 2px;
+}
+.src-link:hover {
+  color: var(--text);
+  text-decoration-color: currentColor;
+}

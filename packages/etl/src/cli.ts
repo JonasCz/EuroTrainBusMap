@@ -7,6 +7,8 @@ import { downloadWithFallback, fetchText, mapLimit } from "./download.ts";
 import { loadFeedsConfig, resolveFeeds, type ResolvedFeed, type Tier } from "./feeds.ts";
 import { LOAD_VERSION, initSchema, loadFeed, type FeedLoadStats } from "./gtfs/load.ts";
 import { runBuild } from "./build.ts";
+import { runGenerator } from "./generators/registry.ts";
+import type { GeneratorReport } from "./generators/types.ts";
 import { todayIn } from "./core/time.ts";
 import { StageTimer, log, warn } from "./util/log.ts";
 
@@ -104,7 +106,7 @@ async function main() {
   const failed: string[] = [];
   const stateFile = join(args.work, "db-state.json");
   const cfgText = await readFile(join(here, "..", "feeds.json"), "utf8");
-  const stateKey = JSON.stringify({ feeds: feeds.map((f) => f.key), start: args.startDate, days: args.days, tiers: args.tiers, load: LOAD_VERSION, cfgLen: cfgText.length, cfgHash: cfgText.split("").reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7), ops: cfg.operators?.loadFingerprint() ?? 0 });
+  const stateKey = JSON.stringify({ feeds: feeds.map((f) => f.key), start: args.startDate, days: args.days, tiers: args.tiers, load: LOAD_VERSION, cfgLen: cfgText.length, cfgHash: cfgText.split("").reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7), ops: cfg.operators?.loadFingerprint() ?? 0, gens: cfg.generators?.fingerprint ?? 0 });
   let reuse = false;
   if (args.reuseDb && existsSync(dbPath) && existsSync(stateFile)) {
     const st = JSON.parse(await readFile(stateFile, "utf8"));
@@ -121,15 +123,37 @@ async function main() {
   }
   const db = await Db.open(dbPath, { threads: 4, memoryLimit: process.env.ETL_DUCKDB_MEMORY ?? "4GB", tempDir: join(tmpDir, "duckdb") });
 
+  const generated: GeneratorReport[] = [];
   if (!reuse) {
     timer.start("download+load");
     await initSchema(db);
     const present = new Set(feeds.map((f) => f.def.id));
     const dropBus = !args.tiers.includes("bus");
+    // Generated feeds (packages/etl/generators) all start right away, beside the downloads: they fetch and parse
+    // the operators' pages (some take minutes) and write a zip into the cache; a failed one is skipped like a failed
+    // download.
+    const genRuns = new Map<string, Promise<string | null>>();
+    for (const rf of feeds) {
+      const g = rf.generator ? cfg.generators?.generators.get(rf.generator) : undefined;
+      if (!g) continue;
+      const dest = join(cacheDir, "feeds", rf.key + ".zip");
+      genRuns.set(
+        rf.key,
+        runGenerator(g, rf.key, { userAgent: cfg.userAgent, startDate: args.startDate, days: args.days, dest, tmpDir }).then(({ report }) => {
+          generated.push(report);
+          return report.ok ? dest : null;
+        }),
+      );
+    }
     // Downloads run 3 at a time ahead of processing; processing is sequential.
     const downloads = new Map<string, Promise<string | null>>();
     let started = 0;
     const startDownload = (rf: ResolvedFeed) => {
+      const gen = genRuns.get(rf.key);
+      if (gen) {
+        downloads.set(rf.key, gen);
+        return;
+      }
       const dest = join(cacheDir, "feeds", rf.key + ".zip");
       const p = downloadWithFallback(rf.urls, dest, cfg.userAgent, args.maxAgeH)
         .then(() => dest)
@@ -183,7 +207,8 @@ async function main() {
     await writeFile(stateFile, JSON.stringify({ key: stateKey, feedStats }));
   }
 
-  await runBuild({ db, args, cfg, feeds, feedStats, failed, licenses, timer, cacheDir, tmpDir, t0 });
+  if (generated.length) log(`feed generators: ${generated.map((g) => `${g.id} ${g.ok ? "ok" : "FAILED"}`).join(", ")}`);
+  await runBuild({ db, args, cfg, feeds, feedStats, failed, generated, licenses, timer, cacheDir, tmpDir, t0 });
   db.close();
 }
 
