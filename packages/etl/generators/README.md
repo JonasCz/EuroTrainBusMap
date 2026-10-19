@@ -20,6 +20,14 @@ through the normal pipeline (load, stations, dedup, patterns, …) like a downlo
   (`src/cli.ts`). The result is validated (`validateGtfs` in `src/generators/gtfs.ts`: ids and references, times never
   going backwards, coordinates, at least one trip in the build window) and written as a zip to
   `work/cache/feeds/<feed>.zip`, where the loader and the later stages (local transport, transit transfers) pick it up.
+- **Out of date is not an error.** A source that still parses but whose timetable is old (ŽFBiH: the page still shows
+  last year's timetable; redvoznje.ba: a line source not re-confirmed for 60 days) returns its feed flagged stale
+  (`info.stale = { until, reason }`, service on the six weeks up to `until`: `staleServiceWindow` in the registry). The
+  zip's `feed_info` end date is `until`, so the build treats it like any expired GTFS feed (`src/gtfs/validity.ts`):
+  its last weekly pattern is repeated over the build window and the app shows "Timetables out of date — expired
+  {until}" next to "Timetable: zfbh.ba · retrieved …". The build report's `generated` entry carries `stale`. A source
+  stale for longer than feeds.json `staleMaxDays` (2 years) fails in the registry. Nothing is stored between builds:
+  the generator reads the (old) page on every build, so a source that disappears or stops parsing drops out.
 - **On error the source is skipped, the build goes on.** A generator throws (a `GeneratorError` with a message
   saying what changed, or any network error after the retries); the build logs
   `WARN generator <id> FAILED, feed <feed> skipped: <reason>`, deletes the zip of an earlier run (so no stage uses
@@ -45,7 +53,8 @@ without reverse-engineering the site. Sections, in this order:
    object, form fields. When the source changes, a diff against this section shows what moved.
 3. **WHAT THIS SCRIPT DOES** – the steps from source to GTFS (requests, filters, calendar rules, coordinates).
 4. **KNOWN QUIRKS** – oddities of the source and how they are handled (with examples: dates, train / line numbers).
-5. **FAILS ON PURPOSE** – every condition that makes the generator throw (so the build skips the feed).
+5. **FAILS ON PURPOSE** – every condition that makes the generator throw (so the build skips the feed), and when
+   it flags the feed stale instead (kept, labelled "out of date").
 6. **HOW TO RE-CHECK / UPDATE** – the commands to run it live (`generate -- <id>`), to look at the source by hand, what
    to update when a check fails (texts, tables, thresholds) and where the tests and fixtures are.
 
@@ -81,8 +90,11 @@ Rules that keep generated data honest:
   2025/2026" must be the current annual timetable, the footnotes' dates must not all lie before it) and generate
   service only within what the page covers (ŽFBiH: up to the December timetable change) and the build window
   (`ctx.startDate − 1` … `ctx.startDate + ctx.days`, `serviceWindow` in the registry). A source without its own validity
-  dates needs a freshness rule (ba-redvoznje: `health.json`; a line source not re-confirmed for 60 days fails the
-  generator, service is generated up to `last_confirmed + 60 days`, so a source that stops updating drops out by itself).
+  dates needs a freshness rule (ba-redvoznje: `health.json`; a line source is valid for 60 days after it was last
+  re-confirmed, service is generated up to `last_confirmed + 60 days`). When the page is out of date, do not throw:
+  flag the feed stale (`info.stale`, see "How it runs") with the last day its timetable is valid for, and generate the
+  weeks before that day (`staleServiceWindow(until)`); the build repeats and labels them. Throw only when the page no
+  longer parses or makes no sense (a later timetable year than the build's, unknown footnotes).
 - **Coordinates** come from a hard-coded table in the script (OSM / GeoNames / an earlier feed, checked against the rail
   graph: every point should lie on the track); a station not in the table fails the source.
 - **Prefer accuracy.** Use only stops and times the source publishes. Where a detail (intermediate stops) comes from a

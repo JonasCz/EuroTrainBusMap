@@ -7,7 +7,8 @@ import { Db } from "../src/db.ts";
 import { GENERATORS_DIR, loadFeedsConfig, resolveFeeds, type FeedDef, type FeedsConfig } from "../src/feeds.ts";
 import { initSchema, loadFeed } from "../src/gtfs/load.ts";
 import { dateRange, gtfsFiles, readRetrievedAt, writeGtfsZip, isoWeekday, timetableChange, timetablePeriod, validateGtfs, type GtfsFeed } from "../src/generators/gtfs.ts";
-import { applyGenerators, generatorContext, loadGeneratorFiles, runGenerator, serviceWindow, type GeneratorSet } from "../src/generators/registry.ts";
+import { applyGenerators, generatorContext, loadGeneratorFiles, runGenerator, serviceWindow, staleServiceWindow, type GeneratorSet } from "../src/generators/registry.ts";
+import { zipState } from "../src/gtfs/validity.ts";
 import { GeneratorError, type FeedGenerator, type GeneratorContext } from "../src/generators/types.ts";
 import zfbih, { FOOTNOTES, STATIONS, parseMainPage, parsePairPage } from "../generators/ba-zfbih.ts";
 import { API, generateFrom, mergeDuplicates, repairMask, type Line } from "../generators/ba-redvoznje.ts";
@@ -185,9 +186,19 @@ describe("ba-zfbih (ŽFBiH timetable page)", () => {
     await expect(zfbih.generate(ctxWith(site.fetchText))).rejects.toThrow(/unknown station "Neum"/);
   });
 
-  it("an outdated page (another timetable year) fails the source", async () => {
+  it("an outdated page (an earlier timetable year) gives a stale feed on the last weeks of its timetable", async () => {
     const site = await fakeSite();
-    await expect(zfbih.generate(ctxWith(site.fetchText, "2027-01-10"))).rejects.toThrow(/timetable 2025\/2026, the current one is 2026\/2027/);
+    const feed = await zfbih.generate(ctxWith(site.fetchText, "2027-01-10"));
+    expect(feed.info.stale).toEqual({ until: "2026-12-12", reason: expect.stringMatching(/timetable 2025\/2026 \(valid until 2026-12-12\), the current one is 2026\/2027/) });
+    const dates = [...new Set([...feed.services.values()].flat())].sort();
+    expect(dates[0]).toBe("2026-11-01");
+    expect(dates[dates.length - 1]).toBe("2026-12-12");
+    expect(datesOf(feed, "2150")).not.toContain("2026-11-25"); // Statehood Day: weekday trains do not run
+    expect(datesOf(feed, "2150")).toContain("2026-11-24");
+    // a later timetable than the build's, or no timetable year, still fails
+    await expect(zfbih.generate(ctxWith(site.fetchText, "2025-06-01"))).rejects.toThrow(/a later timetable than the build's/);
+    const odd = await fakeSite((h) => h.replace("Timetable for 2025/2026", "Timetable for 2025/2027"));
+    await expect(zfbih.generate(ctxWith(odd.fetchText))).rejects.toThrow(/not a timetable year/);
   });
 
   it("a station form answer that disagrees with the table keeps only the end stations", async () => {
@@ -237,8 +248,9 @@ describe("generator registry and build integration", () => {
     const ba = cfg.feeds.find((f) => f.id === "ba-zfbih")!;
     expect(ba.sources).toEqual([{ generated: "ba-zfbih" }]);
     expect(ba.timetableUrl).toBe("https://www.zfbh.ba/en/time-table/");
-    // the community feed ba_ZFBiH (ŽFBiH and ŽRS, ended 2025-12-13) is out of date: no feed reads it any more
-    expect(cfg.feeds.some((f) => f.sources.some((s) => "transitous" in s && s.transitous === "ba_ZFBiH.gtfs.zip"))).toBe(false);
+    // the community feed ba_ZFBiH (ŽFBiH and ŽRS, ended 2025-12-13) is read only for the ŽRS trains (ba-zrs, stale;
+    // the agency filter comes from the operator adapter operators/zrs.ts)
+    expect(cfg.feeds.filter((f) => f.sources.some((s) => "transitous" in s && s.transitous === "ba_ZFBiH.gtfs.zip")).map((f) => [f.id, f.options?.onlyAgencies])).toEqual([["ba-zrs", "RSrp|Republike Srpske"]]);
     expect(cfg.feeds.find((f) => f.id === "ba-redvoznje")?.timetableUrl).toBe("https://redvoznje.ba/");
     const rf = await resolveFeeds(cfg, { only: ["ba-zfbih"], tiers: ["core"], cacheDir: dir });
     expect(rf).toEqual([expect.objectContaining({ key: "ba-zfbih", urls: [], generator: "ba-zfbih" })]);
@@ -290,7 +302,6 @@ describe("ba-redvoznje (redvoznje.ba API)", () => {
     await rm(dir0, { recursive: true, force: true });
   });
   const RV = join(here, "fixtures", "redvoznje");
-  const TODAY = "2026-10-19";
   /** A fake API from the trimmed fixture copy; boards not in the fixtures have no departures. */
   async function fakeApi(edit: (path: string, json: any) => any = (_p, j) => j) {
     const files = new Map<string, string>();
@@ -311,9 +322,9 @@ describe("ba-redvoznje (redvoznje.ba API)", () => {
     };
     return { fetchText, requests };
   }
-  const run = async (edit?: Parameters<typeof fakeApi>[0], today = TODAY, warnings: string[] = []) => {
+  const run = async (edit?: Parameters<typeof fakeApi>[0], start = START, warnings: string[] = []) => {
     const api = await fakeApi(edit);
-    const feed = await generateFrom(ctxWith(api.fetchText, START, warnings), today, 10);
+    const feed = await generateFrom(ctxWith(api.fetchText, start, warnings), 10);
     return { feed, api, warnings };
   };
   const tripsFrom = (feed: GtfsFeed, first: string, time: number) =>
@@ -372,12 +383,37 @@ describe("ba-redvoznje (redvoznje.ba API)", () => {
     expect(lines).toHaveLength(2);
   });
 
-  it("data too stale fails the source", async () => {
-    await expect(run(undefined, "2026-12-15")).rejects.toThrow(/data too stale: health.json data_last_confirmed 2026-09-28 is 78 days old/);
-    // a line source stale while the dataset is fresh
-    await expect(
-      run((p, j) => (p === "/health.json" ? { ...j, sources: j.sources.map((s: any) => (s.source === "autobuskastanica" ? { ...s, last_confirmed: "2026-07-01" } : s)) } : j)),
-    ).rejects.toThrow(/source autobuskastanica \(lines\) last confirmed 2026-07-01/);
+  it("old data is kept as a stale feed: its masks on the weeks before it ran out", async () => {
+    // confirmed 2026-09-28, valid 60 days (to 2026-11-27); a build from 2026-12-15 gets the stale feed
+    const { feed } = await run(undefined, "2026-12-15");
+    expect(feed.info.stale).toEqual({ until: "2026-11-27", reason: expect.stringMatching(/data out of date: source \w+ \(lines\) last confirmed 2026-09-28, 78 days before the build/) });
+    const [t] = tripsFrom(feed, "kakanj", 300);
+    const days = feed.services.get(t!.service_id)!;
+    expect(days[0]).toBe("2026-10-19"); // the first weekday of the six weeks 2026-10-17 … 2026-11-27
+    expect(days[days.length - 1]).toBe("2026-11-27");
+    expect(new Set(days.map(isoWeekday))).toEqual(new Set([0, 1, 2, 3, 4]));
+    validateGtfs(feed, staleServiceWindow("2026-11-27"));
+    // feed_info's end date is the expiry: the build sees an expired feed and projects it
+    expect(gtfsFiles(feed)["feed_info.txt"]).toMatch(/,20261017,20261127,/);
+    // a line source stale while the dataset is fresh: the feed is stale from that source's end
+    const r = await run((p, j) => (p === "/health.json" ? { ...j, sources: j.sources.map((s: any) => (s.source === "autobuskastanica" ? { ...s, last_confirmed: "2026-07-01" } : s)) } : j));
+    expect(r.feed.info.stale).toMatchObject({ until: "2026-08-30", reason: expect.stringMatching(/source autobuskastanica \(lines\) last confirmed 2026-07-01/) });
+    // in date: no flag
+    expect((await run()).feed.info.stale).toBeUndefined();
+  });
+
+  it("the registry keeps a stale generated feed (report.stale) and refuses one beyond the cap", async () => {
+    const api = await fakeApi();
+    const g: FeedGenerator = { id: "ba-redvoznje", description: "t", sourceUrl: "https://redvoznje.ba/", generate: (ctx) => generateFrom({ ...ctx, fetchText: api.fetchText }, 10) };
+    const dest = join(dir0, "rv-stale.zip");
+    const warns: string[] = [];
+    const { report } = await runGenerator(g, "ba-redvoznje", { userAgent: "t", startDate: "2026-12-15", days: DAYS, dest, tmpDir: dir0, log: () => {}, warn: (m) => warns.push(m) });
+    expect(report).toMatchObject({ ok: true, stale: { until: "2026-11-27" } });
+    expect(report.warnings.join("\n")).toMatch(/kept as stale, valid until 2026-11-27/);
+    expect(await zipState(dest, "2026-12-15")).toMatchObject({ kind: "stale", end: "2026-11-27" });
+    const old = await runGenerator(g, "ba-redvoznje", { userAgent: "t", startDate: "2027-03-01", days: DAYS, dest, tmpDir: dir0, staleMaxDays: 30, log: () => {}, warn: () => {} });
+    expect(old.report).toMatchObject({ ok: false, error: expect.stringMatching(/out of date for 94 days .*limit 30/) });
+    expect(existsSync(dest)).toBe(false);
   });
 
   it("a changed API fails the source", async () => {

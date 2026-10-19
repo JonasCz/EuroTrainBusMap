@@ -3,7 +3,8 @@
  * the README there) fetches the operator's timetable page / data, parses it and returns a GTFS feed. The registry
  * (registry.ts) runs it on every build, writes the feed as a zip into the feed cache and the feed then goes through
  * the normal pipeline (gtfs/load.ts) like a downloaded one. A generator that fails (page changed, unknown footnote,
- * network error…) throws: the source is logged and skipped, the build goes on without it.
+ * network error…) throws: the source is logged and skipped, the build goes on without it. A source that still parses
+ * but is out of date gives a feed flagged stale (GtfsFeed.info.stale), kept and labelled like an expired GTFS feed.
  */
 import type { GtfsFeed } from "./gtfs.ts";
 
@@ -33,7 +34,9 @@ export interface FeedGenerator {
   sourceUrl: string;
   /**
    * Fetch, parse and convert. Throw (GeneratorError or any Error) on anything unexpected – a changed page structure,
-   * an unknown footnote, an outdated timetable: the build then skips this source instead of publishing wrong data.
+   * an unknown footnote: the build then skips this source instead of publishing wrong data. A source that parses
+   * but is out of date (an older timetable year, data not re-confirmed for too long) is not an error: return the
+   * feed with `info.stale` set and its service on the weeks before `info.stale.until` (staleServiceWindow).
    */
   generate(ctx: GeneratorContext): Promise<GtfsFeed>;
 }
@@ -64,5 +67,7 @@ export interface GeneratorReport {
   seconds: number;
   /** When the generator started reading its source (ISO, UTC): the feed's feed_info feed_version, shown in the app. */
   retrievedAt?: string;
+  /** The source parsed but is out of date (GtfsFeed.info.stale): kept, projected and labelled by the build. */
+  stale?: { until: string; reason: string };
   counts?: { stops: number; routes: number; trips: number; stopTimes: number; serviceDays: number; firstDate?: string; lastDate?: string };
 }

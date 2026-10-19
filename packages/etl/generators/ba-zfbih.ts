@@ -58,24 +58,25 @@
  *   - Briješće (a halt in Sarajevo, Novi Grad) has no point in any source: placed on the track by its running times.
  *
  * FAILS ON PURPOSE (the build skips the feed and keeps going) when
- *   the heading does not name the current annual timetable (from 13 Dec 2026 the page must say "2026/2027"; while it
- *   still shows 2025/2026 the source is skipped), the table header or a row cannot be read, a
- *   train type or station is unknown, a footnote text differs from FOOTNOTES or a new footnote appears, a train has an
- *   asterisk count without a footnote or a footnote that does not name it, the footnotes' dates all lie before the
- *   current annual timetable (outdated page), or a station-form answer has an unexpected heading / header / row.
+ *   the heading names no timetable year or a later one than the build's (an earlier one is only out of date, see
+ *   above), the table header or a row cannot be read, a train type or station is unknown, a footnote text differs from
+ *   FOOTNOTES or a new footnote appears, a train has an asterisk count without a footnote or a footnote that does not
+ *   name it, or a station-form answer has an unexpected heading / header / row. An outdated page whose footnotes
+ *   changed fails on the footnotes (a new timetable needs new rules): only a page that still parses is kept as stale.
  *
  * HOW TO RE-CHECK / UPDATE
  *   - `pnpm --filter @etbm/etl run generate -- ba-zfbih` runs it against the live page and prints one line per train;
  *     the error names what changed.
  *   - `curl -s https://www.zfbh.ba/en/time-table/ | grep -A30 "Note:"` shows the footnotes: when one changed, update its
  *     text and rule in FOOTNOTES together (and the copy in this header); after the December timetable change expect a
- *     new heading, new train numbers and new footnotes – re-check every rule, and the Ploče trains against hr-hz.
+ *     new heading, new train numbers and new footnotes – re-check every rule, and the Ploče trains against hr-hz. Until
+ *     the page changes, the build report's `generated` entry shows `stale` and the app labels the trains out of date.
  *   - A new station: add it to STATIONS (OSM / GeoNames, checked against the rail graph).
  *   - Tests: test/generators.test.ts with the page copies in test/fixtures/zfbih/ (refresh them with the live page).
  */
 import { defineGenerator, GeneratorError, type GeneratorContext } from "../src/generators/types.ts";
-import { dateRange, haversineKm, isoWeekday, parseHm, timetablePeriod, type GtfsFeed, type GtfsStopTime } from "../src/generators/gtfs.ts";
-import { serviceWindow } from "../src/generators/registry.ts";
+import { addDays, dateRange, haversineKm, isoWeekday, parseHm, timetableChange, timetablePeriod, type GtfsFeed, type GtfsStopTime } from "../src/generators/gtfs.ts";
+import { serviceWindow, staleServiceWindow } from "../src/generators/registry.ts";
 
 export const SOURCE_URL = "https://www.zfbh.ba/en/time-table/";
 export const MAIN_HEADER = ["Train number", "Train type", "Relation", "Departure", "Arrival"];
@@ -362,23 +363,39 @@ function footnoteDates(t: string): string[] {
 }
 
 /**
+ * Is the page's timetable the current one? The heading's year against the annual timetable of `startDate`: the same
+ * year is current – unless every date in the footnotes lies before it (heading updated, content not: the previous
+ * timetable); an earlier year is out of date, valid until the end of that timetable (the December change); a later
+ * or malformed year fails the source.
+ */
+export function pageValidity(page: MainPage, startDate: string): { stale?: { until: string; reason: string } } {
+  const period = timetablePeriod(startDate);
+  const want = [Number(period.start.slice(0, 4)), Number(period.end.slice(0, 4))];
+  const [y0, y1] = page.years;
+  if (y1 !== y0 + 1) fail(`the page shows the timetable ${page.years.join("/")}, not a timetable year`);
+  if (y0 > want[0]!) fail(`the page shows the timetable ${page.years.join("/")}, the current one is ${want.join("/")} (${period.start} – ${period.end}): a later timetable than the build's`);
+  if (y0 < want[0]!) {
+    const until = addDays(timetableChange(y1), -1);
+    return { stale: { until, reason: `the page shows the timetable ${page.years.join("/")} (valid until ${until}), the current one is ${want.join("/")} (${period.start} – ${period.end})` } };
+  }
+  const dates = [...page.footnotes.values()].flatMap(footnoteDates).sort();
+  if (dates.length && dates[dates.length - 1]! < period.start) {
+    const until = addDays(period.start, -1);
+    return { stale: { until, reason: `timetable looks outdated: the latest date in its footnotes (${dates[dates.length - 1]}) is before the current timetable (from ${period.start}); taken as the previous one, valid until ${until}` } };
+  }
+  return {};
+}
+
+/**
  * The service rule of every train: footnotes matched against FOOTNOTES (exact text), every marker used by a train
  * known, every train named by its footnote. Throws on any mismatch.
  */
-export function trainRules(page: MainPage, startDate: string): Map<string, DayRule | null> {
+export function trainRules(page: MainPage): Map<string, DayRule | null> {
   for (const [m, t] of page.footnotes) {
     const k = FOOTNOTES.find((f) => f.marker === m);
     if (!k) fail(`unknown footnote ${m} "${t}"`);
     if (k!.text !== t) fail(`footnote ${m} changed: "${t}" (known: "${k!.text}")`);
   }
-  // outdated page: the heading names another timetable year, or every date of the footnotes lies before it
-  const period = timetablePeriod(startDate);
-  const want = [Number(period.start.slice(0, 4)), Number(period.end.slice(0, 4))];
-  if (page.years[0] !== want[0] || page.years[1] !== want[1])
-    fail(`the page shows the timetable ${page.years.join("/")}, the current one is ${want.join("/")} (${period.start} – ${period.end})`);
-  const dates = [...page.footnotes.values()].flatMap(footnoteDates).sort();
-  if (dates.length && dates[dates.length - 1]! < period.start)
-    fail(`timetable looks outdated: the latest date in its footnotes (${dates[dates.length - 1]}) is before the current timetable (from ${period.start})`);
   const out = new Map<string, DayRule | null>();
   for (const r of page.rows) {
     if (!r.marker) {
@@ -497,9 +514,11 @@ export interface BuildInput {
 
 /** The GTFS feed from the parsed page (and station form). */
 export function buildFeed(o: BuildInput): GtfsFeed {
-  const rules = trainRules(o.page, o.startDate);
-  const win = serviceWindow(o.startDate, o.days);
-  const period = timetablePeriod(o.startDate);
+  const rules = trainRules(o.page);
+  // an out-of-date page: service on the last weeks of its timetable (the build repeats them and labels the feed)
+  const { stale } = pageValidity(o.page, o.startDate);
+  const win = stale ? staleServiceWindow(stale.until) : serviceWindow(o.startDate, o.days);
+  const period = stale ? { end: stale.until } : timetablePeriod(o.startDate);
   const last = win.to < period.end ? win.to : period.end;
   const days = win.from <= last ? dateRange(win.from, last) : [];
   const anchors = new Set(o.anchors);
@@ -510,7 +529,7 @@ export function buildFeed(o: BuildInput): GtfsFeed {
     trips: [],
     stopTimes: [],
     services: new Map(),
-    info: { publisher: "EuroTrainBusMap (generated from the ŽFBiH timetable page)", publisherUrl: SOURCE_URL, lang: "bs", sourceUrl: SOURCE_URL },
+    info: { publisher: "EuroTrainBusMap (generated from the ŽFBiH timetable page)", publisherUrl: SOURCE_URL, lang: "bs", sourceUrl: SOURCE_URL, ...(stale ? { stale } : {}) },
   };
   const stopIds = new Map<string, string>();
   const stop = (name: string) => {
@@ -583,7 +602,8 @@ export default defineGenerator({
     const page = parseMainPage(await ctx.fetchText(SOURCE_URL, { expect }));
     ctx.log(`${page.rows.length} trains in the table, footnotes ${[...page.footnotes.keys()].join(" ")}, ${page.stations.length} stations in the form`);
     // fail early on footnotes / stations, before the slow station queries
-    trainRules(page, ctx.startDate);
+    trainRules(page);
+    pageValidity(page, ctx.startDate);
     for (const r of page.rows) for (const s of [r.from, r.to]) if (!STATIONS[s]) fail(`unknown station "${s}" in the relation of train ${r.number} (add its coordinates to STATIONS)`);
     const anchors = chooseAnchors(page.rows, page.stations);
     const queries = anchors.flatMap((a) => page.stations.filter((s) => s !== a).map((s) => [a, s] as const));

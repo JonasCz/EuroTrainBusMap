@@ -65,7 +65,21 @@ export interface GtfsFeed {
    * the registry when the generator starts reading the source) is written as feed_version: the version of a feed made
    * from a web page is the moment it was read; the build shows it next to the source link (readRetrievedAt).
    */
-  info: { publisher: string; publisherUrl: string; lang: string; sourceUrl: string; retrievedAt?: string };
+  info: {
+    publisher: string;
+    publisherUrl: string;
+    lang: string;
+    sourceUrl: string;
+    retrievedAt?: string;
+    /**
+     * The source still parses but its timetable is out of date (an older timetable year, a source not re-confirmed
+     * for too long): `until` is the last day it is valid for (YYYY-MM-DD), written as feed_info feed_end_date, and the
+     * generator emits the service of the weeks up to it (staleServiceWindow in the registry). The build then treats
+     * the feed like any expired GTFS feed: its last pattern is projected onto the build window and labelled
+     * "Timetables out of date — expired {until}" (gtfs/validity.ts). `reason` goes to the build report.
+     */
+    stale?: { until: string; reason: string };
+  };
 }
 
 /** YYYY-MM-DD ± n days. */
@@ -115,7 +129,8 @@ export function haversineKm(lat1: number, lon1: number, lat2: number, lon2: numb
 
 /**
  * Check a generated feed; throws a GeneratorError naming the first problem. `window` = the build's service window:
- * at least one trip must run in it (a feed without service is an error, not an empty success).
+ * at least one trip must run in it (a feed without service is an error, not an empty success) – for a stale feed
+ * (info.stale) the window passed is its own last weeks (staleServiceWindow in the registry).
  */
 export function validateGtfs(feed: GtfsFeed, window?: { from: string; to: string }): void {
   const fail = (m: string): never => {
@@ -213,7 +228,7 @@ export function gtfsFiles(feed: GtfsFeed): Record<string, string> {
     "calendar_dates.txt": csv(["service_id", "date", "exception_type"], [...feed.services].flatMap(([id, ds]) => [...ds].sort().map((d) => [id, ymd(d), 1]))),
     "feed_info.txt": csv(
       ["feed_publisher_name", "feed_publisher_url", "feed_lang", "feed_start_date", "feed_end_date", "feed_version"],
-      [[feed.info.publisher, feed.info.publisherUrl, feed.info.lang, dates.length ? ymd(dates[0]!) : undefined, dates.length ? ymd(dates[dates.length - 1]!) : undefined, feed.info.retrievedAt]],
+      [[feed.info.publisher, feed.info.publisherUrl, feed.info.lang, dates.length ? ymd(dates[0]!) : undefined, feed.info.stale ? ymd(feed.info.stale.until) : dates.length ? ymd(dates[dates.length - 1]!) : undefined, feed.info.retrievedAt]],
     ),
   };
 }

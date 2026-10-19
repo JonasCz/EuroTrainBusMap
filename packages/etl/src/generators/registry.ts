@@ -14,6 +14,7 @@ import { fetchPage } from "../download.ts";
 import type { FeedDef } from "../feeds.ts";
 import { log as defaultLog, warn as defaultWarn } from "../util/log.ts";
 import { addDays, feedCounts, retrievalTime, validateGtfs, writeGtfsZip, type GtfsFeed } from "./gtfs.ts";
+import { STALE_MAX_DAYS, daysBetween, referenceWindow } from "../gtfs/validity.ts";
 import type { FeedGenerator, GeneratorContext, GeneratorReport } from "./types.ts";
 
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -94,6 +95,8 @@ export interface RunOptions {
   /** Where the zip goes (the feed cache: work/cache/feeds/<key>.zip). */
   dest: string;
   tmpDir: string;
+  /** Cap on stale data (feeds.json staleMaxDays): a stale source older than this fails like a broken one. */
+  staleMaxDays?: number;
   log?: (m: string) => void;
   warn?: (m: string) => void;
 }
@@ -119,6 +122,14 @@ export function serviceWindow(startDate: string, days: number): { from: string; 
 }
 
 /**
+ * The days a stale generated feed emits service on: the weeks up to `until` (its last valid day) that the build
+ * projects onto its window (gtfs/validity.ts referenceWindow).
+ */
+export function staleServiceWindow(until: string): { from: string; to: string } {
+  return { from: referenceWindow(until).from, to: until };
+}
+
+/**
  * Run one generator: generate, validate, write the zip. Never throws: on failure the error is logged, the zip of an
  * earlier run is removed and the report says why (ok = false); the caller then skips the feed.
  */
@@ -132,12 +143,22 @@ export async function runGenerator(g: FeedGenerator, feedKey: string, o: RunOpti
     ctx.log(`fetching ${g.sourceUrl}`);
     const feed = await g.generate(ctx);
     feed.info.retrievedAt ??= retrievedAt;
-    validateGtfs(feed, serviceWindow(o.startDate, o.days));
+    const stale = feed.info.stale;
+    if (stale) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(stale.until)) throw new Error(`stale.until "${stale.until}" is not a date`);
+      if (stale.until >= o.startDate) throw new Error(`flagged stale although valid until ${stale.until} (build starts ${o.startDate})`);
+      const age = daysBetween(stale.until, o.startDate);
+      const cap = o.staleMaxDays ?? STALE_MAX_DAYS;
+      if (age > cap) throw new Error(`source out of date for ${age} days (${stale.reason}; limit ${cap})`);
+    }
+    validateGtfs(feed, stale ? staleServiceWindow(stale.until) : serviceWindow(o.startDate, o.days));
     await writeGtfsZip(feed, o.dest, o.tmpDir);
     report.ok = true;
+    if (stale) report.stale = stale;
     report.counts = feedCounts(feed);
     const c = report.counts;
-    ctx.log(`ok: ${c.trips} trips, ${c.stops} stops, ${c.stopTimes} stop times, service ${c.firstDate} … ${c.lastDate}`);
+    if (stale) ctx.warn(`source out of date (${stale.reason}): kept as stale, valid until ${stale.until}; the build repeats its last weeks and labels it`);
+    ctx.log(`ok: ${c.trips} trips, ${c.stops} stops, ${c.stopTimes} stop times, service ${c.firstDate} … ${c.lastDate}${stale ? ` (stale, until ${stale.until})` : ""}`);
     return { report: { ...report, seconds: Math.round((Date.now() - t0) / 100) / 10 }, feed };
   } catch (e) {
     report.error = (e as Error).message ?? String(e);

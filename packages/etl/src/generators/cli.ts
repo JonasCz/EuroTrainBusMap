@@ -35,7 +35,7 @@ for (const id of todo) {
   }
   const feedKey = cfg.feeds.find((f) => f.sources.some((s) => "generated" in s && s.generated === id))?.id ?? id;
   const out = resolve(get("--out") && todo.length === 1 ? get("--out")! : join(repoRoot, "work", "generated", `${id}.zip`));
-  const { report, feed } = await runGenerator(g, feedKey, { userAgent: cfg.userAgent, startDate, days, dest: out, tmpDir: join(dirname(out), "tmp") });
+  const { report, feed } = await runGenerator(g, feedKey, { userAgent: cfg.userAgent, startDate, days, dest: out, tmpDir: join(dirname(out), "tmp"), ...(cfg.staleMaxDays ? { staleMaxDays: cfg.staleMaxDays } : {}) });
   console.log(JSON.stringify(report, null, 1));
   if (!feed) {
     failed++;

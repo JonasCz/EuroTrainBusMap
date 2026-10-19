@@ -24,7 +24,10 @@ const SOURCE_URL = "https://operator.example/timetable";
  *   - Oddities of the source and how they are handled, with an example each.
  *
  * FAILS ON PURPOSE (the build skips the feed and keeps going) when
- *   - every condition that throws: changed header, unknown footnote text, outdated timetable, stale data, …
+ *   - every condition that throws: changed header, unknown footnote text, a page that makes no sense, …
+ *   - (not a failure) an outdated timetable / stale data that still parses: the feed is returned with `info.stale`
+ *     (valid-until date and reason) and service on the weeks before that date; the build keeps it labelled
+ *     "Timetables out of date" (see the README, "Out of date is not an error").
  *
  * HOW TO RE-CHECK / UPDATE
  *   - `pnpm --filter @etbm/etl run generate -- <id>` runs it against the live source;
@@ -39,7 +42,8 @@ export default defineGenerator({
     const html = await ctx.fetchText(SOURCE_URL, { expect: /<\/html>/i });
     // 1. parse strictly: expected headers / columns, known categories and footnote texts, else
     if (!html.includes("<table")) throw new GeneratorError("no timetable table on the page");
-    // 2. check the timetable is current; 3. compute service dates within the window (and the page's validity)
+    // 2. check the timetable is current (if not: info.stale + staleServiceWindow(until));
+    // 3. compute service dates within the window (and the page's validity)
     const { from, to } = serviceWindow(ctx.startDate, ctx.days);
     ctx.log(`window ${from} … ${to}`);
     // 4. build the feed: stops with coordinates from a table in this file, one trip per train, explicit dates

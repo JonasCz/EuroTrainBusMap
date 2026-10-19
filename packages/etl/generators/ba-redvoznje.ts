@@ -54,7 +54,13 @@
  *      eu-flixbus is FlixBus' only source; Li Bus Livno comes from ba-livnobus, operators/livnobus.ts). This feed has
  *      the lowest dedup priority, so a copy from an operator's own GTFS wins ties.
  *   5. Service dates: the mask on every day of the build window, up to `last_confirmed + MAX_SOURCE_AGE_DAYS` of the
- *      line's source (a source that stops being re-confirmed drops out by itself). Route type 200 (coach).
+ *      line's source. Route type 200 (coach).
+ *   6. Out of date: when a line source's `last_confirmed + MAX_SOURCE_AGE_DAYS` (60) lies before the build window,
+ *      the feed is flagged stale (`info.stale`, valid until the earliest such date of the sources with lines): every
+ *      line gets its mask on the 6 weeks up to that date, the build repeats that pattern over its window and the app
+ *      shows "Timetables out of date — expired {date}" on these buses (a source that stops being re-confirmed is kept,
+ *      labelled, until the build's cap `staleMaxDays`, 2 years). Then the whole feed is labelled, also lines of a source
+ *      that is still fresh (they come and go together: every source was re-confirmed on 2026-09-28).
  *
  * KNOWN QUIRKS
  *   - Scrape-day artefact: the boards are read on one day (data_last_confirmed 2026-09-28, a Monday); services that
@@ -78,15 +84,16 @@
  * FAILS ON PURPOSE (the build skips the feed and keeps going) when
  *   - v1.json has another api_version or licence than "v1" / "CC BY 4.0" (re-read the terms), or any file lacks the
  *     fields above or has them in another form (`days` not 7 × 0/1, `time` not HH:MM, …);
- *   - health.json's data_last_confirmed, or the last_confirmed of a source whose lines are used, is more than
- *     MAX_SOURCE_AGE_DAYS (60) days old (the site itself calls a source stale after 21 days; 60 leaves room for a
- *     missed monthly refresh). A stale source without lines (buskarta-intl, 64 days old today) only warns;
+ *   - (not a failure: old data) a source whose lines are used not re-confirmed for MAX_SOURCE_AGE_DAYS (60) days makes
+ *     the feed stale (step 6), not an error; a stale source without lines (buskarta-intl, 64 days old today) only
+ *     warns; stale for longer than the build's cap (feeds.json staleMaxDays) fails in the registry;
  *   - fewer than MIN_LINES lines remain, or more than MAX_UNKNOWN_SHARE of the stops have no coordinates (new cities:
  *     extend CITY_COORDS / NAME_COORDS).
  *
  * HOW TO RE-CHECK / UPDATE
  *   - `pnpm --filter @etbm/etl run generate -- ba-redvoznje` runs it against the live API and prints the trips.
- *   - `curl -s https://redvoznje.ba/api/v1/health.json` shows the freshness; compare one pair file with the shape
+ *   - `curl -s https://redvoznje.ba/api/v1/health.json` shows the freshness (a "stale" entry in the build report's
+ *     `generated` means the feed is kept but labelled out of date); compare one pair file with the shape
  *     above (`curl -s https://redvoznje.ba/api/v1/routes/bus/kakanj-sarajevo.json | head -c 2000`).
  *   - "no coordinates for …" warnings: add the slug to CITY_COORDS (GeoNames: work/assets/geonames/places-europe.tsv.gz,
  *     by name, checked against the neighbouring stops' times) or the name to NAME_COORDS.
@@ -95,11 +102,15 @@
  */
 import { defineGenerator, GeneratorError, type GeneratorContext } from "../src/generators/types.ts";
 import { addDays, dateRange, haversineKm, isoWeekday, parseHm, type GtfsFeed } from "../src/generators/gtfs.ts";
-import { serviceWindow } from "../src/generators/registry.ts";
+import { serviceWindow, staleServiceWindow } from "../src/generators/registry.ts";
 
 export const SITE_URL = "https://redvoznje.ba/";
 export const API = "https://redvoznje.ba/api/v1";
-/** A line source (or the dataset) not re-confirmed for longer than this fails the generator. */
+/**
+ * A line source counts as valid for this many days after it was last re-confirmed; past that the feed is out of date
+ * (flagged stale, labelled in the app). The site itself calls a source stale after 21 days; 60 leaves room for a missed
+ * monthly refresh.
+ */
 export const MAX_SOURCE_AGE_DAYS = 60;
 /** Fewer lines than this: the API answered with much less than usual (262 lines in Oct 2026). */
 export const MIN_LINES = 100;
@@ -372,8 +383,8 @@ export interface Health {
   sources: Map<string, string>;
 }
 
-/** /api/v1/health.json; fails when the whole dataset is older than MAX_SOURCE_AGE_DAYS on `today`. */
-export function parseHealth(j: unknown, today: string): Health {
+/** /api/v1/health.json (its dates; how old they may be is decided in buildFeed). */
+export function parseHealth(j: unknown): Health {
   if (!isObj(j)) fail("health.json: not a JSON object");
   const o = j as Record<string, unknown>;
   const dl = o.data_last_confirmed;
@@ -384,8 +395,6 @@ export function parseHealth(j: unknown, today: string): Health {
     if (!isObj(s) || typeof s.source !== "string" || typeof s.last_confirmed !== "string" || !DATE_RE.test(s.last_confirmed)) fail(`health.json: unreadable source ${JSON.stringify(s)}`);
     sources.set((s as { source: string }).source, (s as { last_confirmed: string }).last_confirmed);
   }
-  const age = daysBetween(dl as string, today);
-  if (age > MAX_SOURCE_AGE_DAYS) fail(`data too stale: health.json data_last_confirmed ${dl} is ${age} days old (limit ${MAX_SOURCE_AGE_DAYS})`);
   return { dataLastConfirmed: dl as string, sources };
 }
 
@@ -661,8 +670,6 @@ export interface BuildInput {
   stations: Map<string, Station>;
   operators: Map<string, string>;
   pairs: PairFile[];
-  /** today's date (the staleness rules count from it) */
-  today: string;
   startDate: string;
   days: number;
   /** MIN_LINES unless given (tests with a few pair files) */
@@ -679,15 +686,21 @@ export function buildFeed(o: BuildInput): GtfsFeed {
     o.warn(`no coordinates for ${stats.unknownStops.size} places (${unknown} calls left out): ${[...stats.unknownStops].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ×${n}`).join(", ")}`);
   if (stats.calls && unknown / stats.calls > MAX_UNKNOWN_SHARE)
     fail(`${unknown} of ${stats.calls} calls have no coordinates (more than ${MAX_UNKNOWN_SHARE * 100} %): add the places to CITY_COORDS / NAME_COORDS`);
-  // the line sources must be fresh; a stale source without lines only warns
+  // How long the line sources stay valid: MAX_SOURCE_AGE_DAYS after their last re-confirmation. When the earliest of
+  // them ends before the build window, the feed is out of date: flagged stale (the build repeats its last weeks and
+  // labels it); a stale source without lines only warns.
   const used = new Set(raw.map((l) => l.source));
-  for (const [src, last] of o.health.sources) {
-    const age = daysBetween(last, o.today);
-    if (age <= MAX_SOURCE_AGE_DAYS) continue;
-    if (used.has(src)) fail(`data too stale: source ${src} (lines) last confirmed ${last}, ${age} days ago (limit ${MAX_SOURCE_AGE_DAYS})`);
-    o.warn(`source ${src} last confirmed ${last} (${age} days ago); it has no lines here, nothing of it is used`);
-  }
   for (const s of used) if (!o.health.sources.has(s)) fail(`lines from source "${s}", which health.json does not list`);
+  let until: string | null = null, oldest = "";
+  for (const [src, last] of o.health.sources) {
+    const end = addDays(last, MAX_SOURCE_AGE_DAYS);
+    if (end >= o.startDate) continue;
+    if (!used.has(src)) {
+      o.warn(`source ${src} last confirmed ${last} (${daysBetween(last, o.startDate)} days before the build); it has no lines here, nothing of it is used`);
+      continue;
+    }
+    if (!until || end < until) (until = end), (oldest = `source ${src} (lines) last confirmed ${last}, ${daysBetween(last, o.startDate)} days before the build (valid for ${MAX_SOURCE_AGE_DAYS})`);
+  }
   // the scrape-day artefact, then duplicates inside the source
   let repaired = 0;
   for (const l of raw) {
@@ -698,7 +711,8 @@ export function buildFeed(o: BuildInput): GtfsFeed {
   const minLines = o.minLines ?? MIN_LINES;
   if (lines.length < minLines) fail(`only ${lines.length} lines (expected at least ${minLines}): API answer incomplete or changed`);
 
-  const win = serviceWindow(o.startDate, o.days);
+  // the build window, or for a stale feed the weeks up to its end (projected onto the window by the build)
+  const win = until ? staleServiceWindow(until) : serviceWindow(o.startDate, o.days);
   const feed: GtfsFeed = {
     agency: [],
     stops: [],
@@ -706,7 +720,13 @@ export function buildFeed(o: BuildInput): GtfsFeed {
     trips: [],
     stopTimes: [],
     services: new Map(),
-    info: { publisher: "EuroTrainBusMap (generated from the redvoznje.ba API, CC BY 4.0)", publisherUrl: SITE_URL, lang: "bs", sourceUrl: SITE_URL },
+    info: {
+      publisher: "EuroTrainBusMap (generated from the redvoznje.ba API, CC BY 4.0)",
+      publisherUrl: SITE_URL,
+      lang: "bs",
+      sourceUrl: SITE_URL,
+      ...(until ? { stale: { until, reason: `data out of date: ${oldest}` } } : {}),
+    },
   };
   const agencyIds = new Map<string, string>();
   const agency = (name: string) => {
@@ -725,9 +745,9 @@ export function buildFeed(o: BuildInput): GtfsFeed {
   let idle = 0;
   const sorted = [...lines].sort((a, b) => a.calls[0]!.name.localeCompare(b.calls[0]!.name) || a.calls[0]!.t - b.calls[0]!.t || a.operator.localeCompare(b.operator) || a.calls.length - b.calls.length);
   for (const l of sorted) {
-    // service days: the mask within the build window, up to MAX_SOURCE_AGE_DAYS after the source was confirmed
-    const until = addDays(o.health.sources.get(l.source)!, MAX_SOURCE_AGE_DAYS);
-    const last = until < win.to ? until : win.to;
+    // service days: the mask within the window, up to MAX_SOURCE_AGE_DAYS after the source was confirmed
+    const valid = addDays(o.health.sources.get(l.source)!, MAX_SOURCE_AGE_DAYS);
+    const last = valid < win.to ? valid : win.to;
     const dates = win.from <= last ? dateRange(win.from, last).filter((d) => l.days[isoWeekday(d)] === "1") : [];
     if (!dates.length) {
       idle++;
@@ -780,11 +800,11 @@ export default defineGenerator({
   id: "ba-redvoznje",
   description: "Intercity buses of Bosnia and Herzegovina from the redvoznje.ba JSON API (CC BY 4.0): the full runs (lines) of the pair files, deduplicated, with coordinates.",
   sourceUrl: SITE_URL,
-  generate: (ctx: GeneratorContext) => generateFrom(ctx, new Date().toISOString().slice(0, 10)),
+  generate: (ctx: GeneratorContext) => generateFrom(ctx),
 });
 
-/** The generator's run with an explicit date for the staleness rules (tests). */
-export async function generateFrom(ctx: GeneratorContext, today: string, minLines = MIN_LINES): Promise<GtfsFeed> {
+/** The generator's run (tests: fewer lines suffice). */
+export async function generateFrom(ctx: GeneratorContext, minLines = MIN_LINES): Promise<GtfsFeed> {
   const cache = new Map<string, Promise<unknown>>();
   // every URL once per run; a JSON answer must end with its closing brace (a cut-off answer is retried)
   const getJson = (path: string) => {
@@ -803,7 +823,7 @@ export async function generateFrom(ctx: GeneratorContext, today: string, minLine
     return p;
   };
   checkIndex(await getJson(".json"));
-  const health = parseHealth(await getJson("/health.json"), today);
+  const health = parseHealth(await getJson("/health.json"));
   const stations = parseStations(await getJson("/stations.json"));
   const operators = parseOperators(await getJson("/operators.json"));
   ctx.log(`data last confirmed ${health.dataLastConfirmed} (${[...health.sources].map(([s, d]) => `${s} ${d}`).join(", ")}), ${stations.size} station boards`);
@@ -811,5 +831,5 @@ export async function generateFrom(ctx: GeneratorContext, today: string, minLine
   const files = [...new Set(boards.flat())].sort();
   ctx.log(`${files.length} pair files from the boards`);
   const pairs = await pool(files, CONCURRENCY, async (f) => parsePair(await getJson(f), f));
-  return buildFeed({ health, stations, operators, pairs, today, startDate: ctx.startDate, days: ctx.days, minLines, warn: ctx.warn, log: ctx.log });
+  return buildFeed({ health, stations, operators, pairs, startDate: ctx.startDate, days: ctx.days, minLines, warn: ctx.warn, log: ctx.log });
 }
