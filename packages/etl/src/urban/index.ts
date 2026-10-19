@@ -26,6 +26,8 @@ export interface UrbanOptions {
   work: string;
   assets: string;
   startDate: string;
+  /** Cap on stale feeds (gtfs/validity.ts; default feeds.json staleMaxDays). */
+  staleMaxDays?: number;
   /** intercity stations (urban stops at them get no dot of their own) */
   stations: { lon: number; lat: number; name?: string }[];
   licenses?: unknown[];
@@ -49,7 +51,7 @@ export async function writeUrbanLayer(o: UrbanOptions): Promise<UrbanResult> {
   const log = o.log ?? defaultLog;
   const cfg = await loadFeedsConfig(join(here, "../../feeds.json"));
   const urbanFeeds = await loadUrbanFeedDefs();
-  const gathered = await gatherFeeds({ cfg, urbanFeeds, workDir: o.work, assetsDir: o.assets, startDate: o.startDate, download: true });
+  const gathered = await gatherFeeds({ cfg, urbanFeeds, workDir: o.work, assetsDir: o.assets, startDate: o.startDate, download: true, staleMaxDays: o.staleMaxDays ?? cfg.staleMaxDays });
   const feeds = gathered.feeds;
   const cities = gathered.cities;
   log(`urban: ${feeds.length} feeds with local lines`);
@@ -83,6 +85,7 @@ async function addAttribution(buildDir: string, feeds: UrbanFeed[], defs: FeedDe
   for (const e of licenses as LicenseEntry[]) if (e.filename) lic.set(e.filename, e);
   const have = new Set(att.sources.map((s) => s.name));
   const used = new Set(feeds.map((x) => x.key));
+  const expired = new Map(feeds.filter((x) => x.expired).map((x) => [x.key, x.expired!]));
   for (const d of defs) {
     if (!used.has(d.id) || have.has(d.name)) continue;
     const tf = d.sources.map((s) => ("transitous" in s ? s.transitous : "")).find(Boolean);
@@ -92,6 +95,7 @@ async function addAttribution(buildDir: string, feeds: UrbanFeed[], defs: FeedDe
       license: e?.spdx_license_identifier ?? (e?.license_url ? "see terms" : d.license ?? "see source"),
       ...(e?.license_url ?? e?.publisher?.url ?? d.licenseUrl ? { url: (e?.license_url ?? e?.publisher?.url ?? d.licenseUrl)! } : {}),
       ...(e?.publisher?.name && !d.name.toLowerCase().includes(e.publisher.name.toLowerCase()) ? { attribution: e.publisher.name } : {}),
+      ...(expired.has(d.id) ? { expired: expired.get(d.id)! } : {}),
     };
     att.sources.push(src);
   }

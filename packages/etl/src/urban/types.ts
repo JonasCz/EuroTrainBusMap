@@ -49,6 +49,11 @@ export interface UrbanFeed {
   lines: UrbanLine[];
   stops: UrbanStop[];
   stats: { routes: number; kept: number; shaped: number; dropped: Record<string, number> };
+  /**
+   * The feed's service ended on this day (a stale feed within the cap, gtfs/validity.ts): its lines were read from its
+   * last weeks and carry the date (tile property `e`, "Timetables out of date" in the popup). Set per build, not cached.
+   */
+  expired?: string;
 }
 
 /** Bump when the extraction changes (invalidates cached feeds). */

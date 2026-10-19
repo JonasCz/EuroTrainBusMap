@@ -226,6 +226,13 @@ export interface Route {
   src?: string;
   /** When the ETL read that page (ISO time, UTC, e.g. "2026-10-19T17:53:12Z"): shown with the link ("retrieved 19 Oct 2026"). */
   srcAt?: string;
+  /**
+   * The timetable of this route's feed is out of date: its service ended on this day (YYYY-MM-DD) – a feed that ran
+   * out, or a generated feed whose source page is stale. The ETL keeps such a feed (within a cap, see
+   * packages/etl/src/gtfs/validity.ts) by repeating its last weekly pattern over the build window; the app shows
+   * "Timetables out of date — expired 15 Jul 2025" wherever the route appears.
+   */
+  expired?: string;
 }
 
 /**
@@ -337,8 +344,12 @@ export interface CityShardFile {
 }
 
 export interface AttributionFile {
-  /** `retrieved`: when the ETL read a source it generates a feed from (ISO time, UTC; generated feeds only). */
-  sources: { name: string; license: string; url?: string; attribution?: string; retrieved?: string }[];
+  /**
+   * `retrieved`: when the ETL read a source it generates a feed from (ISO time, UTC; generated feeds only).
+   * `expired`: the source's timetable ran out on this day (YYYY-MM-DD; its last pattern is repeated, see Route.expired);
+   * `expiredParts`: for a source of several files of which only some are out of date, their names.
+   */
+  sources: { name: string; license: string; url?: string; attribution?: string; retrieved?: string; expired?: string; expiredParts?: string[] }[];
 }
 
 /** StopLimit bits of stop `i` of a pattern (`limits`: Pattern.limits). */

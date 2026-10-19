@@ -68,7 +68,7 @@ export interface BuildCtx {
   feeds: ResolvedFeed[];
   feedStats: FeedLoadStats[];
   failed: string[];
-  /** Feeds skipped because their service ended before the build's first day (gtfs/validity.ts). */
+  /** Feeds skipped because their service ended more than staleMaxDays before the build's first day (gtfs/validity.ts). */
   expired?: { key: string; reason: string }[];
   /** Outcome of the feed generators (packages/etl/generators); empty with --reuse-db. */
   generated?: GeneratorReport[];
@@ -109,7 +109,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const D = args.days;
   const startDay = isoToEpochDay(args.startDate);
   const stats: Record<string, number> = {};
-  const report: Record<string, unknown> = { args: { ...args }, feeds: ctx.feedStats, failedFeeds: ctx.failed, expiredFeeds: ctx.expired ?? [], ...(ctx.generated?.length ? { generated: ctx.generated } : {}) };
+  const report: Record<string, unknown> = { args: { ...args }, feeds: ctx.feedStats, failedFeeds: ctx.failed, expiredFeeds: ctx.expired ?? [], staleFeeds: ctx.feedStats.filter((f) => f.expired).map((f) => ({ key: f.key, expired: f.expired, trips: f.trips })), ...(ctx.generated?.length ? { generated: ctx.generated } : {}) };
 
   // ------------------------------------------------------------------ categories
   timer.start("categories");
@@ -448,9 +448,12 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const timetableUrl = new Map<number, string>();
   // when the generator read that page (the generated zip's feed_info feed_version → Route.srcAt)
   const retrievedAt = new Map<number, string>();
+  // last service day of a stale feed whose pattern the loader projected onto the window (gtfs/validity.ts → Route.expired)
+  const feedExpired = new Map<number, string>();
   /** feed number → the feed as the operator adapters see it */
   const feedRef = new Map<number, FeedRef>();
-  for (const r of await db.all<{ feed: number; key: string; id: string; country: string }>(`SELECT feed, key, id, country FROM feeds ORDER BY feed`)) {
+  for (const r of await db.all<{ feed: number; key: string; id: string; country: string; expired: string | null }>(`SELECT feed, key, id, country, expired FROM feeds ORDER BY feed`)) {
+    if (r.expired) feedExpired.set(r.feed, r.expired);
     const def = ctx.feeds.find((f) => f.key === r.key)?.def;
     const name = def?.options?.agencyName;
     if (name) agencyOverride.set(r.feed, name);
@@ -509,6 +512,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
         cities: r.nc,
         duration: r.dur,
         priority: feedPriority.get(tFeed[k]!) ?? 0,
+        stale: feedExpired.has(tFeed[k]!),
         mask: svcMask.get(tSvc[k]!) ?? newMask(DI),
         number: tShort[k] ?? (rc ? displayName(rc.short, rc.long, "", rc.agency).number : null),
       });
@@ -779,7 +783,8 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     const ex = cfg.operators?.routeExtras({ feed: feedRef.get(rc.feed)!, agency: rc.agency, name: dn.name, short: rc.short, long: rc.long, cat, routeType: rc.routeType }) ?? {};
     const src = timetableUrl.get(rc.feed);
     const srcAt = src ? retrievedAt.get(rc.feed) : undefined;
-    const rkey = `${dn.name}\u0001${rc.agency}\u0001${cat}\u0001${flags}\u0001${color ?? ""}\u0001${ex.brand ?? ""}\u0001${src ?? ""}\u0001${srcAt ?? ""}`;
+    const expired = feedExpired.get(rc.feed);
+    const rkey = `${dn.name}\u0001${rc.agency}\u0001${cat}\u0001${flags}\u0001${color ?? ""}\u0001${ex.brand ?? ""}\u0001${src ?? ""}\u0001${srcAt ?? ""}\u0001${expired ?? ""}`;
     let route = routeIndex.get(rkey);
     if (route === undefined) {
       route = routes.length;
@@ -788,6 +793,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       if (ex.brand) r.brand = ex.brand;
       if (src) r.src = src;
       if (srcAt) r.srcAt = srcAt;
+      if (expired) r.expired = expired;
       routes.push(r);
       routeHs.push(cat !== Cat.Bus && cat !== Cat.Coach && isHighSpeedService({ routeType: rc.routeType, agency: rc.agency, names: [rc.pname ?? "", rc.short, rc.long, dn.name, tShort[tk] ?? ""], highSpeed: ex.highSpeed }));
       routeIndex.set(rkey, route);
@@ -1204,7 +1210,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   if (args.transit) {
     timer.start("transit");
     try {
-      const tfeeds = await gatherTransitFeeds({ cfg, urbanFeeds: await loadUrbanFeedDefs(), workDir: args.work, assetsDir: args.assets, startDate: args.startDate, download: true, log });
+      const tfeeds = await gatherTransitFeeds({ cfg, urbanFeeds: await loadUrbanFeedDefs(), workDir: args.work, assetsDir: args.assets, startDate: args.startDate, download: true, staleMaxDays: args.staleMaxDays, log });
       const tr = computeTransit(tfeeds, outCities, outStations, log);
       transitByCity = tr.byCity;
       Object.assign(transitStats, tr.stats);
@@ -1480,7 +1486,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   if (args.urban) {
     timer.start("urban");
     try {
-      const ur = await writeUrbanLayer({ buildDir: outDir, work: args.work, assets: args.assets, startDate: args.startDate, stations: network.stations, licenses: ctx.licenses, log });
+      const ur = await writeUrbanLayer({ buildDir: outDir, work: args.work, assets: args.assets, startDate: args.startDate, staleMaxDays: args.staleMaxDays, stations: network.stations, licenses: ctx.licenses, log });
       urbanInfo = ur.info;
       urbanStats = ur.stats;
       totalBytes += ur.bytes;
@@ -1503,6 +1509,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
     feeds: ctx.feedStats.filter((f) => f.trips > 0).length,
     feedsFailed: ctx.failed.length,
     feedsExpired: ctx.expired?.length ?? 0,
+    feedsStale: ctx.feedStats.filter((f) => f.expired && f.trips > 0).length,
     cities: outCities.length,
     stations: outStations.length,
     corridors: outCorr.length,
@@ -1637,6 +1644,7 @@ function buildAttribution(ctx: BuildCtx): AttributionFile {
   const lic = new Map<string, LicenseEntry>();
   for (const e of ctx.licenses as LicenseEntry[]) if (e.filename) lic.set(e.filename, e);
   const used = new Set(ctx.feedStats.filter((f) => f.trips > 0).map((f) => f.key));
+  const expiredOf = new Map(ctx.feedStats.filter((f) => f.trips > 0 && f.expired).map((f) => [f.key, f.expired!]));
   const sources: AttributionFile["sources"] = [];
   const seen = new Set<string>();
   for (const rf of ctx.feeds) {
@@ -1654,6 +1662,13 @@ function buildAttribution(ctx: BuildCtx): AttributionFile {
       : { name: rf.def.name, license: rf.def.license ?? "see source", url: rf.def.timetableUrl ?? rf.def.licenseUrl, attribution: rf.def.attribution };
     const retrieved = rf.generator ? generatedRetrievedAt(ctx, rf.key) : null;
     if (retrieved) src.retrieved = retrieved;
+    // stale files of the feed (gtfs/validity.ts): the earliest expiry; for a feed of several files, which ones
+    const files = ctx.feeds.filter((f) => f.def.id === rf.def.id && used.has(f.key));
+    const stale = files.filter((f) => expiredOf.has(f.key));
+    if (stale.length) {
+      src.expired = stale.map((f) => expiredOf.get(f.key)!).sort()[0];
+      if (stale.length < files.length) src.expiredParts = stale.map((f) => (f.transitousFile ?? f.key).replace(/\.gtfs\.zip$/, "").replace(/^[a-z]{2}_/, ""));
+    }
     if (!src.url) delete src.url;
     if (!src.attribution || rf.def.name.toLowerCase().includes(src.attribution.toLowerCase())) delete src.attribution;
     sources.push(src);

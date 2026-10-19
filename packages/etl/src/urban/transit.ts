@@ -21,7 +21,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import { Cat, TRANSIT_BANDS, TRANSIT_MAX_M, TRANSIT_MAX_MIN, transitUseful, walkMinutes, type TransitPair } from "@etbm/shared";
 import { Db } from "../db.ts";
 import { downloadWithFallback } from "../download.ts";
-import { zipExpired } from "../gtfs/validity.ts";
+import { STALE_MAX_DAYS, zipState } from "../gtfs/validity.ts";
 import { resolveFeeds, type FeedDef, type FeedsConfig, type ResolvedFeed } from "../feeds.ts";
 import { loadPlaces } from "../geonames.ts";
 import { fastDist } from "../util/geo.ts";
@@ -466,6 +466,8 @@ export interface GatherTransitOptions {
   assetsDir: string;
   startDate: string;
   download: boolean;
+  /** Cap on stale feeds (gtfs/validity.ts; default STALE_MAX_DAYS). */
+  staleMaxDays?: number;
   log?: (m: string) => void;
 }
 
@@ -500,8 +502,9 @@ export async function gatherTransitFeeds(o: GatherTransitOptions): Promise<Trans
         continue;
       }
     }
-    // a feed whose service has ended is left out (gtfs/validity.ts; warned by the main stage and the local layer)
-    if (await zipExpired(zip, o.startDate)) continue;
+    // a feed whose service ended more than staleMaxDays ago is left out (gtfs/validity.ts; warned by the main stage and
+    // the local layer); a stale one within the cap is read for its last whole week (extractTransitFeed)
+    if ((await zipState(zip, o.startDate, o.staleMaxDays ?? STALE_MAX_DAYS)).kind === "too-old") continue;
     const st = await stat(zip);
     const cacheFile = join(outDir, `${rf.key}.json.gz`);
     const stamp = `${st.size}:${TRANSIT_EXTRACT_VERSION}:${monday}:${TRANSIT_CITY_MIN_POP}`;

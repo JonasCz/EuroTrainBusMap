@@ -12,9 +12,11 @@ import { StopLimit } from "@etbm/shared";
 import { BBOX } from "../geonames.ts";
 import { OperatorConflictError, type FeedOperators } from "../operators/registry.ts";
 import type { LoadApi, OperatorAdapter } from "../operators/types.ts";
+import { pickReferenceDays, projectionDays, referenceWindow, isoWeekdayOf, type RefDay } from "./validity.ts";
+import { epochDayToIso, isoToEpochDay } from "../core/time.ts";
 
 /** Version of what the loader stores: part of the --reuse-db key, so a database loaded by an older loader is reloaded. */
-export const LOAD_VERSION = 3;
+export const LOAD_VERSION = 4;
 
 export interface LoadContext {
   db: Db;
@@ -37,12 +39,14 @@ export interface FeedLoadStats {
   droppedShortBus: number;
   byCat: Record<string, number>;
   seconds: number;
+  /** Last service day of a stale feed whose pattern was projected onto the build window (gtfs/validity.ts). */
+  expired?: string;
 }
 
 /** Create the global tables. */
 export async function initSchema(db: Db): Promise<void> {
   await db.run(`
-    CREATE TABLE IF NOT EXISTS feeds(feed INTEGER, key VARCHAR, id VARCHAR, country VARCHAR, priority INTEGER, file VARCHAR);
+    CREATE TABLE IF NOT EXISTS feeds(feed INTEGER, key VARCHAR, id VARCHAR, country VARCHAR, priority INTEGER, file VARCHAR, expired VARCHAR);
     CREATE TABLE IF NOT EXISTS rclass(rc INTEGER, feed INTEGER, cls VARCHAR, cat INTEGER, flags INTEGER, agency VARCHAR,
       route_short VARCHAR, route_long VARCHAR, color VARCHAR, tz VARCHAR, route_type INTEGER, route_id VARCHAR, pname VARCHAR);
     CREATE TABLE IF NOT EXISTS trips(trip_key INTEGER, feed INTEGER, rc INTEGER, service_key INTEGER, headsign VARCHAR,
@@ -97,7 +101,17 @@ export function c(cols: Map<string, string>, name: string, fallback = "NULL::VAR
   return q ? `nullif(trim(${alias ? alias + "." : ""}${q}), '')` : fallback;
 }
 
-export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFeed, zipPath: string): Promise<FeedLoadStats> {
+/** A stale feed (gtfs/validity.ts): its last service day and first service day (when known). */
+export interface StaleInfo {
+  end: string;
+  from: string | null;
+}
+
+/**
+ * Load one feed. `stale`: the feed's service ended before the build window (gtfs/validity.ts); its last service
+ * pattern is projected onto the window (see projectStale) and the feed is marked with its expiry date.
+ */
+export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFeed, zipPath: string, stale?: StaleInfo): Promise<FeedLoadStats> {
   const t0 = Date.now();
   const { db, cfg } = ctx;
   const def = rf.def;
@@ -105,7 +119,7 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
   const dir = join(ctx.tmpDir, `feed-${feedIdx}`);
   await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true });
-  const stats: FeedLoadStats = { key: rf.key, routes: 0, trips: 0, stopTimes: 0, stops: 0, droppedShortBus: 0, byCat: {}, seconds: 0 };
+  const stats: FeedLoadStats = { key: rf.key, routes: 0, trips: 0, stopTimes: 0, stops: 0, droppedShortBus: 0, byCat: {}, seconds: 0, ...(stale ? { expired: stale.end } : {}) };
 
   const entries = listZip(zipPath);
   const find = (name: string) =>
@@ -121,7 +135,7 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
     return stats;
   }
   await db.run(
-    `INSERT INTO feeds VALUES (${feedIdx}, ${sqlStr(rf.key)}, ${sqlStr(def.id)}, ${sqlStr(def.country)}, ${opts.priority ?? 0}, ${sqlStr(rf.transitousFile ?? "")})`,
+    `INSERT INTO feeds VALUES (${feedIdx}, ${sqlStr(rf.key)}, ${sqlStr(def.id)}, ${sqlStr(def.country)}, ${opts.priority ?? 0}, ${sqlStr(rf.transitousFile ?? "")}, ${stale ? sqlStr(stale.end) : "NULL"})`,
   );
 
   /** columns of the feed's GTFS files (operator adapters' onLoad hooks) */
@@ -163,30 +177,9 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
     FROM ${csv(files["trips.txt"])} WHERE ${c(tc, "trip_id")} IS NOT NULL`);
 
   // ---------- calendars → service days within horizon ----------
-  const start = ctx.startDate;
   await db.run(`DROP TABLE IF EXISTS t_svcdays; CREATE TEMP TABLE t_svcdays(service_id VARCHAR, day INTEGER)`);
-  if (files["calendar.txt"]) {
-    const cc = await columns(db, files["calendar.txt"]);
-    const wd = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((d) => `coalesce(${c(cc, d)}, '0')`);
-    await db.run(`INSERT INTO t_svcdays
-      SELECT service_id, i FROM (
-        SELECT ${c(cc, "service_id")} AS service_id, [${wd.join(", ")}] AS w,
-          try_strptime(${c(cc, "start_date")}, '%Y%m%d')::DATE AS s, try_strptime(${c(cc, "end_date")}, '%Y%m%d')::DATE AS e
-        FROM ${csv(files["calendar.txt"])}
-      ) cal, range(-1, ${ctx.days + 1}) r(i)
-      WHERE (DATE '${start}' + i::INTEGER) BETWEEN s AND e AND w[isodow(DATE '${start}' + i::INTEGER)] = '1'`);
-  }
-  if (files["calendar_dates.txt"]) {
-    const dc = await columns(db, files["calendar_dates.txt"]);
-    await db.run(`DROP TABLE IF EXISTS t_ex; CREATE TEMP TABLE t_ex AS SELECT * FROM (
-        SELECT ${c(dc, "service_id")} AS service_id,
-          (try_strptime(${c(dc, "date")}, '%Y%m%d')::DATE - DATE '${start}')::INTEGER AS day,
-          try_cast(${c(dc, "exception_type")} AS INTEGER) AS t
-        FROM ${csv(files["calendar_dates.txt"])}) WHERE day BETWEEN -1 AND ${ctx.days}`);
-    await db.run(`DELETE FROM t_svcdays WHERE (service_id, day) IN (SELECT (service_id, day) FROM t_ex WHERE t = 2)`);
-    await db.run(`INSERT INTO t_svcdays SELECT DISTINCT service_id, day FROM t_ex WHERE t = 1
-                  EXCEPT SELECT service_id, day FROM t_svcdays`);
-  }
+  if (!stale) await expandCalendars(db, files, ctx.startDate, -1, ctx.days, "t_svcdays");
+  else await projectStale(db, rf.key, files, ctx, stale);
 
   // ---------- classification per (route, trip prefix) ----------
   const combos = await db.all<{
@@ -444,6 +437,67 @@ export async function loadFeed(ctx: LoadContext, feedIdx: number, rf: ResolvedFe
   return stats;
 }
 
+
+/**
+ * Service days of the feed's calendar.txt / calendar_dates.txt (extracted files) as (service_id, day) rows of `table`,
+ * day = days after `base` (YYYY-MM-DD), for the days `from` … `to`.
+ */
+async function expandCalendars(db: Db, files: Record<string, string | null>, base: string, from: number, to: number, table: string): Promise<void> {
+  if (files["calendar.txt"]) {
+    const cc = await columns(db, files["calendar.txt"]);
+    const wd = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((d) => `coalesce(${c(cc, d)}, '0')`);
+    await db.run(`INSERT INTO ${table}
+      SELECT service_id, i FROM (
+        SELECT ${c(cc, "service_id")} AS service_id, [${wd.join(", ")}] AS w,
+          try_strptime(${c(cc, "start_date")}, '%Y%m%d')::DATE AS s, try_strptime(${c(cc, "end_date")}, '%Y%m%d')::DATE AS e
+        FROM ${csv(files["calendar.txt"])}
+      ) cal, range(${from}, ${to + 1}) r(i)
+      WHERE (DATE '${base}' + i::INTEGER) BETWEEN s AND e AND w[isodow(DATE '${base}' + i::INTEGER)] = '1'`);
+  }
+  if (files["calendar_dates.txt"]) {
+    const dc = await columns(db, files["calendar_dates.txt"]);
+    await db.run(`DROP TABLE IF EXISTS t_ex; CREATE TEMP TABLE t_ex AS SELECT * FROM (
+        SELECT ${c(dc, "service_id")} AS service_id,
+          (try_strptime(${c(dc, "date")}, '%Y%m%d')::DATE - DATE '${base}')::INTEGER AS day,
+          try_cast(${c(dc, "exception_type")} AS INTEGER) AS t
+        FROM ${csv(files["calendar_dates.txt"])}) WHERE day BETWEEN ${from} AND ${to}`);
+    await db.run(`DELETE FROM ${table} WHERE (service_id, day) IN (SELECT (service_id, day) FROM t_ex WHERE t = 2)`);
+    await db.run(`INSERT INTO ${table} SELECT DISTINCT service_id, day FROM t_ex WHERE t = 1
+                  EXCEPT SELECT service_id, day FROM ${table}`);
+  }
+}
+
+/**
+ * A stale feed's service days: its calendars are read over its last weeks (referenceWindow), per weekday the typical
+ * day is chosen (pickReferenceDays: the most common set of services, so holidays are outvoted) and every day of the
+ * build window gets the services of the reference day of its weekday. Needs t_trips (trips per service).
+ */
+async function projectStale(db: Db, key: string, files: Record<string, string | null>, ctx: LoadContext, stale: StaleInfo): Promise<void> {
+  const win = referenceWindow(stale.end, stale.from);
+  await db.run(`DROP TABLE IF EXISTS t_refdays; CREATE TEMP TABLE t_refdays(service_id VARCHAR, day INTEGER)`);
+  await expandCalendars(db, files, win.from, 0, win.days - 1, "t_refdays");
+  const rows = await db.all<{ day: number; trips: number; sig: string | null }>(`
+    SELECT r.day, count(t.trip_id)::INTEGER AS trips, md5(string_agg(DISTINCT r.service_id, ',' ORDER BY r.service_id)) AS sig
+    FROM t_refdays r JOIN t_trips t USING (service_id) GROUP BY r.day ORDER BY r.day`);
+  const byDay = new Map(rows.map((r) => [r.day, r]));
+  const days: RefDay[] = [];
+  const base = isoToEpochDay(win.from);
+  for (let d = 0; d < win.days; d++) {
+    const r = byDay.get(d);
+    days.push({ offset: d, weekday: isoWeekdayOf(epochDayToIso(base + d)), trips: r?.trips ?? 0, sig: r?.sig ?? "" });
+  }
+  const picks = pickReferenceDays(days);
+  const map = projectionDays(ctx.startDate, -1, ctx.days, win.from, picks);
+  await db.run(`DROP TABLE IF EXISTS t_projmap; CREATE TEMP TABLE t_projmap(i INTEGER, src INTEGER)`);
+  if (map.length) await db.run(`INSERT INTO t_projmap VALUES ${map.map(([i, p]) => `(${i}, ${p})`).join(", ")}`);
+  await db.run(`INSERT INTO t_svcdays SELECT DISTINCT r.service_id, m.i FROM t_refdays r JOIN t_projmap m ON m.src = r.day`);
+  await db.run(`DROP TABLE IF EXISTS t_refdays; DROP TABLE IF EXISTS t_projmap`);
+  const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  log(
+    `feed ${key}: out of date since ${stale.end}, its service of ${win.from} … ${stale.end} is projected onto the build window ` +
+      `(${picks.map((p, i) => `${names[i]} ${p === null ? "-" : epochDayToIso(base + p).slice(5)}`).join(", ")})`,
+  );
+}
 
 /**
  * Stops of the trips of routes left to a dedicated operator's feed (`shadow`: route_id, trip prefix, tz) that carry

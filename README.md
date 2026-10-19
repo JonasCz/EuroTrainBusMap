@@ -36,16 +36,24 @@ Pipeline in short:
 
 1. **Feeds** – resolved from `feeds.json` (Transitous file names are looked up in its index, so
    year-suffixed names roll over automatically), downloaded with a custom User-Agent, 3 at a time,
-   ETag-cached in `work/cache`. A stale primary source falls back to the next URL. **Out-of-date feeds are skipped**
-   (`gtfs/validity.ts`): a feed whose last service day (calendar / calendar_dates) or `feed_info` end date lies before the
-   build's first day is not loaded, not used for the local layer or transit transfers and not credited (warning
-   "out of date …", `expiredFeeds` in the build report); it comes back by itself when its source publishes a new
-   timetable. Feeds that have ended for good are removed from `feeds.json` / `urban-feeds.json` instead.
+   ETag-cached in `work/cache`. A stale primary source falls back to the next URL. **Out-of-date feeds are kept and
+   labelled** (`gtfs/validity.ts`): a feed whose last service day (calendar / calendar_dates) or `feed_info` end date lies
+   before the build's first day is *stale*. Up to `staleMaxDays` (feeds.json, 730 days; `--stale-max-days`) after its
+   end it is loaded with its last service pattern projected onto the build window (per weekday the typical day of its
+   last six weeks, so holidays are outvoted), every route marked with the expiry date (`Route.expired`; "Timetables out
+   of date — expired 15 Jul 2025" on departures, trips, journey legs, local-line popups and in the data sources;
+   `staleFeeds` in the build report); in the dedup a current copy of a trip always wins. Older feeds are skipped
+   (warning "out of date …", `expiredFeeds`). Nothing is stored between builds: the projection is computed from the zip
+   every time, a feed becomes current again by itself when its source publishes a new timetable, and a source that
+   disappears or stops parsing drops out. See docs/data-sources.md §7.
    Operators that publish no GTFS get a **generated feed** (`packages/etl/generators/`, source `{ "generated": "<id>" }`
    in `feeds.json`): a script per source fetches the operator's timetable page, parses it strictly (known table
    structure, footnote texts mapped to hard-coded calendar rules, a check that the timetable is current) and writes a
    validated GTFS zip into the feed cache, which then goes through the normal pipeline. A generator that fails (page
-   changed, unknown footnote, stale data, network) is logged and its feed skipped; the build goes on without it. Its
+   changed, unknown footnote, network) is logged and its feed skipped; the build goes on without it. A source that
+   parses but is out of date (ŽFBiH page still on last year's timetable, redvoznje.ba not re-confirmed for 60 days)
+   gives a feed flagged stale (`info.stale`, its `feed_info` end date), which the build keeps and labels like an
+   expired GTFS feed. Its
    routes carry the source page and the time it was read (`Route.src`, `Route.srcAt`), shown as
    "Timetable: zfbh.ba · retrieved 19 Oct 2026" in the trip schedule and the journey legs (and in the data sources).
 2. **Load** – each zip is unzipped, filtered and loaded into a DuckDB file, then deleted. Kept:
@@ -411,7 +419,7 @@ pnpm --filter @etbm/etl run build-data -- --out work/out --subset core
 Useful flags: `--work <dir>` (cache/DuckDB, default `./work`), `--reuse-db` (skip download+load when
 inputs are unchanged – handy when iterating on later stages), `--no-geometry`, `--no-basemap`, `--no-urban`,
 `--assets <dir>` (default `work/assets`), `--extract-rail` (allow the slow Overture extraction locally),
-`--start YYYY-MM-DD`, `--days 60`. A build report (stats per stage/country, sanity checks) is written to
+`--start YYYY-MM-DD`, `--days 60`, `--stale-max-days N` (cap on stale feeds, default feeds.json `staleMaxDays`). A build report (stats per stage/country, sanity checks) is written to
 `<work>/build-report.json`.
 
 Without assets the ETL downloads GeoNames/Natural Earth itself; corridor geometry needs the rail and road graphs

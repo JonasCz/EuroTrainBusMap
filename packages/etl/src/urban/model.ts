@@ -19,6 +19,8 @@ export interface DrawnLine {
   stops: number[];
   /** Zoom from which the line is drawn. */
   lz: number;
+  /** Its feed is out of date since this day (UrbanFeed.expired; tile property `e`). */
+  expired?: string;
 }
 
 export interface UrbanStation {
@@ -113,8 +115,11 @@ export function samplePath(coords: LonLat[], stepM: number): LonLat[] {
  * two feeds, branches that are mostly covered by the main alignment. Alignments only count as repeats of
  * the same mode and name; the better geometry (shape > rail > road > stops) and then the longer alignment wins.
  */
-export function dedupeLines<T extends { mode: number; name: string; coords: LonLat[]; geom: UrbanPattern["geom"] }>(items: T[], coverM = 45, share = 0.85): T[] {
-  const order = items.map((_, i) => i).sort((a, b) => GEOM_RANK[items[a]!.geom] - GEOM_RANK[items[b]!.geom] || pathLen(items[b]!.coords) - pathLen(items[a]!.coords));
+export function dedupeLines<T extends { mode: number; name: string; coords: LonLat[]; geom: UrbanPattern["geom"]; expired?: string }>(items: T[], coverM = 45, share = 0.85): T[] {
+  // a line from a current feed before one from a stale feed (UrbanFeed.expired), then by geometry quality and length
+  const order = items
+    .map((_, i) => i)
+    .sort((a, b) => Number(!!items[a]!.expired) - Number(!!items[b]!.expired) || GEOM_RANK[items[a]!.geom] - GEOM_RANK[items[b]!.geom] || pathLen(items[b]!.coords) - pathLen(items[a]!.coords));
   const occupied = new Map<string, PointGrid>();
   const kept: number[] = [];
   const cell = coverM * 2;
@@ -210,7 +215,7 @@ export function buildUrban(feeds: UrbanFeed[], intercity: { lon: number; lat: nu
     for (const l of f.lines)
       for (const p of l.patterns) {
         if (p.coords.length < 2) continue;
-        items.push({ mode: l.mode, name: l.name, desc: l.desc, agency: l.agency, color: readableColor(l.color), tpd: l.tpd, coords: p.coords, geom: p.geom, stops: p.stops.map((s) => stopBase[fi]! + s), lz: lineZoom(l.mode, l.tpd), fi });
+        items.push({ mode: l.mode, name: l.name, desc: l.desc, agency: l.agency, color: readableColor(l.color), tpd: l.tpd, coords: p.coords, geom: p.geom, stops: p.stops.map((s) => stopBase[fi]! + s), lz: lineZoom(l.mode, l.tpd), fi, ...(f.expired ? { expired: f.expired } : {}) });
         for (const s of p.stops) {
           const g = stopBase[fi]! + s;
           stopMode[g]! |= 1 << l.mode;

@@ -9,7 +9,7 @@ import { loadPlaces } from "../geonames.ts";
 import { log, warn } from "../util/log.ts";
 import { cityDiscs, DiscIndex } from "./classify.ts";
 import { extractFeed } from "./extract.ts";
-import { zipExpired } from "../gtfs/validity.ts";
+import { STALE_MAX_DAYS, zipState } from "../gtfs/validity.ts";
 import { EXTRACT_VERSION, type UrbanFeed } from "./types.ts";
 
 /** Cities from this population on count for bus lines. */
@@ -29,6 +29,8 @@ export interface GatherOptions {
   download: boolean;
   only?: string[];
   maxAgeH?: number;
+  /** Cap on stale feeds (gtfs/validity.ts; default STALE_MAX_DAYS). */
+  staleMaxDays?: number;
 }
 
 /** Wednesday at least a week after `start`: a typical weekday inside the calendar horizon. */
@@ -36,6 +38,14 @@ export function refWeekday(start: string): string {
   const d = new Date(start + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + 7);
   while (d.getUTCDay() !== 3) d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/** A stale feed's reference day: the Wednesday of the last full week before its end (`end`: its last service day). */
+export function staleRefWeekday(end: string): string {
+  const d = new Date(end + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - 7);
+  while (d.getUTCDay() !== 3) d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
 }
 
@@ -86,15 +96,18 @@ export async function gatherFeeds(o: GatherOptions): Promise<{ feeds: UrbanFeed[
     while (nextDl < todo.length && nextDl < i + 4) startDl(todo[nextDl++]!.rf);
     const zip = await dl.get(rf.key);
     if (!zip) continue;
-    // a feed whose service has ended is left out (gtfs/validity.ts; the main stage warns for its own feeds)
-    const outOfDate = await zipExpired(zip, o.startDate);
-    if (outOfDate) {
-      if (extraKeys.has(rf.key)) warn(`urban feed ${rf.key}: out of date (${outOfDate}), skipped`);
+    // a feed whose service has ended is read on a weekday of its last weeks and its lines are marked out of date;
+    // one that ended more than staleMaxDays ago is left out (gtfs/validity.ts; the main stage warns for its own feeds)
+    const state = await zipState(zip, o.startDate, o.staleMaxDays ?? STALE_MAX_DAYS);
+    if (state.kind === "too-old") {
+      if (extraKeys.has(rf.key)) warn(`urban feed ${rf.key}: out of date (${state.reason}), skipped`);
       continue;
     }
+    if (state.kind === "stale" && extraKeys.has(rf.key)) warn(`urban feed ${rf.key}: out of date (${state.reason}): kept, its lines read from ${staleRefWeekday(state.end)} and labelled`);
+    const ref = state.kind === "stale" ? staleRefWeekday(state.end) : refDate;
     const st = await stat(zip);
     const cacheFile = join(outDir, "feeds", `${rf.key}.json.gz`);
-    const stamp = `${st.size}:${EXTRACT_VERSION}:${refDate}:${BUS_CITY_MIN_POP}`;
+    const stamp = `${st.size}:${EXTRACT_VERSION}:${ref}:${BUS_CITY_MIN_POP}`;
     let feed: UrbanFeed | null = null;
     if (existsSync(cacheFile)) {
       try {
@@ -106,12 +119,12 @@ export async function gatherFeeds(o: GatherOptions): Promise<{ feeds: UrbanFeed[
     }
     if (!feed) {
       const t0 = Date.now();
-      feed = await extractFeed(db, rf.key, zip, { refDate, coachRe, cityIdx, tmpDir });
+      feed = await extractFeed(db, rf.key, zip, { refDate: ref, coachRe, cityIdx, tmpDir });
       if (feed) await writeFile(cacheFile, gzipSync(JSON.stringify({ ...feed, stamp })));
       else await writeFile(cacheFile, gzipSync(JSON.stringify({ key: rf.key, version: EXTRACT_VERSION, lines: [], stops: [], stats: { routes: 0, kept: 0, shaped: 0, dropped: {} }, stamp })));
       if (feed) log(`urban ${rf.key}: ${feed.lines.length} lines (${feed.stats.shaped} shaped patterns), ${feed.stops.length} stops, ${feed.stats.routes} candidate routes, ${JSON.stringify(feed.stats.dropped)} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     }
-    if (feed && feed.lines.length) result.push({ ...feed, key: rf.key });
+    if (feed && feed.lines.length) result.push({ ...feed, key: rf.key, ...(state.kind === "stale" ? { expired: state.end } : {}) });
   }
   db.close();
   return { feeds: result, cities: cityIdx };

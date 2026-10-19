@@ -25,6 +25,7 @@ export function lineFeature(l: DrawnLine): Feature {
   if (l.desc) p.d = l.desc;
   if (l.tpd) p.t = Math.round(l.tpd);
   if (l.geom !== "shape") p.g = l.geom === "stops" ? 3 : l.geom === "road" ? 2 : 1;
+  if (l.expired) p.e = l.expired;
   return { type: "Feature", properties: p, geometry: { type: "LineString", coordinates: l.coords } };
 }
 

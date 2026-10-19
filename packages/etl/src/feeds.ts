@@ -92,6 +92,12 @@ export interface FeedsConfig {
   userAgent: string;
   transitousBase: string;
   minBusKm: number;
+  /**
+   * Cap on stale data in days (gtfs/validity.ts, default STALE_MAX_DAYS = 730): a feed whose service ended up to this
+   * long before the build is kept with its last pattern projected and labelled "out of date"; an older one is skipped.
+   * `--stale-max-days` overrides it.
+   */
+  staleMaxDays?: number;
   /** Operators with their own feed (from the operator adapters' `exclusive`; feeds.json may list more). */
   dedicatedOperators: DedicatedOperator[];
   coachOperators: string;

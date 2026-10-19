@@ -7,6 +7,8 @@ export interface DupTrip {
   /** Duration in minutes (first dep → last arr). */
   duration: number;
   priority: number;
+  /** From a stale feed (its last pattern projected onto the build window, gtfs/validity.ts): loses to any current copy. */
+  stale?: boolean;
   mask: Uint8Array;
   number?: string | null;
 }
@@ -20,6 +22,7 @@ export interface DupPair {
 
 /** Whether trip x is a better representative than y. */
 export function better(x: DupTrip, y: DupTrip): boolean {
+  if (!!x.stale !== !!y.stale) return !x.stale;
   if (x.cities !== y.cities) return x.cities > y.cities;
   if (x.duration !== y.duration) return x.duration > y.duration;
   if (x.priority !== y.priority) return x.priority > y.priority;
@@ -34,7 +37,8 @@ function digits(s: string | null | undefined): string | null {
 /**
  * Decide which trips to drop. Pairs must share ≥ 2 cities at matching times,
  * overlap in service days and (when both carry one) have the same train number.
- * The kept trip absorbs the dropped trip's service days. `keptFor` maps every dropped trip to the
+ * The kept trip absorbs the dropped trip's service days – except a current trip, which keeps its own calendar when
+ * the dropped copy comes from a stale feed (a projected calendar adds no real days). `keptFor` maps every dropped trip to the
  * trip that represents it.
  */
 export function resolveDuplicates(
@@ -61,6 +65,7 @@ export function resolveDuplicates(
     const [keep, drop] = better(a, b) ? [a, b] : [b, a];
     dropped.add(drop.key);
     redirect.set(drop.key, keep.key);
+    if (drop.stale && !keep.stale) continue;
     const m = extraMask.get(keep.key) ?? Uint8Array.from(keep.mask);
     const dm = extraMask.get(drop.key) ?? drop.mask;
     for (let i = 0; i < m.length; i++) m[i]! |= dm[i]!;

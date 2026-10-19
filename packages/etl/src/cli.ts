@@ -6,7 +6,7 @@ import { Db } from "./db.ts";
 import { downloadWithFallback, fetchText, mapLimit } from "./download.ts";
 import { loadFeedsConfig, resolveFeeds, type ResolvedFeed, type Tier } from "./feeds.ts";
 import { LOAD_VERSION, initSchema, loadFeed, type FeedLoadStats } from "./gtfs/load.ts";
-import { zipExpired } from "./gtfs/validity.ts";
+import { STALE_MAX_DAYS, zipState, type FeedState } from "./gtfs/validity.ts";
 import { runBuild } from "./build.ts";
 import { runGenerator } from "./generators/registry.ts";
 import type { GeneratorReport } from "./generators/types.ts";
@@ -36,6 +36,11 @@ export interface CliArgs {
   assets: string;
   /** Allow the slow Overture rail extraction when no rail asset is present. */
   extractRail: boolean;
+  /**
+   * Cap on stale data (gtfs/validity.ts): a feed whose service ended more than this many days before the build is
+   * skipped; within it, its last pattern is projected and labelled. Default: feeds.json `staleMaxDays`, else 730.
+   */
+  staleMaxDays?: number;
   /** Only export coach/bus stop-name review candidates (JSONL) and stop. */
   stopCandidates?: string;
 }
@@ -54,7 +59,8 @@ function parseArgs(argv: string[]): CliArgs {
   if (!out) {
     console.error(
       "usage: build-data --out <dir> [--feeds id1,id2] [--work <dir>] [--subset full|core] [--days 60] [--start YYYY-MM-DD]\n" +
-        "                  [--reuse-db] [--no-geometry] [--no-basemap] [--no-urban] [--no-transit] [--max-age-h N] [--assets <dir>] [--extract-rail]",
+        "                  [--reuse-db] [--no-geometry] [--no-basemap] [--no-urban] [--no-transit] [--max-age-h N] [--assets <dir>] [--extract-rail]\n" +
+        "                  [--stale-max-days N]",
     );
     process.exit(2);
   }
@@ -73,6 +79,7 @@ function parseArgs(argv: string[]): CliArgs {
     urban: !has("--no-urban"),
     transit: !has("--no-transit"),
     maxAgeH: get("--max-age-h") ? Number(get("--max-age-h")) : undefined,
+    staleMaxDays: get("--stale-max-days") ? Number(get("--stale-max-days")) : undefined,
     build: get("--build"),
     assets: resolve(get("--assets") ?? join(resolve(get("--work") ?? join(repoRoot, "work")), "assets")),
     extractRail: has("--extract-rail"),
@@ -92,6 +99,8 @@ async function main() {
   log(`build-data: out=${args.out} work=${args.work} start=${args.startDate} days=${args.days} tiers=${args.tiers.join(",")}`);
 
   const cfg = await loadFeedsConfig(join(here, "..", "feeds.json"));
+  args.staleMaxDays ??= cfg.staleMaxDays ?? STALE_MAX_DAYS;
+  const maxStale = args.staleMaxDays;
 
   timer.start("resolve");
   const feeds = await resolveFeeds(cfg, { only: args.feeds, tiers: args.tiers, cacheDir });
@@ -105,11 +114,11 @@ async function main() {
 
   const feedStats: FeedLoadStats[] = [];
   const failed: string[] = [];
-  /** feeds whose service ended before the build's first day (gtfs/validity.ts): skipped */
+  /** feeds whose service ended more than staleMaxDays before the build's first day (gtfs/validity.ts): skipped */
   const expired: { key: string; reason: string }[] = [];
   const stateFile = join(args.work, "db-state.json");
   const cfgText = await readFile(join(here, "..", "feeds.json"), "utf8");
-  const stateKey = JSON.stringify({ feeds: feeds.map((f) => f.key), start: args.startDate, days: args.days, tiers: args.tiers, load: LOAD_VERSION, cfgLen: cfgText.length, cfgHash: cfgText.split("").reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7), ops: cfg.operators?.loadFingerprint() ?? 0, gens: cfg.generators?.fingerprint ?? 0 });
+  const stateKey = JSON.stringify({ feeds: feeds.map((f) => f.key), start: args.startDate, days: args.days, tiers: args.tiers, load: LOAD_VERSION, staleMax: maxStale, cfgLen: cfgText.length, cfgHash: cfgText.split("").reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7), ops: cfg.operators?.loadFingerprint() ?? 0, gens: cfg.generators?.fingerprint ?? 0 });
   let reuse = false;
   if (args.reuseDb && existsSync(dbPath) && existsSync(stateFile)) {
     const st = JSON.parse(await readFile(stateFile, "utf8"));
@@ -143,7 +152,7 @@ async function main() {
       const dest = join(cacheDir, "feeds", rf.key + ".zip");
       genRuns.set(
         rf.key,
-        runGenerator(g, rf.key, { userAgent: cfg.userAgent, startDate: args.startDate, days: args.days, dest, tmpDir }).then(({ report }) => {
+        runGenerator(g, rf.key, { userAgent: cfg.userAgent, startDate: args.startDate, days: args.days, dest, tmpDir, staleMaxDays: maxStale }).then(({ report }) => {
           generated.push(report);
           return report.ok ? dest : null;
         }),
@@ -185,35 +194,54 @@ async function main() {
       }
       const lctx = { db, cfg, startDate: args.startDate, days: args.days, tmpDir, presentFeedIds: present, dropBus };
       let st: FeedLoadStats | null = null;
-      // A feed whose service has ended is not loaded at all (it drops out of the build and the attribution by
-      // itself and comes back when its source publishes a new timetable); its fallbacks may be newer.
-      let outOfDate = await zipExpired(zip, args.startDate);
-      if (outOfDate) warn(`feed ${rf.key}: out of date (${outOfDate}), skipped`);
-      else
-        try {
-          st = await loadFeed(lctx, i, rf, zip);
-        } catch (e) {
-          warn(`feed ${rf.key}: load failed: ${(e as Error).stack ?? e}`);
-        }
-      // Stale or broken primary source: try the fallbacks.
-      for (let u = 1; (!st || st.trips === 0) && u < rf.urls.length; u++) {
+      // A feed whose service has ended (gtfs/validity.ts) is loaded as stale – its last pattern projected onto the
+      // build window, its routes marked with the expiry date – unless it ended more than staleMaxDays ago (skipped).
+      // Its fallbacks may be newer: they are tried first.
+      const usable = (s: FeedState) => s.kind !== "too-old";
+      const describe = (s: FeedState) => (s.kind === "current" ? "" : s.reason);
+      let state = await zipState(zip, args.startDate, maxStale);
+      let source = zip;
+      for (let u = 1; state.kind !== "current" && u < rf.urls.length; u++) {
         const dest = join(cacheDir, "feeds", `${rf.key}.fallback${u}.zip`);
         try {
           await downloadWithFallback([rf.urls[u]!], dest, cfg.userAgent, args.maxAgeH);
-          const fx = await zipExpired(dest, args.startDate);
-          if (fx) {
-            warn(`feed ${rf.key}: fallback ${rf.urls[u]} out of date too (${fx})`);
+          const fs = await zipState(dest, args.startDate, maxStale);
+          if (fs.kind === "current" || (fs.kind === "stale" && state.kind === "stale" && fs.end > state.end) || (usable(fs) && !usable(state))) {
+            warn(`feed ${rf.key}: primary source out of date (${describe(state)}), using ${rf.urls[u]}${fs.kind === "current" ? "" : ` (out of date too: ${describe(fs)})`}`);
+            state = fs;
+            source = dest;
+          } else warn(`feed ${rf.key}: fallback ${rf.urls[u]} out of date too (${describe(fs)})`);
+        } catch (e) {
+          warn(`feed ${rf.key}: fallback ${u} failed: ${(e as Error).message}`);
+        }
+      }
+      if (state.kind === "too-old") warn(`feed ${rf.key}: out of date (${state.reason}), skipped`);
+      else {
+        if (state.kind === "stale") warn(`feed ${rf.key}: out of date (${state.reason}): kept, its last service pattern projected and labelled "expired ${state.end}"`);
+        try {
+          st = await loadFeed(lctx, i, rf, source, state.kind === "stale" ? { end: state.end, from: state.from } : undefined);
+        } catch (e) {
+          warn(`feed ${rf.key}: load failed: ${(e as Error).stack ?? e}`);
+        }
+      }
+      // Broken primary source (load failed, no trips): try the fallbacks that are not too old.
+      for (let u = 1; state.kind !== "too-old" && source === zip && (!st || st.trips === 0) && u < rf.urls.length; u++) {
+        const dest = join(cacheDir, "feeds", `${rf.key}.fallback${u}.zip`);
+        try {
+          await downloadWithFallback([rf.urls[u]!], dest, cfg.userAgent, args.maxAgeH);
+          const fs = await zipState(dest, args.startDate, maxStale);
+          if (fs.kind === "too-old") {
+            warn(`feed ${rf.key}: fallback ${rf.urls[u]} out of date too (${fs.reason})`);
             continue;
           }
           warn(`feed ${rf.key}: no usable data from primary source, trying ${rf.urls[u]}`);
-          st = await loadFeed(lctx, i, rf, dest);
-          outOfDate = null;
+          st = await loadFeed(lctx, i, rf, dest, fs.kind === "stale" ? { end: fs.end, from: fs.from } : undefined);
         } catch (e) {
           warn(`feed ${rf.key}: fallback ${u} failed: ${(e as Error).message}`);
         }
       }
       if (st) feedStats.push(st);
-      else if (outOfDate) expired.push({ key: rf.key, reason: outOfDate });
+      else if (state.kind === "too-old") expired.push({ key: rf.key, reason: state.reason });
       else failed.push(rf.key);
     }
     // what the operator adapters changed while loading (kept with the database for --reuse-db runs)
@@ -224,7 +252,9 @@ async function main() {
   }
 
   if (generated.length) log(`feed generators: ${generated.map((g) => `${g.id} ${g.ok ? "ok" : "FAILED"}`).join(", ")}`);
-  if (expired.length) log(`out-of-date feeds skipped: ${expired.map((e) => `${e.key} (${e.reason})`).join(", ")}`);
+  if (expired.length) log(`out-of-date feeds skipped (older than ${maxStale} days): ${expired.map((e) => `${e.key} (${e.reason})`).join(", ")}`);
+  const staleLoaded = feedStats.filter((f) => f.expired && f.trips > 0);
+  if (staleLoaded.length) log(`stale feeds kept (projected, labelled): ${staleLoaded.map((f) => `${f.key} (expired ${f.expired})`).join(", ")}`);
   await runBuild({ db, args, cfg, feeds, feedStats, failed, expired, generated, licenses, timer, cacheDir, tmpDir, t0 });
   db.close();
 }
