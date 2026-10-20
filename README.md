@@ -390,10 +390,10 @@ Pipeline in short:
    Rebuild just this stage for an existing build: `node --import tsx packages/etl/src/urban/index.ts <out>/<build>`
    (~1 min with warm caches, ~15 min when the zips of all feeds must be re-read), or skip it with `--no-urban`.
 
-The coastline and lakes are not part of a build: `data/basemap-v2/` (next to `manifest.json`, shared by all
+The coastline and lakes are not part of a build: `data/basemap-v2-<coverage>/` (next to `manifest.json`, shared by all
 builds, `Manifest.basemap`) holds OSM land polygons + Natural Earth 10m lakes as gzipped vector tiles z2–z9
 (extent 8192 at z9 ≈ 6 m, overzoomed to z15), ~4.9k files / ~31 MB. Tiles without land are missing (sea) and
-tiles entirely covered by land are missing too but listed in `basemap-v2/index.json`; the web app answers them
+tiles entirely covered by land are missing too but listed in `basemap-v2-<coverage>/index.json`; the web app answers them
 with a synthetic all-land tile (`web/src/map/basemap.ts`). The tiles are built by `refresh-assets` as ONE R2 object
 (`basemap/tiles-v2.tar`) and unpacked by every build (see `.claude/skills/basemap/SKILL.md`).
 
@@ -471,7 +471,7 @@ rebuilt from public sources by refresh-assets (`only` = the part name):
 | `geonames/places-europe.tsv.gz` | `geonames` | places ≥ 1000 inhabitants with local names (cities) | GeoNames `cities1000.zip`, `countryInfo.txt`, `alternatenames/<CC>.zip` | 2 MB | builds it from GeoNames (~30 MB download) |
 | `geonames/villages-europe.tsv.gz` | `geonames` | every populated place incl. villages (bus destinations) | GeoNames per-country dumps `<CC>.zip` | 21 MB | builds it from GeoNames (~110 MB download, ~1 min) |
 | `basemap/borders.json`, `basemap/labels.json` | `basemap` | country borders, country labels | Natural Earth 10m / 50m | 0.3 MB | builds them from Natural Earth |
-| `basemap/tiles-v2.tar` | `tiles` | land + lake vector tiles z2–9, unpacked to `data/basemap-v2/` | OSM land polygons (osmdata.openstreetmap.de, ~1 GB) + Natural Earth lakes | 31 MB | draws the coarse 1:50m land (warning) |
+| `basemap/tiles-v2.tar` | `tiles` | land + lake vector tiles z2–9, unpacked to `data/basemap-v2-<coverage>/` | OSM land polygons (osmdata.openstreetmap.de, ~1 GB) + Natural Earth lakes | 31 MB | draws the coarse 1:50m land (warning) |
 | `rail/rail-graph-v1.bin` | `rail` | rail routing graph | Overture Maps transportation (S3, ~30 min extraction) | 27 MB | draws rail lines as unsnapped curves (warning) |
 | `rail/urbanrail-graph-v1.bin` | `urbanrail` | tram / metro track graph | Overture Maps (~25 min extraction) | 2 MB | draws local lines without shapes as dashed chords |
 | `road/road-graph-v1.bin` | `road` | motorway…tertiary road graph | Overture Maps (~30 min extraction) | 114 MB | draws coach / bus lines as unsnapped curves (warning) |

@@ -50,11 +50,11 @@ z9 uses extent 8192 (≈ 6 m, MapLibre's internal precision), tiles are 512 px, 
 - Memory: z2–z5 are cut from all polygons at once, z6–z9 block by block (one z5 tile + 12 % margin at a time), polygons
   are quantised to 1e-5° (1 m) when read.
 - R2 gets ONE object (`basemap/tiles-v2.tar`, plain ustar written by `src/basemap/tar.ts`) instead of 4.9k keys
-  (wrangler uploads one key per call). Every build unpacks it to `<out>/basemap-v2/` (`installBasemapTiles`), next to
+  (wrangler uploads one key per call). Every build unpacks it to `<out>/basemap-v2-<coverage>/` (`installBasemapTiles`), next to
   `manifest.json`, and adds `Manifest.basemap` (`dir`, zooms, bounds). So the tiles live at the stable path
-  `data/basemap-v2/…`, not in the build directories, are not re-uploaded by `wrangler deploy` when unchanged (content hash)
+  `data/basemap-v2-<coverage>/…`, not in the build directories, are not re-uploaded by `wrangler deploy` when unchanged (content hash)
   and have their own cache rule in `packages/web/public/_headers` (1 week, not immutable; the `! Cache-Control` line detaches the
-  `/data/:build/*` immutable header that would otherwise match too). Bump `BASEMAP_DIR` / `BASEMAP_TILES_KEY` (v3) for a
+  `/data/:build/*` immutable header that would otherwise match too). The directory name carries `COVERAGE_ID` because the tiles are cached for a week under a stable URL (a new coverage = a new path, else browsers keep the old index and draw the new area as sea). Bump `BASEMAP_DIR` / `BASEMAP_TILES_KEY` (v3) for a
   format change; old builds keep working.
 - Without the tar in the assets the build warns and the app draws the coarse 1:50m `land.json` / `lakes.json` (generated on the
   fly by `web/scripts/basemap.ts` with `legacyLayers`; also used by `make-fixture.ts`).

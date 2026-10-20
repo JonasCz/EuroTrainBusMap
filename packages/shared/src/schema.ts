@@ -9,7 +9,7 @@
  *   data/<build>/calendars.json   CalendarsFile – shared service-day bitmasks
  *   data/<build>/city/<id>.json   CityFile – timetable data for one city (loaded on click)
  *   data/<build>/basemap/*.json   GeoJSON basemap layers (borders, country labels)
- *   data/basemap-v2/              OSM land / lake vector tiles shared by all builds (see BasemapInfo)
+ *   data/basemap-v2-<coverage>/              OSM land / lake vector tiles shared by all builds (see BasemapInfo)
  *   data/<build>/attribution.json AttributionFile
  *
  * Conventions:

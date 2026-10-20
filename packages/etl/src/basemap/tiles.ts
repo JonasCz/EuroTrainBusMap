@@ -1,7 +1,7 @@
 /**
  * Basemap vector tiles: OSM land polygons (osmdata.openstreetmap.de, ODbL) + Natural Earth 10m lakes,
  * cut into gzipped MVTs per zoom (layers `land`, `lake`), shipped as ONE tar asset in R2
- * (`basemap/tiles-v2.tar`) that every build unpacks to `<out>/basemap-v2/` (see `installBasemapTiles`).
+ * (`basemap/tiles-v2.tar`) that every build unpacks to `<out>/basemap-v2-<coverage>/` (see `installBasemapTiles`).
  *
  * File count is kept low by omitting tiles that carry no information: tiles without land are simply
  * missing (= sea), and tiles completely covered by land and without lakes are missing too, but listed
@@ -26,8 +26,13 @@ import { tarEntries, untar } from "./tar.ts";
 import { COVERAGE_ID, MAP_BBOX, type BasemapIndex } from "@etbm/shared";
 
 export const BASEMAP_TILES_KEY = "basemap/tiles-v2.tar";
-/** Directory (below the data root, next to manifest.json) the tiles are unpacked to. */
-export const BASEMAP_DIR = "basemap-v2";
+/**
+ * Directory (below the data root, next to manifest.json) the tiles are unpacked to. The name carries the coverage:
+ * the tiles are cached for a week under a stable URL, so tiles cut for another area (e.g. the Europe-only index.json
+ * of before the Canary Islands / Morocco were added: no land south of 34 degrees N) would stay in browsers and keep the
+ * new area drawn as sea. A new coverage is a new path.
+ */
+export const BASEMAP_DIR = `basemap-v2-${COVERAGE_ID}`;
 export const BASEMAP_VERSION = 2;
 /** Area the tiles are cut for: the box around the map's coverage (packages/shared/src/coverage.ts). */
 export const BASEMAP_BBOX: Box = [...MAP_BBOX];
@@ -314,7 +319,7 @@ export async function buildBasemapTiles(o: TilesOptions): Promise<{ tar: Buffer;
 }
 
 /**
- * Unpack the tiles asset into `<outRoot>/basemap-v2/`; returns the file count and the area and coverage the tiles
+ * Unpack the tiles asset into `<outRoot>/${BASEMAP_DIR}/`; returns the file count and the area and coverage the tiles
  * were cut for (tiles from before the index recorded them: the Europe-only box, no coverage).
  */
 export async function installBasemapTiles(tarFile: string, outRoot: string): Promise<{ files: number; bounds: Box; coverage: string | null }> {

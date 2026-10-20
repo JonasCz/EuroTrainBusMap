@@ -34,7 +34,7 @@ import { PLACES_ASSET, VILLAGES_ASSET } from "./geonames.ts";
 import { BASEMAP_TILES_KEY } from "./basemap/tiles.ts";
 
 /** Bump when what an asset contains changes (see the header). */
-export const ASSETS_VERSION = 1;
+export const ASSETS_VERSION = 2;
 
 /** Borders and country labels (basemap part), built by packages/web/scripts/basemap.ts. */
 export const BASEMAP_FILES = ["borders.json", "labels.json"];
@@ -73,7 +73,7 @@ export const ASSET_SOURCES = [
 ];
 
 /** Hash of ASSET_SOURCES as last reviewed (`--hash`); the version line of this file is left out of it. */
-export const ASSETS_SOURCE_HASH = "4d2ef4b0edd8de84";
+export const ASSETS_SOURCE_HASH = "6704c19829977c91";
 
 /** What the bucket's version.json holds. */
 export interface AssetsStamp {

@@ -305,12 +305,12 @@ data, give the build a new id: rename the directory (e.g. append a letter, `2026
   Never `git stash` while vite / Playwright run: the page reloads half-way and the shot script dies.
 - Full ETL with `--reuse-db`, output into `work/out-new` (so the old build stays viewable), ~14 min: stations 48 s, cities 17 s, patterns
   93 s, geometry 150 s, segments ~6 min (125 k corridors instead of 69 k), mapdata ~3 min. Swap with `rm -rf work/out && mv work/out-new work/out`
-  (`basemap-v2` is unpacked into the out dir by every build, so it comes along).
+  (`basemap-v2-<coverage>` is unpacked into the out dir by every build, so it comes along).
 
 ## Basemap tiles (phase E)
 
-- The coastline / lakes are vector tiles unpacked by every build to `<out>/basemap-v2/` (not into the build dir, shared by all builds, ~4.9k files) from `work/assets/basemap/tiles-v2.tar`; `Manifest.basemap` points to them. Without the tar the build falls back to the coarse 1:50m GeoJSON. A mapdata-only run (`mapdata.ts`) keeps `manifest.basemap` and the directory untouched.
-- Assemble/deploy copies `work/out/.` so `data/basemap-v2/` is deployed too; total files = builds (~5.4k) + 4.9k tiles. Keep an eye on the 20k limit.
+- The coastline / lakes are vector tiles unpacked by every build to `<out>/basemap-v2-<coverage>/` (not into the build dir, shared by all builds, ~4.9k files) from `work/assets/basemap/tiles-v2.tar`; `Manifest.basemap` points to them. Without the tar the build falls back to the coarse 1:50m GeoJSON. A mapdata-only run (`mapdata.ts`) keeps `manifest.basemap` and the directory untouched.
+- Assemble/deploy copies `work/out/.` so `data/basemap-v2-<coverage>/` is deployed too; total files = builds (~5.4k) + 4.9k tiles. Keep an eye on the 20k limit.
 
 ## Local transport layer (phase G) – metro / tram / city bus
 
@@ -323,7 +323,7 @@ data, give the build a new id: rename the directory (e.g. append a letter, `2026
   in `urban/types.ts` when extraction changes). Needs `work/assets/rail/urbanrail-graph-v1.bin` (tram / metro track, see the refresh-geometry-assets skill;
   without it lines without shapes stay dashed stop-to-stop chains) and the road graph.
 - **Iterating on the look without touching the deployed build**: make a scratch out dir whose build dir holds symlinks to the real build's files
-  and real copies of `attribution.json` and `manifest.json` (`work/out-dev/<build>/*` -> `work/out/<build>/*`, `work/out-dev/basemap-v2` -> `work/out/basemap-v2`),
+  and real copies of `attribution.json` and `manifest.json` (`work/out-dev/<build>/*` -> `work/out/<build>/*`, `work/out-dev/basemap-v2-<coverage>` -> `work/out/basemap-v2-<coverage>`),
   run `urban/index.ts` on it, point the preview symlink (`packages/web/public/data`) at `work/out-dev`. Swapping the symlink between `work/out` (before)
   and `work/out-dev` (after) gives before/after screenshots with the same web code. `window.__etbm.map.queryRenderedFeatures({layers:["urb-rail-stop"]})` finds
   stops to click in Playwright; `jumpTo({..., padding: {left: 400}})` centres the view in the area not covered by the panel.
