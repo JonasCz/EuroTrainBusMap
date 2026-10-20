@@ -17,6 +17,19 @@ export interface UrbanPattern {
   trips: number;
   /** How the geometry was obtained. */
   geom: "shape" | "road" | "rail" | "stops";
+  /** Bus patterns: when they run, for the station changes by local bus (bus-transfer.ts); not part of the layer. */
+  times?: PatternTimes;
+}
+
+/** Day types of PatternTimes.deps: the reference Wednesday, the Saturday and the Sunday after it. */
+export const TIME_DAYS = 3;
+
+/** Timetable summary of a bus pattern: no full timetable, only what a station change by bus needs. */
+export interface PatternTimes {
+  /** minutes from the departure at the first stop to each stop (of `stops`), from a representative trip */
+  t: number[];
+  /** per day type (TIME_DAYS): departures at the first stop, minutes of the service day (may pass 1440), ascending */
+  deps: number[][];
 }
 
 export interface UrbanLine {
@@ -57,4 +70,4 @@ export interface UrbanFeed {
 }
 
 /** Bump when the extraction changes (invalidates cached feeds). */
-export const EXTRACT_VERSION = 3;
+export const EXTRACT_VERSION = 5;

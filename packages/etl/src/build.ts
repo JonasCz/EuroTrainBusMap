@@ -55,8 +55,8 @@ import { GridIndex, fastDist, greatCircle, haversine, round5, simplifyLine, type
 import { log, warn, type StageTimer } from "./util/log.ts";
 import { runSanity } from "./sanity.ts";
 import { writeMapData } from "./mapdata.ts";
-import { loadUrbanFeedDefs, writeUrbanLayer } from "./urban/index.ts";
-import { computeTransit, gatherTransitFeeds } from "./urban/transit.ts";
+import { writeUrbanLayer } from "./urban/index.ts";
+import { computeTransitTransfers } from "./urban/transit-transfers.ts";
 import { BASEMAP_FILES } from "./assets-version.ts";
 import { BASEMAP_MAXZOOM, BASEMAP_MINZOOM, BASEMAP_TILES_KEY, BASEMAP_VERSION, installBasemapLayer } from "./basemap/tiles.ts";
 import { packStats, writePacks } from "./packs.ts";
@@ -1206,16 +1206,16 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   const network: NetworkFile = { schema: SCHEMA_VERSION, build, timezones, cities: outCities, stations: outStations, corridors: outCorr, segments: outSegs };
   const calendars: CalendarsFile = { startDate: args.startDate, days: D, masks: masks.masks };
 
-  // transit transfers between the stations of a city (metro / tram / suburban rail timetables, urban/transit.ts)
+  // transit transfers between the stations of a city: metro / tram / suburban rail timetables (urban/transit.ts) and
+  // local buses (urban/bus-transfer.ts)
   let transitByCity = new Map<number, number[][]>();
   const transitStats: Record<string, number> = {};
   if (args.transit) {
     timer.start("transit");
     try {
-      const tfeeds = await gatherTransitFeeds({ cfg, urbanFeeds: await loadUrbanFeedDefs(), workDir: args.work, assetsDir: args.assets, startDate: args.startDate, download: true, staleMaxDays: args.staleMaxDays, log });
-      const tr = computeTransit(tfeeds, outCities, outStations, log);
-      transitByCity = tr.byCity;
-      Object.assign(transitStats, tr.stats);
+      const r = await computeTransitTransfers({ cfg, work: args.work, assets: args.assets, startDate: args.startDate, staleMaxDays: args.staleMaxDays, cities: outCities, stations: outStations, log });
+      transitByCity = r.byCity;
+      Object.assign(transitStats, r.stats);
     } catch (e) {
       warn(`transit: transfer times by local transport failed, building without them: ${(e as Error).stack ?? e}`);
     }

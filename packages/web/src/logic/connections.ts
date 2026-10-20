@@ -6,7 +6,7 @@ import { addDays, runsOnDate } from "./calendar.ts";
 import { ServiceDays, mergeRows, serviceKey } from "./merge.ts";
 import { bestAlight, prepare, type NetCtx } from "./context.ts";
 import { routeAllowed, type Filters } from "./filters.ts";
-import { localDate, serviceTimeToUtc, toLocal } from "./tz.ts";
+import { localDate, localMoment, serviceTimeToUtc } from "./tz.ts";
 import type { TripSchedule } from "./schedule.ts";
 
 export interface Arrival {
@@ -88,13 +88,13 @@ export function transitIn(cf: CityFile, from: number, to: number): number[] | un
 
 /**
  * The change between two different stations of the city: minutes and how (walk / bike / transit, with the transit
- * line modes), undefined beyond range. A change by transit needs `at` (its hour); without it the change is walked.
+ * line modes at that hour, TransitMode.Bus for a local bus), undefined beyond range. A change by transit needs `at` (its hour); without it the change is walked.
  */
 export function changeIn(cf: CityFile, from: number, to: number, by: ChangeBy = "walk", at?: ChangeTime): { min: number; by: ChangeBy; modes?: number } | undefined {
   const w = walkMinutesIn(cf, from, to);
   const tr = by === "transit" && at ? transitIn(cf, from, to) : undefined;
-  const c = changeAt(w, tr, 3, by, at ? toLocal(at.utc, at.tz).minutes : 720);
-  return c && c.by === "transit" ? { ...c, modes: tr![2]! } : c;
+  const m = at ? localMoment(at.utc, at.tz) : { weekday: 2, minutes: 720 };
+  return changeAt(w, tr, 0, by, m.weekday, m.minutes);
 }
 
 /**

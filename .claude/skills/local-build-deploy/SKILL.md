@@ -372,8 +372,18 @@ data, give the build a new id: rename the directory (e.g. append a letter, `2026
   then a profile scan per city (`urban/transit.ts`). First run ~10.5 min extraction (gb-great-britain 5.3 GB stop_times ~1.5–2 min,
   de-delfi ~1.5 min) + ~3.5 min compute; with a warm cache ~4 min. A new `--start` week re-extracts everything.
 - Debug a city without a build: load the cached feeds of the city (`JSON.parse(gunzip(file)).feed`), `cityTransit(new TransitIndex(feeds),
-  { city, stations })` with the network's stations (`cats & TRANSIT_STATION_CATS`) and print the pair's 24 values; values around the
-  route headway + access/egress are right, ~2 h everywhere means the metro is missing (wrong week / route types / calendar).
+  { city, stations })` with the network's stations (`cats & TRANSIT_STATION_CATS`) and print the pair's 3 × 24 values (Monday–Friday,
+  Saturday, Sunday); values around the route headway + access/egress are right, ~2 h everywhere means the metro is missing (wrong week /
+  route types / calendar).
+- Bus changes (`urban/bus-transfer.ts`, merged into the same pairs by `urban/transit-transfers.ts`): the stage also runs `gatherFeeds`
+  of the local-transport layer (`work/urban/feeds/`, `EXTRACT_VERSION`), whose bus patterns carry `times` (ride minutes, first-stop
+  departures per day type). Cold that is the layer's whole extraction (~20 min, peak RSS ~8.3 GB) and the `urban` stage then reads the
+  cache; warm ~20 s to read + ~40 s for the pairs. Iterate on transit / bus pairs without a build:
+  `cd packages/etl && node --max-old-space-size=8192 --import tsx src/urban/transit-transfers.ts ../../work/out/<build>` (rewrites
+  `shard/`, `city/`, `tt/` and the manifest stats in place; ~5 min warm). Debug one pair: `new BusCollector([stationA, stationB])`, feed it
+  every cached feed (`gatherFeeds(..., (f) => col.addFeed(f))`), then print each option (`col.options`) and `busDayBands(opts, day)`;
+  a day type far worse than the others usually means its trips sit in another shape group (handled by the first / last stop match) or
+  the feed has no such day.
 - Pitfalls found: list aggregates (`list(... ORDER BY seq)`) over IDFM's 1 GB stop_times run DuckDB out of memory (stream sorted rows
   instead); feeds published for two weeks only (PID trams / metro) or expired (Metro de Madrid, ATM Milano) need the per-feed week shift,
   else a missing Sunday turned every worst case into "no service".

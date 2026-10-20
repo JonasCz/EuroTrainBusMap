@@ -14,19 +14,21 @@
  *
  * Every chunk also carries the walking transfer minutes between the stations of its cities (every pair
  * within walking or cycling range, see walk.ts; pairs missing there have no transfer), the hourly transit transfer
- * minutes of the pairs where local rail transport beats walking (transit.ts) and a
+ * minutes per day type of the pairs where local rail transport or a local bus beats walking (transit.ts) and a
  * simplified geometry (≈ 100 m) of the corridors its patterns run on, to draw the lines reached with
  * changes on the map.
  */
 
-import { TRANSIT_BANDS } from "./transit.ts";
+import { TRANSIT_BANDS, TRANSIT_HEAD, TRANSIT_VALUES } from "./transit.ts";
 
 /**
  * 2: a brand per pattern (TtChunk.pBrand, TtIndex.brands); version 1 chunks still decode (no brands).
  * 3: boarding / alighting restrictions per stop (TtChunk.stLimit, Pattern.limits); older chunks decode without them.
- * 4: transit transfers (TtChunk.transit, see transit.ts); older chunks decode without them.
+ * 4: transit transfers (TtChunk.transit, see transit.ts).
+ * 5: transit transfers with local buses and day types (TransitPair: bus hours and 24 values per day type); version 4
+ *    chunks decode with the same values for every day type and no bus.
  */
-export const TT_VERSION = 4;
+export const TT_VERSION = 5;
 /** Version of the line files (unchanged by the brands). */
 export const TT_LINES_VERSION = 1;
 
@@ -110,12 +112,12 @@ export interface TtChunk {
   trCal: Int32Array;
   /** walking transfers: [stationA, stationB, minutes] triples (symmetric, a < b) */
   walk: Int32Array;
-  /** transit transfers: TRANSIT_STRIDE numbers per pair: stationA, stationB (a < b), modes, 24 hourly minutes (0 = none) */
+  /** transit transfers: TRANSIT_STRIDE numbers per pair (a TransitPair): stationA, stationB (a < b), modes, bus hours and 24 hourly minutes (0 = none) per day type */
   transit: Int32Array;
 }
 
 /** Numbers per pair in TtChunk.transit (a TransitPair). */
-export const TRANSIT_STRIDE = 3 + TRANSIT_BANDS;
+export const TRANSIT_STRIDE = TRANSIT_HEAD + TRANSIT_VALUES;
 
 /** Decoded line file of a chunk: the corridors its patterns run on, with simplified geometry. */
 export interface TtLines {
@@ -273,10 +275,13 @@ export function encodeTtChunk(c: TtChunkIn): Uint8Array {
     w.z(t[0]! - pa);
     pa = t[0]!;
     w.z(t[1]! - t[0]!);
-    w.u(t[2]!);
-    // hourly minutes: the first, then changes from the hour before
-    w.u(t[3]!);
-    for (let h = 1; h < TRANSIT_BANDS; h++) w.z(t[3 + h]! - t[2 + h]!);
+    for (let k = 2; k < TRANSIT_HEAD; k++) w.u(t[k]!);
+    // hourly minutes: Monday–Friday the first, then changes from the hour before; the other day types as changes
+    // from the day type before at the same hour (mostly 0)
+    const v = TRANSIT_HEAD;
+    w.u(t[v]!);
+    for (let h = 1; h < TRANSIT_BANDS; h++) w.z(t[v + h]! - t[v + h - 1]!);
+    for (let h = TRANSIT_BANDS; h < TRANSIT_VALUES; h++) w.z(t[v + h]! - t[v + h - TRANSIT_BANDS]!);
   }
   return w.bytes();
 }
@@ -387,8 +392,11 @@ export function decodeTtChunk(bytes: Uint8Array): TtChunk {
     transit[o] = pa;
     transit[o + 1] = pa + r.z();
     transit[o + 2] = r.u();
-    transit[o + 3] = r.u();
-    for (let h = 1; h < TRANSIT_BANDS; h++) transit[o + 3 + h] = transit[o + 2 + h]! + r.z();
+    if (v >= 5) for (let k = 3; k < TRANSIT_HEAD; k++) transit[o + k] = r.u();
+    const b = o + TRANSIT_HEAD;
+    transit[b] = r.u();
+    for (let h = 1; h < TRANSIT_BANDS; h++) transit[b + h] = transit[b + h - 1]! + r.z();
+    for (let h = TRANSIT_BANDS; h < TRANSIT_VALUES; h++) transit[b + h] = transit[b + h - TRANSIT_BANDS]! + (v >= 5 ? r.z() : 0);
   }
   const stLimit = new Uint8Array(st.n);
   for (const [k, b] of limits) stLimit[k] = b;

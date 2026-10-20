@@ -121,7 +121,9 @@ export function partitionFeed(feed: UrbanFeed, haloKm = REGION_HALO_KM, rz = REG
           }
           return i;
         });
-        part.cur!.patterns.push({ ...p, stops });
+        // the bus times (station changes by bus) are not part of the layer
+        const { times: _times, ...rest } = p;
+        part.cur!.patterns.push({ ...rest, stops });
       }
     }
   const out = new Map<string, UrbanFeed>();

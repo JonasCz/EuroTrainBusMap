@@ -2,7 +2,7 @@
  * Timetables of the rail-bound local transport (metro, tram, light rail, suburban rail, funiculars) of one
  * GTFS feed for one reference week, for the transit transfer profiles (see transit.ts). Unlike the display
  * layer (extract.ts: shapes and trips per day only) this keeps every trip: stop sequence, times and the days
- * of the reference week it runs on. City buses are left out (see transit.ts for why).
+ * of the reference week it runs on. City buses are left out (see transit.ts and bus-transfer.ts).
  */
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";

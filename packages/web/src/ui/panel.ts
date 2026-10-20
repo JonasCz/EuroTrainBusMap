@@ -1,5 +1,5 @@
 /** Side panel (desktop) / bottom sheet (mobile): search, mode chips and content views. */
-import { CAVEAT_FLAGS, CYCLE_BUFFER_MIN, CYCLE_MAX_MIN, CYCLE_M_PER_MIN, Cat, StopLimit, WALK_MAX_MIN, changeAt, changeOf, distanceM, transitModeLabel, walkDistanceM, walkMinutes, type ChangeBy } from "@etbm/shared";
+import { CAVEAT_FLAGS, CYCLE_BUFFER_MIN, CYCLE_MAX_MIN, CYCLE_M_PER_MIN, Cat, StopLimit, TransitMode, WALK_MAX_MIN, changeAt, changeOf, distanceM, transitModeLabel, walkDistanceM, walkMinutes, type ChangeBy } from "@etbm/shared";
 import { cityTransit } from "../data/load.ts";
 import { cityTz, slugify, stationName, type Net } from "../data/net.ts";
 import { addDays, formatDateShort, lastDate } from "../logic/calendar.ts";
@@ -11,7 +11,7 @@ import { MAX_TRANSFERS, type Journey, type JourneyLeg, type TransferSettings } f
 import type { ScheduleStop, TripSchedule } from "../logic/schedule.ts";
 import type { ChangeOption, JourneySchedule } from "../logic/journeyschedule.ts";
 import type { Departure } from "../logic/timetable.ts";
-import { fmtDuration, fmtTime, localDate, toLocal } from "../logic/tz.ts";
+import { fmtDuration, fmtTime, localDate, localMoment } from "../logic/tz.ts";
 import { h, icon } from "./dom.ts";
 import { shortStationName } from "../map/features.ts";
 import { caveatBadge, caveatNote, fmtKm, routeBadge, routeDisplayName, routeTag, sourceLink, staleBadge, staleNote, timeAt, timeEl } from "./format.ts";
@@ -815,7 +815,7 @@ export class Panel {
             h(
               "p",
               { class: "small muted" },
-              "Transit: by metro, tram or suburban rail (RER, S-Bahn) where that beats walking, timed from the local timetables for the hour of the arrival: the slowest case within that hour, so a train every 15 minutes late in the evening counts the full 15 minutes of waiting, with the walk to and from the platforms and changes of line. Where these do not run at that hour (at night), or a city has no such data, the change is walked. Buses are not used.",
+              "Transit: by metro, tram, suburban rail (RER, S-Bahn) or a direct local bus where that beats walking, timed from the local timetables for the hour of the arrival: the slowest case within that hour, so a bus every 20 minutes late in the evening counts the full 20 minutes of waiting, with the walk to and from the stops and changes of line. Where nothing runs at that hour (at night), or a city has no such data, the change is walked.",
             ),
           ),
           h("div", { class: "xfer-field" }, h("label", { class: "xfer-label", for: "xfer-wait" }, "Maximum waiting time"), wait),
@@ -919,7 +919,7 @@ export class Panel {
                   "span",
                   { class: "jr-walk", title: `Change in ${at}: ${tl} from ${stationName(n, sa)} to ${stationName(n, sb)}, about ${fmtDuration(walk ?? 0)} door to door (${fmtDuration(wait)} between the trains). ${TRANSIT_NOTE}` },
                   `${fmtDuration(wait)} change${many} · `,
-                  icon("transit", 13),
+                  icon(transitIcon(r.legs[i]?.modes), 13),
                   ` ≈${fmtDuration(walk ?? 0)} ${tl} ${shortStationName(stationName(n, sa), at)} → ${shortStationName(stationName(n, sb), at)}`,
                 )
               : h(
@@ -1352,7 +1352,7 @@ export class Panel {
                   ? [icon("seat", 14), ` stay on board at ${stationName(n, l.depStation)} (${fmtDuration(xfer)})`]
                   : prev!.arrStation === l.depStation
                     ? `change at ${stationName(n, l.depStation)} · ${fmtDuration(xfer)}`
-                    : [icon(byIcon(changeBetween(n, prev!.arrStation, l.depStation, this.changeBy, prev!.arrUtc)?.change?.by), 14), ` ${fmtDuration(xfer)} · ${stationName(n, prev!.arrStation)} → ${stationName(n, l.depStation)}${walkNote(n, prev!.arrStation, l.depStation, this.changeBy, prev!.arrUtc)}`],
+                    : [icon(byIcon(changeBetween(n, prev!.arrStation, l.depStation, this.changeBy, prev!.arrUtc)?.change), 14), ` ${fmtDuration(xfer)} · ${stationName(n, prev!.arrStation)} → ${stationName(n, l.depStation)}${walkNote(n, prev!.arrStation, l.depStation, this.changeBy, prev!.arrUtc)}`],
               )
             : null,
           h(
@@ -1673,7 +1673,7 @@ export class Panel {
           ? h(
               "div",
               { class: "jsched-x-main", title: TRANSIT_NOTE },
-              icon("transit", 15),
+              icon(transitIcon(modes), 15),
               h("span", null, h("strong", null, walk !== null ? `≈${fmtDuration(walk)} ${tl}` : tl), ` ${short(c.arrStation)} → ${short(c.depStation)}`, h("span", { class: "muted" }, " · worst case for this hour, waiting included")),
             )
           : h(
@@ -1829,7 +1829,7 @@ export class Panel {
         ? h("span", { class: "tag tag--through" }, icon("seat", 13), " stay on board")
         : c.depStation !== last.arrStation
           ? c.changeBy === "transit"
-            ? h("span", { class: "walk", title: TRANSIT_NOTE }, icon("transit", 13), ` ≈${fmtDuration(c.transfer)} ${transitModeLabel(c.transitModes ?? 0, city.country)} to ${stationName(n, c.depStation)}`)
+            ? h("span", { class: "walk", title: TRANSIT_NOTE }, icon(transitIcon(c.transitModes), 13), ` ≈${fmtDuration(c.transfer)} ${transitModeLabel(c.transitModes ?? 0, city.country)} to ${stationName(n, c.depStation)}`)
             : h("span", { class: "walk" }, icon(c.changeBy === "bike" ? "bike" : "walk", 13), ` ${c.transfer} min ${c.changeBy === "bike" ? "cycle" : "walk"} to ${stationName(n, c.depStation)}${walkKm(n, last.arrStation, c.depStation, " · ")}`)
           : h("span", { class: "muted" }, `same station · min. ${c.transfer} min`);
       return h(
@@ -2012,8 +2012,8 @@ function changeBetween(n: Net, a: number, b: number, by: ChangeBy, utc?: number)
   if (by === "transit" && utc !== undefined) {
     const lo = Math.min(a, b), hi = Math.max(a, b);
     const tr = cityTransit(sa.city)?.find((t) => t[0] === lo && t[1] === hi);
-    const c = changeAt(walkMinutes(d), tr, 3, by, toLocal(utc, cityTz(n, sa.city)).minutes);
-    return { change: c && c.by === "transit" ? { ...c, modes: tr![2]! } : c, d };
+    const m = localMoment(utc, cityTz(n, sa.city));
+    return { change: changeAt(walkMinutes(d), tr, 0, by, m.weekday, m.minutes), d };
   }
   return { change: changeOf(walkMinutes(d), by), d };
 }
@@ -2028,8 +2028,13 @@ function walkNote(n: Net, a: number, b: number, by: ChangeBy, utc?: number): str
 }
 
 /** Icon of a change between stations. */
-function byIcon(by: ChangeBy | undefined): string {
-  return by === "bike" ? "bike" : by === "transit" ? "transit" : "walk";
+function byIcon(c: { by: ChangeBy; modes?: number } | undefined): string {
+  return c?.by === "bike" ? "bike" : c?.by === "transit" ? transitIcon(c.modes) : "walk";
+}
+
+/** Icon of a change by transit: a bus for a local bus (TransitMode bits), else a metro / tram. */
+function transitIcon(modes: number | undefined): string {
+  return modes === TransitMode.Bus ? "bus" : "transit";
 }
 
 /** "walk", "walk or ride", "walk or transit ride": how changes between stations are made with a setting. */
@@ -2039,9 +2044,9 @@ function byWords(by: ChangeBy | undefined): string {
 
 /** Settings summary suffix for the change mode. */
 function byRule(by: ChangeBy | undefined): string {
-  return by === "bike" ? ", cycling between stations" : by === "transit" ? ", metro / tram / suburban rail between stations" : "";
+  return by === "bike" ? ", cycling between stations" : by === "transit" ? ", metro / tram / suburban rail / local bus between stations" : "";
 }
 
 /** Tooltip of a change by transit. */
 const TRANSIT_NOTE =
-  "A conservative estimate from the local timetables (metro, tram, suburban rail) for this time of day: the slowest case within the hour, including waiting for the train, the walk to and from the platforms and changes of line. Where they do not run at that hour the change is walked.";
+  "A conservative estimate from the local timetables (metro, tram, suburban rail, local buses) for this time of day: the slowest case within the hour, including waiting for the train or bus, the walk to and from the platforms or stops and changes of line. Local buses run less often in the evening and at night, so the same change takes longer then; where nothing runs at that hour the change is walked.";

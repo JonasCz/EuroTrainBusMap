@@ -3,6 +3,7 @@
  * All instants are UTC epoch milliseconds.
  */
 import { dateFromDayNumber, dayNumber } from "./calendar.ts";
+import { weekdayOf } from "@etbm/shared";
 
 const MIN = 60_000;
 const partsFmt = new Map<string, Intl.DateTimeFormat>();
@@ -71,6 +72,13 @@ export function toLocal(utc: number, tz: string): LocalTime {
   const localMs = utc + tzOffset(tz, utc) * MIN;
   const day = Math.floor(localMs / (1440 * MIN));
   return { date: dateFromDayNumber(day), minutes: Math.floor((localMs - day * 1440 * MIN) / MIN) };
+}
+
+/** Local weekday (0 = Monday … 6 = Sunday) and minute of the day of an instant (the day type of transit transfers). */
+export function localMoment(utc: number, tz: string): { weekday: number; minutes: number } {
+  const localMs = utc + tzOffset(tz, utc) * MIN;
+  const day = Math.floor(localMs / (1440 * MIN));
+  return { weekday: weekdayOf(day), minutes: Math.floor((localMs - day * 1440 * MIN) / MIN) };
 }
 
 export function localDate(utc: number, tz: string): string {

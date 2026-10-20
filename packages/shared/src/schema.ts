@@ -302,9 +302,10 @@ export interface CityFile {
    */
   transfers: [number, number, number][];
   /**
-   * Transit transfers between stations of this city (packages/shared/src/transit.ts): [stationA, stationB, modes,
-   * 24 hourly worst-case minutes (0 = no service)][] with stationA < stationB, for pairs where metro / tram /
-   * suburban rail beats walking in some hour. Missing when the city has none.
+   * Transit transfers between stations of this city (packages/shared/src/transit.ts): TransitPairs [stationA, stationB,
+   * modes, bus hours per day type, 24 hourly worst-case minutes (0 = no service) per day type (Monday–Friday, Saturday,
+   * Sunday)][] with stationA < stationB, for pairs where metro / tram / suburban rail or a local bus beats walking in
+   * some hour. Missing when the city has none.
    */
   transit?: number[][];
   minTransfer: number;

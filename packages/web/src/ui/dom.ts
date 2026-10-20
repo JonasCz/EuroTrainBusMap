@@ -38,6 +38,8 @@ const ICONS: Record<string, string> = {
   bike: "M2.3 16.5a3.2 3.2 0 1 0 6.4 0 3.2 3.2 0 1 0-6.4 0zM15.3 16.5a3.2 3.2 0 1 0 6.4 0 3.2 3.2 0 1 0-6.4 0zM5.5 16.5 9 9.5h7l2.5 7M9 9.5l3 7H5.5M12 16.5l4-7M7.5 7h3M9 7v2.5M16 9.5l-1-3h2.3",
   // metro / tram, front view: car body, windows, lights, rails
   transit: "M7 3h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM5 10h14M8.5 13.5h.01M15.5 13.5h.01M8 17l-2 4M16 17l2 4M10 6h4",
+  // bus, front view: body, windscreen, lights, wheels, mirrors
+  bus: "M6 3h12a2 2 0 0 1 2 2v12H4V5a2 2 0 0 1 2-2zM4 11h16M7.5 14h.01M16.5 14h.01M6.5 17v3M17.5 17v3M4 7H2.5M20 7h1.5",
   search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4",
   info: "M12 8h.01M11 12h1v5h1M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z",
   alert: "M10.3 4.2 2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0zM12 9.5v4.5M12 17.5h.01",

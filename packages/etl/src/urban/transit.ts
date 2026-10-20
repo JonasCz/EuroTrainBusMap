@@ -3,22 +3,21 @@
  * door-to-door minutes by metro / tram / suburban rail for every hour of the day, from a profile connection scan
  * over the reference week's local timetables (transit-extract.ts).
  *
- * Per city: the stations where journeys change (long-distance, regional rail or coach), at most MAX_STATIONS of
- * them (long-distance stations first, then regional rail, then coach stations, each by departures); the local stops within ACCESS_M of a station are reached on foot (walkMinutes: detour,
+ * Per city: the stations where journeys change (long-distance, regional rail, coach or bus), at most MAX_STATIONS of
+ * them (rankStations); the local stops within ACCESS_M of a station are reached on foot (walkMinutes: detour,
  * 4.5 km/h, 3 min buffer), stops within FOOT_M of each other are a change (the walk plus CHANGE_MIN), a change
  * at the same stop takes CHANGE_MIN. For each target station a backward profile scan (CSA) over the connections
  * of three days (a Wednesday, a Saturday and a Sunday, each with the trips of the day before running past midnight
  * and of the next day for the wait for the first train) gives at every stop the earliest arrival at the target
- * for every departure; for each source station and hour the worst case over the minutes of the hour (the moment
- * just after a departure is missed) is kept, and the largest over the three days. City buses are not used: their
- * timetables are much bigger, they are slower than the rail lines where those exist, and a change by bus is
- * harder to find for a visitor.
+ * for every departure; for each source station, day type and hour the worst case over the minutes of the hour (the
+ * moment just after a departure is missed) is kept. City buses are not part of the scan (their timetables are about
+ * 20 times bigger): bus-transfer.ts times them per line, and transit-transfers.ts keeps the faster of the two per hour.
  */
 import { existsSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { Cat, TRANSIT_BANDS, TRANSIT_MAX_M, TRANSIT_MAX_MIN, transitUseful, walkMinutes, type TransitPair } from "@etbm/shared";
+import { Cat, TRANSIT_BANDS, TRANSIT_DAYS, TRANSIT_MAX_M, TRANSIT_MAX_MIN, TRANSIT_VALUES, transitUseful, walkMinutes, type TransitPair } from "@etbm/shared";
 import { Db } from "../db.ts";
 import { downloadWithFallback } from "../download.ts";
 import { STALE_MAX_DAYS, zipState } from "../gtfs/validity.ts";
@@ -41,9 +40,9 @@ export const MAX_STATIONS = 40;
 export const TRANSIT_CITY_MIN_POP = 100_000;
 /** Connections up to this long after the end of the day are scanned (the wait for the first train), minutes. */
 const HORIZON = TRANSIT_MAX_MIN + 60;
-/** Day types of the reference week (Monday = 0): Wednesday, Saturday, Sunday. */
+/** Days of the reference week (Monday = 0) for the day types (TRANSIT_DAYS): Wednesday, Saturday, Sunday. */
 const DAY_TYPES = [2, 5, 6];
-/** Day types with fewer connections than this share of the busiest one are taken for missing data and skipped. */
+/** Day types with fewer connections than this share of the busiest one are taken for missing data (the worst of the others). */
 const MIN_DAY_SHARE = 0.25;
 /** Bbox margin around a city's stations for the local network, degrees of latitude (≈ 4 km). */
 const MARGIN = 0.036;
@@ -70,7 +69,7 @@ interface CityNet {
 }
 
 /** Grid lookup of points by ~1 km cells. */
-class PointGrid {
+export class PointGrid {
   private cells = new Map<number, number[]>();
   constructor(
     private lon: ArrayLike<number>,
@@ -384,13 +383,11 @@ export interface CityTransitIn {
 }
 
 /**
- * Transit pairs of one city: [a, b, modes, 24 × minutes] for station pairs within TRANSIT_MAX_M where transit beats
- * walking in some hour (station ids as given; a < b; the slower direction).
+ * Transit pairs of one city: [a, b, modes, 0, 0, 0 (bus hours), 3 × 24 minutes] (TransitPair) for station pairs
+ * within TRANSIT_MAX_M where transit beats walking in some hour (station ids as given; a < b; the slower direction).
  */
 export function cityTransit(idx: TransitIndex, c: CityTransitIn): { pairs: TransitPair[]; stops: number; conns: number } {
-  // long-distance stations first, then regional rail, then coach stations, each by departures
-  const rank = (s: { cats: number }) => (s.cats & Cat.LongDistance ? 0 : s.cats & Cat.Regional ? 1 : 2);
-  const st = [...c.stations].sort((a, b) => rank(a) - rank(b) || b.tpd - a.tpd || a.id - b.id).slice(0, MAX_STATIONS);
+  const st = rankStations(c.stations);
   if (st.length < 2) return { pairs: [], stops: 0, conns: 0 };
   const net = cityNet(idx, st);
   if (!net) return { pairs: [], stops: 0, conns: 0 };
@@ -407,46 +404,79 @@ export function cityTransit(idx: TransitIndex, c: CityTransitIn): { pairs: Trans
   const prof = new Profiles(net.nStops);
   const maxTrips = Math.max(...net.days.map((d) => d.nTrips));
   const tripArr = new Int32Array(maxTrips), tripMode = new Uint8Array(maxTrips);
-  // worst[i][j]: hourly worst case from i to j over the day types
+  // worst[i][j]: hourly worst case from i to j per day type (TRANSIT_VALUES)
   const worst = new Map<number, { bands: Int32Array; modes: number }>();
+  // a day with hardly any service in the data (a feed ending early) says nothing about that day: it takes the worst
+  // of the other day types
+  const used = net.days.map((d) => d.dep.length >= MIN_DAY_SHARE * busiest);
   for (let j = 0; j < st.length; j++) {
     const srcs = partners[j]!;
     if (!srcs.length) continue;
-    for (const day of net.days) {
-      // a day with hardly any service in the data (a feed ending early) says nothing about that day
-      if (day.dep.length < MIN_DAY_SHARE * busiest) continue;
+    net.days.forEach((day, di) => {
+      if (!used[di]) return;
       const res = scanTarget(net, day, prof, tripArr, tripMode, near[j]!, srcs.map((i) => ({ access: near[i]! })));
       srcs.forEach((i, k) => {
         const key = i * 1024 + j;
         const r = res[k]!;
-        const w = worst.get(key);
-        if (!w) worst.set(key, { bands: r.bands.slice(), modes: r.modes });
-        else {
-          for (let h = 0; h < TRANSIT_BANDS; h++) w.bands[h] = Math.max(w.bands[h]!, r.bands[h]!);
-          w.modes |= r.modes;
-        }
+        let w = worst.get(key);
+        if (!w) worst.set(key, (w = { bands: new Int32Array(TRANSIT_VALUES), modes: 0 }));
+        w.bands.set(r.bands, di * TRANSIT_BANDS);
+        w.modes |= r.modes;
       });
-    }
+    });
   }
+  for (const w of worst.values())
+    for (let di = 0; di < TRANSIT_DAYS; di++) {
+      if (used[di]) continue;
+      for (let h = 0; h < TRANSIT_BANDS; h++)
+        for (let dj = 0; dj < TRANSIT_DAYS; dj++) if (used[dj]) w.bands[di * TRANSIT_BANDS + h] = Math.max(w.bands[di * TRANSIT_BANDS + h]!, w.bands[dj * TRANSIT_BANDS + h]!);
+    }
   const pairs: TransitPair[] = [];
   for (let i = 0; i < st.length; i++)
     for (let j = i + 1; j < st.length; j++) {
       const ab = worst.get(i * 1024 + j), ba = worst.get(j * 1024 + i);
       if (!ab || !ba) continue;
-      const bands = Array.from({ length: TRANSIT_BANDS }, (_, h) => {
+      const bands = Array.from({ length: TRANSIT_VALUES }, (_, h) => {
         const v = Math.max(ab.bands[h]!, ba.bands[h]!);
         return v >= INF || v > TRANSIT_MAX_MIN ? 0 : v;
       });
       const d = fastDist(st[i]!.lon, st[i]!.lat, st[j]!.lon, st[j]!.lat);
       if (!transitUseful(bands, 0, walkMinutes(d))) continue;
       const [a, b] = st[i]!.id < st[j]!.id ? [st[i]!.id, st[j]!.id] : [st[j]!.id, st[i]!.id];
-      pairs.push([a, b, ab.modes | ba.modes, ...bands]);
+      pairs.push([a, b, ab.modes | ba.modes, 0, 0, 0, ...bands]);
     }
   return { pairs, stops: net.nStops, conns: net.days.reduce((s, d) => s + d.dep.length, 0) };
 }
 
-/** Stations of a city that get transit times: long-distance, regional rail and coach stations. */
-export const TRANSIT_STATION_CATS = Cat.LongDistance | Cat.Regional | Cat.Coach;
+/**
+ * Stations of a city that get transit times: long-distance, regional rail, coach and bus stations (a town's bus
+ * terminal and its other main stops: Santa Cruz de Tenerife's Intercambiador and Santa María del Mar).
+ */
+export const TRANSIT_STATION_CATS = Cat.LongDistance | Cat.Regional | Cat.Coach | Cat.Bus;
+
+/**
+ * The stations of a city that get transit times, at most MAX_STATIONS: long-distance stations first, then regional
+ * rail, then coach stations, then bus stations, each by departures.
+ */
+export function rankStations<T extends { id: number; cats: number; tpd: number }>(cand: T[]): T[] {
+  const rank = (s: { cats: number }) => (s.cats & Cat.LongDistance ? 0 : s.cats & Cat.Regional ? 1 : s.cats & Cat.Coach ? 2 : 3);
+  return [...cand].sort((a, b) => rank(a) - rank(b) || b.tpd - a.tpd || a.id - b.id).slice(0, MAX_STATIONS);
+}
+
+/** Per city with at least two of them, its candidate stations for transit times (TRANSIT_STATION_CATS). */
+export function transitCandidates(
+  cities: { id: number; stations: number[] }[],
+  stations: { lon: number; lat: number; cats: number; tpd?: number }[],
+): CityTransitIn[] {
+  const out: CityTransitIn[] = [];
+  for (const c of cities) {
+    const cand = c.stations
+      .filter((s) => stations[s]!.cats & TRANSIT_STATION_CATS)
+      .map((s) => ({ id: s, lon: stations[s]!.lon, lat: stations[s]!.lat, cats: stations[s]!.cats, tpd: stations[s]!.tpd ?? 0 }));
+    if (cand.length >= 2) out.push({ city: c.id, stations: cand });
+  }
+  return out;
+}
 
 /**
  * Monday of the reference week: the first Monday after the start of the timetable window (yesterday when the
@@ -552,19 +582,15 @@ export function computeTransit(
   const byCity = new Map<number, TransitPair[]>();
   let nPairs = 0, nCities = 0;
   const slow: string[] = [];
-  for (const c of cities) {
-    const cand = c.stations
-      .filter((s) => stations[s]!.cats & TRANSIT_STATION_CATS)
-      .map((s) => ({ id: s, lon: stations[s]!.lon, lat: stations[s]!.lat, cats: stations[s]!.cats, tpd: stations[s]!.tpd ?? 0 }));
-    if (cand.length < 2) continue;
+  for (const c of transitCandidates(cities, stations)) {
     const t1 = Date.now();
-    const r = cityTransit(idx, { city: c.id, stations: cand });
+    const r = cityTransit(idx, c);
     if (!r.pairs.length) continue;
-    byCity.set(c.id, r.pairs);
+    byCity.set(c.city, r.pairs);
     nPairs += r.pairs.length;
     nCities++;
     const ms = Date.now() - t1;
-    if (ms > 3000) slow.push(`${c.name} ${(ms / 1000).toFixed(0)}s`);
+    if (ms > 3000) slow.push(`${cities.find((x) => x.id === c.city)?.name ?? c.city} ${(ms / 1000).toFixed(0)}s`);
   }
   const secs = Math.round((Date.now() - t0) / 1000);
   log(`transit: ${nPairs} station pairs in ${nCities} cities in ${secs}s${slow.length ? ` (slowest: ${slow.slice(0, 12).join(", ")})` : ""}`);

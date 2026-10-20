@@ -276,7 +276,7 @@ Pipeline in short:
        all modes 0.75 s, Paris → Nice rail 0.5 s, London → Edinburgh 3.5 s (old: 0.4 / 2.8 / 2.0 / 5.1 s); in the browser
        (dev build, headless Chromium, chunks not cached) Bordeaux → Nice 2.1 s, of which 1 s loading.
      - **Walking transfers** (`packages/shared/src/walk.ts`, used by the ETL and the web app): a change between two stations of a
-       city is a walk (with "Walk"; see the transit transfers below for metro / tram rides), so its time is a conservative
+       city is a walk (with "Walk"; see the transit transfers below for metro / tram / local bus rides), so its time is a conservative
        estimate for every station pair: straight-line distance × 1.3 (street detour) at 75 m/min (4.5 km/h) + 3 min, rounded up,
        and at least the minimum transfer time; e.g. Paris Montparnasse → Gare de Lyon (4.1 km straight) is 75 min, 5.4 km.
        Pairs farther apart than a 2 h walk (6.75 km straight, ≈ 8.8 km on foot) get no walking transfer, i.e. no change between them
@@ -295,26 +295,28 @@ Pipeline in short:
        used by bike). That is 194 k pairs instead of 156 k: +0.1 MB (1.2 %) of gzipped transfer chunks, +1.2 MB (0.1 %) of
        city shards; search times unchanged.
      - **Transit transfers** ("Transit" in the settings, URL `xfer=transit`; `packages/shared/src/transit.ts`, ETL
-       `packages/etl/src/urban/transit.ts` + `transit-extract.ts`): a change between stations by metro, tram, light rail or
-       suburban rail (RER, S-Bahn, Overground) where that beats walking, timed from the local timetables. City buses are not
-       used (bigger timetables, slower than the rail lines where those exist, harder to find for a visitor). An estimate from
-       frequencies would not say whether a change works at 23:40 with a train every 15 min, so the ETL stores, per station pair
-       and *hour of the day* (local time of the moment the traveller is ready to leave the arrival station), the **worst case**
-       over every minute of that hour and over a Wednesday, a Saturday and a Sunday of a reference week (the first whole week
-       of the timetable window; feeds that end earlier are read for their last whole week): walk from the station to the stop
+       `packages/etl/src/urban/transit.ts` + `transit-extract.ts`, local buses `bus-transfer.ts`, both merged by
+       `transit-transfers.ts`): a change between stations by metro, tram, light rail, suburban rail (RER, S-Bahn, Overground)
+       or a direct local bus (see **Bus changes** below) where that beats walking, timed from the local timetables. An estimate from
+       frequencies would not say whether a change works at 23:40 with a train every 15 min, so the ETL stores, per station pair,
+       *day type* (Monday–Friday from a Wednesday, Saturday, Sunday of a reference week: the first whole week of the timetable
+       window; feeds that end earlier are read for their last whole week) and *hour of the day* (local time of the moment the
+       traveller is ready to leave the arrival station), the **worst case** over every minute of that hour: walk from the station to the stop
        (`walkMinutes` of the distance: 1.3 detour, 4.5 km/h, +3 min), wait (the full headway: the worst moment is just after a
        departure), ride, change lines (stops within 400 m: the walk + 3 min, 3 min at the same stop), walk to the other station
        (+3 min). It comes from a backward profile connection scan per target station over the city's connections of the day
        (plus the previous service day's trips past midnight and the next day's first trains); an hour in which the last train
        leaves counts the wait for the first one, beyond 5 h it has no value. In the app a change starting at minute m of hour h
-       takes the best of that hour's value and of waiting for a later hour (`transitMinutes`; so the ready time at the other
+       takes the best of that hour's value of its day type and of waiting for a later hour, into the next day's (`transitMinutes`; so the ready time at the other
        station never gets earlier for a later arrival, which the search's range maximum relies on: per departure station the
        arrivals' ready times are computed and a running maximum bounds the range that surely makes the departure), and the
        walk where that is faster (`changeAt`): at night, without service, the change is walked as with "Walk". Stations: per
-       city up to 40 (long-distance first, then regional rail, then coach stations, by departures), pairs up to 15 km apart,
+       city up to 40 (long-distance first, then regional rail, coach and bus stations, by departures), pairs up to 15 km apart,
        local stops within 600 m of a station; a pair is stored only when transit beats walking in some hour, as
-       [a, b, modes, 24 × minutes] in `CityFile.transit` (onward connections, journey details) and the transfer chunks (search;
-       `TT_VERSION` 4). Paris Montparnasse → Gare de Lyon: 39 min by metro all day (walk 75 min), walked at 01:00; Euston →
+       [a, b, modes, 3 × bus hours, 3 × 24 minutes] (`TransitPair`; per day type and hour the faster of rail and bus, a bit per
+       hour where it is the bus) in `CityFile.transit` (onward connections, journey details) and the transfer chunks (search;
+       `TT_VERSION` 5; Saturday / Sunday stored as differences from the day type before, mostly 0). A day type with hardly
+       any rail-bound service in the data (under a quarter of the busiest: a feed ending early) takes the worst of the others. Paris Montparnasse → Gare de Lyon: 39 min by metro all day (walk 75 min), walked at 01:00; Euston →
        Paddington 30 min (Underground), Berlin Hbf → Ostkreuz 29–35 min (S-Bahn); Bordeaux → Nice via Paris gets the 05:39 and
        07:12 TGVs (arriving 15:04 / 16:06 instead of 16:06 / 17:05 with walking). Rows show "≈39 min metro Montparnasse →
        Gare de Lyon" with a tooltip on how it is estimated. The timetables come from every intercity and local feed (trams,
@@ -328,6 +330,39 @@ Pipeline in short:
        of every feed, gb-great-britain ≈ 1.5 min) and ≈ 4 min with the per-feed cache (profile scans ≈ 4 min, Paris and Berlin
        ≈ 25 s each); search (Node, all chunks loaded): reach with 1 change and journeys between a pair unchanged
        (Bordeaux → Nice 0.08–0.14 s), reach with 2 changes ≈ 17–20 % slower (Paris 5.9 → 6.9 s, Berlin 4.6 → 5.5 s).
+     - **Bus changes** (part of "Transit"; ETL `packages/etl/src/urban/bus-transfer.ts`): local buses (every town's lines of
+       the local-transport layer, i.e. exactly the buses the intercity network does not carry itself, so none counts twice)
+       time a change between two stations of a city without any bus timetable in the search. The layer's extraction
+       (`extract.ts`, `PatternTimes`, `EXTRACT_VERSION` 5) keeps per bus pattern the minutes from its first stop to each stop
+       (from its representative trip) and the departures at its first stop on the reference Wednesday, Saturday and Sunday
+       (every trip of its shape group, plus the trips of its route and direction with the same first and last stop: weekend
+       trips often carry another shape id; `frequencies.txt` expanded). A pattern calling at a stop within 600 m of station A
+       and later at one within 600 m of station B gives an option A → B: walk to the stop (`walkMinutes`, as for walking
+       transfers), wait for the bus (its departures shifted by the ride to that stop), ride, walk to B; per pattern the stops
+       with the shortest walk + ride. All options of a pair form one step function "ready at A at t → at B at EA(t)", so two
+       lines (or variants) serving it combine their frequencies (a line found in two feeds counts once: same departures and
+       ride); per day type and hour the worst case over its minutes is kept, the slower direction, 0 beyond 5 h (the last bus
+       has gone) or on a day type without buses. Direct rides only: no change of bus (a direct line is what a visitor finds;
+       the rail-bound scan covers the longer cross-city trips). The pairs are merged into the transit pairs hour by hour
+       (`mergeBusPairs`: the faster of rail and bus, a bus-hour bit where it is the bus), so the search needs nothing new;
+       the app labels the change "≈34 min local bus Hbf → ZOB" with a bus icon (`TransitMode.Bus` at that hour, else the
+       rail modes). Stations: the transit candidates, which now include bus stations (a town's bus terminal and main stops,
+       ranked after rail and coach stations), so towns without metro or tram get changes too. Examples (build
+       20261018-1609, Wednesday unless noted): Ingolstadt Hbf → ZOB 36 min at noon, 37 at 18:00, 46 at 23:15, walked (52 min)
+       at 01:00 and on Sunday noon (München → Geisenfeld via Ingolstadt offers "≈45 min local bus Hbf → ZOB" at 05:30 and
+       ≈32 min in the afternoon); Santa Cruz de Tenerife Intercambiador → Hospital La Candelaria 24 min at noon, 38 at 21:30,
+       walked (61 min) after 23:00; Bitburg ZOB → Bitburg-Erdorf 63 min at noon (47 on Saturday), walked (73) in the evening;
+       Lisboa Oriente ↔ Marvila 37 min by train at noon, 52 by bus at 21:30. Sarajevo has a single station (no pair); the
+       Metrotenerife feed ended in 2025, so Tenerife has no tram pairs. Coverage: 21 378 bus pairs in 920 cities from 65 529
+       bus patterns near 49 679 candidate stations; with the rail-bound ones (18 542 pairs in 418 cities, more than before
+       through the bus stations and the day types) 35 499 transit pairs in 1 104 cities, 20 210 of them by bus in some hour
+       (before: 12 317 pairs in 321 cities). Cost: transfer chunks 9.78 → 10.82 MB gz (+1.04 MB, +11 %: ≈ 0.25 MB the bus
+       pairs, the rest the day types; trunk unchanged, regional chunks +3–87 KB, median +28 KB, loaded only where a search
+       changes), city shards +7.6 MB raw (+0.5 %), initial load unchanged. Stage time: bus pairs ≈ 1 min with the extraction
+       cache (read 20 s, pairs 40 s; the whole transit stage ≈ 4 min), ≈ 20 min cold, where the stage now does the
+       extraction of the local-transport layer (which then reads it from the cache); peak RSS 8.3 GB cold (DuckDB of the
+       extraction), 4 GB warm. `node --import tsx src/urban/transit-transfers.ts <build>` (in `packages/etl`) recomputes the
+       transit and bus pairs of an existing build and rewrites its city files and transfer chunks.
      - **Data** (`packages/shared/src/tt.ts`, written by the map-data stage, `src/transfers.ts`): every pattern and trip of the
        shards deduplicated (416 k patterns (a pattern per brand), 2.19 M trips; shards repeat a pattern for every city it calls at, ~3 M times), as gzipped
        varint chunks (version 2: a brand per pattern, names in `TtIndex.brands`): chunk 0 = the *trunk* (all long-distance trains and coaches of Europe, 1.1 MB gz) and 32 regions (k-d split of
@@ -363,7 +398,9 @@ Pipeline in short:
      (rail-replacement, school, shuttle and coach operators dropped). Per route and direction the most frequent
      shape (or headsign) plus up to two frequent variants, one representative trip each (a few trips per route, so
      `stop_times` is filtered down before it is read); trips per direction on a typical weekday (a Wednesday a week
-     after the start date) give `tpd`, shown as "every ~10 min". **Buses**: every local bus route of every town, village
+     after the start date) give `tpd`, shown as "every ~10 min". Bus patterns also keep their ride minutes and the first
+     departure of their trips on that Wednesday, Saturday and Sunday (`PatternTimes`, for the bus changes between stations,
+     see "Transit transfers"; not part of the layer's tiles). **Buses**: every local bus route of every town, village
      and island, decided per route on the straight span of its longest pattern (`busExclusion`, `classify.ts`) so that
      no line is drawn twice: a route of a `feeds.json` feed whose buses the intercity network loads (and whose agency
      its filters let through, `urbanAgencies` rejects) is local only below that feed's `minBusKm` (15 km, TITSA 8 km)
@@ -542,7 +579,8 @@ Nothing outside the repository and the R2 bucket is needed; every input is publi
    the DuckDB database, the feed cache and the per-feed local-transport / transit caches (`work/urban/`) all start empty
    (`--reuse-db`, `db-state.json`, `LOAD_VERSION` / `EXTRACT_VERSION` only matter for local iteration). Measured
    from scratch on 4 cores / 15 GB (fresh clone, empty work dir, CI command; Oct 2026): 75 min (download + load 12, the
-   build stages 22, transit transfers 14, local transport 25), peak RSS 9.5 GB, `work/` 14.5 GB at its peak (the job frees
+   build stages 22, transit transfers 14, local transport 25; the transit stage now also extracts the local layer's feeds
+   for the bus changes, about 20 min that the local-transport stage then saves by reading its cache), peak RSS 9.5 GB, `work/` 14.5 GB at its peak (the job frees
    runner disk first), output 2.0 GB / 14k files, site 14.1k files. The job's timeout is 240 min. Feeds and the start date
    (yesterday, Berlin) change from run to run, so two builds on different days differ by a few percent of trips.
    Without `geonames/villages-europe.tsv.gz` in R2 the build makes it from the GeoNames dumps itself (~1.5 min).
