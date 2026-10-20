@@ -278,8 +278,10 @@ jobs:
           cp -r packages/web/dist/. "$target/"
           rm -rf "$target/data" && mkdir -p "$target/data"
           cp -r work/out/. "$target/data/"
-          # network.json is only for tools; the web app loads core.json + tiles; .assets-stamp is for the data cache
+          # network.json is only for tools and layers/ holds the tile layers before packing (the web app loads core.json + packs/);
+          # .assets-stamp is for the data cache
           rm -f "$target"/data/*/network.json "$target"/data/*/network-*.json "$target/data/.assets-stamp"
+          rm -rf "$target"/data/*/layers
           # caching rules (_headers) must sit at the asset root, with the base path prefixed
           if [ -n "$base" ] && [ -f "$target/_headers" ]; then sed "s#^/#/$base/#" "$target/_headers" > "$site/_headers" && rm "$target/_headers"; fi
           echo "files: $(find "$site" -type f | wc -l)"; du -sh "$site"

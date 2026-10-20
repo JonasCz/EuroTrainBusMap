@@ -1,6 +1,6 @@
 import maplibregl, { type GeoJSONSource, type LayerSpecification, type MapGeoJSONFeature, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { TILE_LAYERS, tileSet, type TileIndex, type UrbanInfo } from "@etbm/shared";
+import { PACK_LAYER, TILE_LAYERS, type TileIndex, type TilePacks, type UrbanInfo } from "@etbm/shared";
 import type * as GeoJSON from "geojson";
 import type { Net } from "../data/net.ts";
 import { sameFilters, type Filters } from "../logic/filters.ts";
@@ -9,10 +9,10 @@ import { CITY_AREA_LAYER, CITY_LAYERS, FOCUS_LAYERS, STATION_LAYERS, STATION_ZOO
 import { CAT_BITS, MAP_BBOX, tpdFromWidth } from "@etbm/shared";
 import { CAT_LABEL } from "../logic/filters.ts";
 import { fmtTpd } from "../logic/tracks.ts";
-import { URBAN_HIT_LAYERS, URBAN_LAYER_IDS, urbanLayers, urbanSources, urbanTileKeys, type UrbanHit } from "./urban.ts";
+import { URBAN_HIT_LAYERS, URBAN_LAYER_IDS, urbanLayers, urbanSources, type UrbanHit } from "./urban.ts";
 import { urbanPopup } from "../ui/urbanpopup.ts";
 import { ALL_CATS, DEFAULT_FILTERS, localOn } from "../logic/filters.ts";
-import { prefetchBasemapIndex, registerBasemapProtocol } from "./basemap.ts";
+import { PackStore, packTileUrl } from "./packs.ts";
 import { prefetchGz, registerGzProtocol } from "./protocol.ts";
 import { SOURCE_BOUNDS, baseLayers, baseStyle, glyphPrefetchUrls } from "./style.ts";
 import { currentTheme, type Theme } from "./theme.ts";
@@ -121,29 +121,22 @@ export class MapView {
 
   /**
    * The map starts as soon as the manifest is known: basemap, glyphs and the
-   * network tiles load in parallel with core.json.
+   * network tiles load in parallel with core.json. Every vector tile comes from the tile packs (`packs`, packs.ts).
    */
   constructor(
     container: HTMLElement,
     dataUrl: (p: string) => string,
     tiles: TileIndex,
+    packs: TilePacks,
     private cb: MapCallbacks,
     padding: () => Padding,
-    basemap: { root: string; minzoom: number; maxzoom: number; bounds: [number, number, number, number] } | null = null,
+    basemap: { minzoom: number; maxzoom: number; bounds: [number, number, number, number] } | null = null,
     urban: UrbanInfo | null = null,
   ) {
     this.theme = currentTheme();
     this.hasUrban = !!urban;
-    const dirOf = (template: string) => `/${template.split("/{z}")[0]}/`;
-    registerGzProtocol(
-      new Set([...tileSet(tiles), ...(urban ? urbanTileKeys(urban) : [])]),
-      tiles.modes ? { dir: dirOf(tiles.modes.url), plainDir: dirOf(tiles.url), maxzoom: tiles.modes.maxzoom, keys: tileSet({ ...tiles, tiles: tiles.modes.tiles }) } : null,
-    );
-    this.netUrl = (f) => `etbmgz://${dataUrl("")}${tiles.modes && f.cats !== ALL_CATS ? tiles.modes.url : tiles.url}`;
-    if (basemap) {
-      registerBasemapProtocol();
-      prefetchBasemapIndex(basemap.root);
-    }
+    registerGzProtocol(new PackStore(packs, dataUrl("")), tiles.modes ? { [PACK_LAYER.netModes]: [tiles.modes.maxzoom, PACK_LAYER.net] } : {});
+    this.netUrl = (f) => packTileUrl(tiles.modes && f.cats !== ALL_CATS ? PACK_LAYER.netModes : PACK_LAYER.net);
     prefetchGz(glyphPrefetchUrls());
     const style: StyleSpecification = baseStyle(this.theme, (n) => dataUrl(`basemap/${n}.json`), basemap);
     style.sources.net = {
@@ -155,7 +148,7 @@ export class MapView {
     };
     Object.assign(style.sources, geojsonSources());
     if (urban) {
-      Object.assign(style.sources, urbanSources(urban, dataUrl));
+      Object.assign(style.sources, urbanSources(urban));
       style.layers.push(...urbanLayers(this.theme, false));
     }
     const net = networkLayers(this.theme, this.state);

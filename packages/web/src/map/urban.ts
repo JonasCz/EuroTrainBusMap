@@ -5,8 +5,9 @@
  * frequency); stops thin out over several zoom levels (ETL `thinZooms`), so a city centre fills in
  * step by step instead of showing every stop at once.
  */
-import { URBAN_LAYERS, UMODE, type UrbanInfo } from "@etbm/shared";
+import { PACK_LAYER, URBAN_LAYERS, UMODE, type UrbanInfo } from "@etbm/shared";
 import type { ExpressionSpecification, FilterSpecification, LayerSpecification } from "maplibre-gl";
+import { packTileUrl } from "./packs.ts";
 import { FONT_MEDIUM, FONT_REGULAR, SOURCE_BOUNDS } from "./style.ts";
 import type { Theme } from "./theme.ts";
 
@@ -17,16 +18,9 @@ export const URBAN_SOURCES = ["urb-rail", "urb-bus"] as const;
 /** Zoom ranges over which things fade in after their own zoom. */
 const FADE = 0.6;
 
-export function urbanSources(info: UrbanInfo, url: (p: string) => string): Record<string, { type: "vector"; tiles: string[]; minzoom: number; maxzoom: number; bounds: [number, number, number, number] }> {
-  const mk = (s: UrbanInfo["rail"]) => ({ type: "vector" as const, tiles: [`etbmgz://${url("")}${s.url}`], minzoom: s.zoom, maxzoom: s.zoom, bounds: SOURCE_BOUNDS });
-  return { "urb-rail": mk(info.rail), "urb-bus": mk(info.bus) };
-}
-
-/** Tile keys (z/x/y) of both sources. */
-export function urbanTileKeys(info: UrbanInfo): string[] {
-  const out: string[] = [];
-  for (const s of [info.rail, info.bus]) for (let i = 0; i + 1 < s.tiles.length; i += 2) out.push(`${s.zoom}/${s.tiles[i]}/${s.tiles[i + 1]}`);
-  return out;
+export function urbanSources(info: UrbanInfo): Record<string, { type: "vector"; tiles: string[]; minzoom: number; maxzoom: number; bounds: [number, number, number, number] }> {
+  const mk = (s: UrbanInfo["rail"], layer: string) => ({ type: "vector" as const, tiles: [packTileUrl(layer)], minzoom: s.zoom, maxzoom: s.zoom, bounds: SOURCE_BOUNDS });
+  return { "urb-rail": mk(info.rail, PACK_LAYER.urbRail), "urb-bus": mk(info.bus, PACK_LAYER.urbBus) };
 }
 
 /** Opacity ramp after the feature's own zoom `z` (0 at z, base from z + FADE): zoom stops every 0.2. */

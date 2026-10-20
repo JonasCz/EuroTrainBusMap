@@ -12,7 +12,7 @@ import {
   packGeo,
   packStationsFile,
   segmentProps,
-  tileSet,
+  TilePack,
   unpackCore,
   unpackGeo,
   unpackStationsFile,
@@ -69,13 +69,13 @@ describe("map data (netmap)", () => {
     expect(cp[2]!.tz).toBeGreaterThan(0);
   });
   it("round-trips core, stations and geo files", () => {
-    const core = packCore({ schema: 3, build: "t", timezones: net.timezones, cityList: net.cities, nStations: 4, counts: { stations: 4, corridors: 3, segments: 3 }, tiles: { minzoom: 2, maxzoom: 7, tiles: { 2: [1, 2] }, url: "x" } });
+    const core = packCore({ schema: 3, build: "t", timezones: net.timezones, cityList: net.cities, nStations: 4, counts: { stations: 4, corridors: 3, segments: 3 }, tiles: { minzoom: 2, maxzoom: 7, modes: { maxzoom: 6 } } });
     const cities = unpackCore(JSON.parse(JSON.stringify(core)) as CoreFile);
     expect(cities.map((c) => c.name)).toEqual(net.cities.map((c) => c.name));
     expect(cities[0]!.lon).toBeCloseTo(13.4105, 4);
     expect(cities[0]!.shard).toBe(0);
     expect(cities[1]!.stations).toEqual([2]);
-    expect(tileSet(core.tiles).has("2/1/2")).toBe(true);
+    expect(core.tiles.modes?.maxzoom).toBe(6);
     const st = unpackStationsFile(cities, JSON.parse(JSON.stringify(packStationsFile(net.cities, net.stations))));
     expect(st.map((s) => s.name)).toEqual(net.stations.map((s) => s.name));
     expect(st[0]!.lat).toBeCloseTo(52.52508, 4);
@@ -161,24 +161,27 @@ describe("map data (netmap)", () => {
       await writeFile(join(dir, "shard", "0.json"), JSON.stringify({ cities: { 0: cf } }));
       const r = await writeMapData(structuredClone(net), dir, () => undefined);
       expect(r.mapdata.tiles.maxzoom).toBe(TILE_MAXZOOM);
-      const zm = r.mapdata.tiles.tiles[String(TILE_MAXZOOM)]!;
+      const layer = new TilePack(await readFile(join(dir, "layers", "net.pack")));
+      expect(layer.node).toEqual({ z: 0, x: 0, y: 0, zmin: 2, zmax: TILE_MAXZOOM });
+      const zm = [...layer.entries()].filter((t) => t.z === TILE_MAXZOOM);
       expect(zm.length).toBeGreaterThan(0);
-      const tile = gunzipSync(await readFile(join(dir, "tiles", String(TILE_MAXZOOM), String(zm[0]), `${zm[1]}.pbf.gz`)));
+      const tile = gunzipSync(zm[0]!.data!);
       expect(tile.length).toBeGreaterThan(50);
       const geo = unpackGeo(JSON.parse(await readFile(join(dir, "geo", "0.json"), "utf8")));
       expect(geo.corridors.map((c) => c.id)).toEqual([2]);
       expect(geo.stations.map((s) => s.id)).toEqual([0, 1, 3]);
-      expect((await readdir(dir)).sort()).toEqual(["core.json", "geo", "shard", "tiles", "tiles-m", "tt"]);
+      expect((await readdir(dir)).sort()).toEqual(["core.json", "geo", "layers", "shard", "tt"]);
+      expect((await readdir(join(dir, "layers"))).sort()).toEqual(["net-m.pack", "net.pack"]);
       // transfer timetable: index + trunk and region chunks with their line files
       expect(r.transfers).toEqual({ version: TT_VERSION, index: "tt/index.json" });
       const tt = JSON.parse(await readFile(join(dir, "tt", "index.json"), "utf8")) as TtIndex;
       expect(tt.chunks[0]!.file).toBe("tt/0.bin.gz");
       expect((await readdir(join(dir, "tt"))).length).toBe(1 + 2 * tt.chunks.length);
       // mode-filter tiles up to their max zoom, beyond it the plain tiles serve every filter
-      const modes = r.mapdata.tiles.modes!;
-      expect(modes.url).toBe("tiles-m/{z}/{x}/{y}.pbf.gz");
-      expect(Object.keys(modes.tiles).map(Number).every((z) => z <= modes.maxzoom)).toBe(true);
-      expect(modes.tiles["2"]!.length).toBeGreaterThan(0);
+      const modes = new TilePack(await readFile(join(dir, "layers", "net-m.pack")));
+      expect(r.mapdata.tiles.modes!.maxzoom).toBe(modes.node.zmax);
+      expect([...modes.entries()].every((t) => t.z <= modes.node.zmax)).toBe(true);
+      expect([...modes.entries()].some((t) => t.z === 2)).toBe(true);
     } finally {
       await rm(dir, { recursive: true });
     }

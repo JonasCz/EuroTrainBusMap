@@ -1,7 +1,4 @@
 /** Tiny ustar writer / reader (regular files, names < 100 bytes) so thousands of tiles travel as ONE R2 object. */
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 export function tarEntries(entries: { name: string; data: Uint8Array }[]): Buffer {
   const parts: Buffer[] = [];
   for (const { name, data } of entries) {
@@ -27,21 +24,18 @@ export function tarEntries(entries: { name: string; data: Uint8Array }[]): Buffe
   return Buffer.concat(parts);
 }
 
-/** Extract a tar made by `tarEntries` into `dir`; returns the number of files. */
-export function untar(buf: Buffer, dir: string): number {
-  let pos = 0, n = 0;
+/** Read the entries of a tar made by `tarEntries` (views into `buf`). */
+export function readTar(buf: Buffer): { name: string; data: Uint8Array }[] {
+  const out: { name: string; data: Uint8Array }[] = [];
+  let pos = 0;
   while (pos + 512 <= buf.length) {
     const h = buf.subarray(pos, pos + 512);
     if (h[0] === 0) break;
     const name = h.subarray(0, 100).toString("utf8").replace(/\0.*$/, "");
     const size = parseInt(h.subarray(124, 135).toString("ascii"), 8);
-    if (name.includes("..") || name.startsWith("/")) throw new Error(`unsafe tar name ${name}`);
     pos += 512;
-    const file = join(dir, name);
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, buf.subarray(pos, pos + size));
+    out.push({ name, data: buf.subarray(pos, pos + size) });
     pos += Math.ceil(size / 512) * 512;
-    n++;
   }
-  return n;
+  return out;
 }

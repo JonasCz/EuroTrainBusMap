@@ -41,6 +41,8 @@ export interface CliArgs {
    * skipped; within it, its last pattern is projected and labelled. Default: feeds.json `staleMaxDays`, else 730.
    */
   staleMaxDays?: number;
+  /** Tile pack size target in KiB (packs.ts PACK_TARGET when absent). */
+  packTargetKb?: number;
   /** Only export coach/bus stop-name review candidates (JSONL) and stop. */
   stopCandidates?: string;
 }
@@ -60,7 +62,7 @@ function parseArgs(argv: string[]): CliArgs {
     console.error(
       "usage: build-data --out <dir> [--feeds id1,id2] [--work <dir>] [--subset full|core] [--days 60] [--start YYYY-MM-DD]\n" +
         "                  [--reuse-db] [--no-geometry] [--no-basemap] [--no-urban] [--no-transit] [--max-age-h N] [--assets <dir>] [--extract-rail]\n" +
-        "                  [--stale-max-days N]",
+        "                  [--stale-max-days N] [--pack-target-kb N]",
     );
     process.exit(2);
   }
@@ -80,6 +82,7 @@ function parseArgs(argv: string[]): CliArgs {
     transit: !has("--no-transit"),
     maxAgeH: get("--max-age-h") ? Number(get("--max-age-h")) : undefined,
     staleMaxDays: get("--stale-max-days") ? Number(get("--stale-max-days")) : undefined,
+    packTargetKb: get("--pack-target-kb") ? Number(get("--pack-target-kb")) : undefined,
     build: get("--build"),
     assets: resolve(get("--assets") ?? join(resolve(get("--work") ?? join(repoRoot, "work")), "assets")),
     extractRail: has("--extract-rail"),

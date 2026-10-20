@@ -2,7 +2,8 @@
 import type { LayerSpecification, StyleSpecification } from "maplibre-gl";
 import { absUrl } from "../data/load.ts";
 import type { Theme } from "./theme.ts";
-import { MAP_BBOX } from "@etbm/shared";
+import { MAP_BBOX, PACK_LAYER } from "@etbm/shared";
+import { packTileUrl } from "./packs.ts";
 
 /** Tile sources never ask for tiles outside the map's box (packages/shared/src/coverage.ts) plus a margin. */
 export const SOURCE_BOUNDS: [number, number, number, number] = [MAP_BBOX[0] - 7, MAP_BBOX[1] - 2, MAP_BBOX[2] + 17, MAP_BBOX[3] + 3];
@@ -22,17 +23,17 @@ export function glyphsUrl(): string {
 }
 
 /**
- * `tiles`: root URL of the land / lake vector tiles (BasemapInfo), or null to draw the 1:50m GeoJSON
- * land / lakes in `basemap/` (dev fixtures).
+ * `tiles`: zooms and area of the land / lake vector tiles (BasemapInfo; tile layer `base` of the packs), or null to draw
+ * the 1:50m GeoJSON land / lakes in `basemap/` (dev fixtures).
  */
-export function baseStyle(theme: Theme, basemapUrl: (name: string) => string, tiles: { root: string; minzoom: number; maxzoom: number; bounds: [number, number, number, number] } | null = null): StyleSpecification {
+export function baseStyle(theme: Theme, basemapUrl: (name: string) => string, tiles: { minzoom: number; maxzoom: number; bounds: [number, number, number, number] } | null = null): StyleSpecification {
   return {
     version: 8,
     glyphs: glyphsUrl(),
     projection: { type: "globe" },
     sources: {
       ...(tiles
-        ? { base: { type: "vector", tiles: [`etbmbase://${tiles.root}tiles/{z}/{x}/{y}.pbf.gz`], minzoom: tiles.minzoom, maxzoom: tiles.maxzoom, bounds: tiles.bounds } }
+        ? { base: { type: "vector", tiles: [packTileUrl(PACK_LAYER.base)], minzoom: tiles.minzoom, maxzoom: tiles.maxzoom, bounds: tiles.bounds } }
         : {
             land: { type: "geojson", data: basemapUrl("land"), buffer: 4, tolerance: 0.3 },
             lakes: { type: "geojson", data: basemapUrl("lakes"), tolerance: 0.3 },

@@ -1,6 +1,6 @@
 import "./styles.css";
 import { App } from "./app.ts";
-import { absUrl, dataUrl, loadAttribution, loadDataSet, loadDetail, loadManifest } from "./data/load.ts";
+import { dataUrl, loadAttribution, loadDataSet, loadDetail, loadManifest } from "./data/load.ts";
 import { buildNet } from "./data/net.ts";
 import { MapView } from "./map/mapview.ts";
 import { mountAttribution } from "./ui/attribution.ts";
@@ -11,7 +11,7 @@ const mobile = matchMedia("(max-width: 719px)");
 async function main(): Promise<void> {
   const side = document.getElementById("side")!;
   const manifest = await loadManifest();
-  if (!manifest.mapdata) throw new Error("This data build has no map data (core.json); rebuild the data.");
+  if (!manifest.mapdata || !manifest.packs) throw new Error("This data build has no map data (core.json, tile packs); rebuild the data.");
 
   let panel: Panel | null = null;
   const padding = () => {
@@ -26,13 +26,14 @@ async function main(): Promise<void> {
     document.getElementById("map")!,
     dataUrl(manifest),
     manifest.mapdata.tiles,
+    manifest.packs,
     {
       onCity: (id) => app?.clickCity(id),
       onStation: (id, city, name) => app?.clickStation(id, city, name),
       onBackground: () => app?.background(),
     },
     padding,
-    manifest.basemap ? { root: absUrl(`data/${manifest.basemap.dir}/`), minzoom: manifest.basemap.minzoom, maxzoom: manifest.basemap.maxzoom, bounds: manifest.basemap.bounds } : null,
+    manifest.basemap ? { minzoom: manifest.basemap.minzoom, maxzoom: manifest.basemap.maxzoom, bounds: manifest.basemap.bounds } : null,
     manifest.urban ?? null,
   );
 

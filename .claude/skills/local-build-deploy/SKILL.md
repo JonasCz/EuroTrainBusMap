@@ -79,15 +79,19 @@ build already made in the reused DuckDB file: build stages modify the database, 
 ## 3. Iterate without a full rebuild
 
 Output layout: `work/out/manifest.json` (points at the current build) and `work/out/<build>/`
-(`network.json`, `core.json`, `tiles/`, `geo/`, `shard/`, `city/`, `basemap/`, ...).
+(`network.json`, `core.json`, `packs/`, `layers/`, `geo/`, `shard/`, `city/`, `basemap/`, ...). Every vector tile (basemap
+land / lakes, network, local transport) is deployed inside the geographic tile packs `packs/<hash>.pack` (README "Tile
+packs"); `layers/<layer>.pack` holds each tile layer in one file as the stages wrote it (input of the pack stage, not deployed).
 
 - Only the map data stage (tiles, core.json, geo files; changes to `packages/shared/src/{netmap,lod,density}.ts`
   or `packages/etl/src/mapdata.ts`; about 1-3 min):
   ```sh
   cd packages/etl && node --import tsx src/mapdata.ts ../../work/out/<build>
   ```
-  It reads `network.json`, rewrites `tiles/`, `core.json`, `geo/*` and updates `manifest.json`.
+  It reads `network.json`, rewrites `layers/net*.pack`, `core.json`, `geo/*`, repacks `packs/` and updates `manifest.json`.
   It does not re-run geometry, segments or the timetable.
+- Only the tile packs (after changing `packages/etl/src/packs.ts` or the target size; a few seconds):
+  `cd packages/etl && node --import tsx src/packs.ts ../../work/out/<build> [--target-kb 384]`.
 - Later ETL stages (everything after download+load: cities, stations, dedup, patterns, corridors,
   geometry, segments, output; changes to `packages/etl/src/{build.ts,core/*,geometry/*}`):
   ```sh
@@ -110,6 +114,7 @@ cp -r packages/web/dist/. "$target/"
 rm -rf "$target/data" && mkdir -p "$target/data"
 cp -r work/out/. "$target/data/"
 rm -f "$target"/data/*/network.json "$target"/data/*/network-*.json     # network.json is for tools only
+rm -rf "$target"/data/*/layers                                          # tile layers before packing: input of the pack stage
 if [ -n "$base" ] && [ -f "$target/_headers" ]; then sed "s#^/#/$base/#" "$target/_headers" > "$site/_headers" && rm "$target/_headers"; fi
 find "$site" -type f | wc -l; du -sh "$site"
 find "$site" -type f -size +25M      # must print nothing (Workers asset limit 25 MiB; 20k files on the free plan)
@@ -170,7 +175,9 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
   gives stations, corridors (with segment ids, cats, tpd, snapped) and segment polylines for the shard
   (`City.shard` says which); `shard/<n>.json` has the timetable patterns; `sched/<shard / 4>.json` (`scheduleFile`) the full stop
   lists of runs whose pattern leaves stops out (`Pattern.run` → `ScheduleFile.runs`; small-place bus stops, a town's other stops).
-- `tiles/{z}/{x}/{y}.pbf.gz` are gzipped MVTs: gunzip + `@mapbox/vector-tile` (in `node_modules/.pnpm`); layer `seg`
+- Tiles: `new TilePack(readFileSync("<build>/layers/net.pack"))` (`@etbm/shared` tilepack.ts) → `.entries()` / `.get(layer, z, x, y)`
+  give the gzipped MVTs of a layer (`net`, `net-m`, `base`, `urb-rail`, `urb-bus`); a deployed pack reads the same way, and
+  `new PackLookup(manifest.packs).find(layer, z, x, y)` says which pack holds a tile. gunzip + `@mapbox/vector-tile` (in `node_modules/.pnpm`); layer `seg`
   properties `l{k}` (LOD level index into LEVELS), `w{k}` (width), `u` (1 = approximate alignment, drawn dashed), `hop`.
 - Test routing on the prebuilt graphs: `deserializeRailGraph(readFileSync(".../rail-graph-v1.bin"))` + `new Router(graph, opts)`
   from `packages/etl/src/geometry/` (do not import `geometry/index.ts` from a script: ERR_REQUIRE_ASYNC_MODULE; copy `MAX_DETOUR`).
@@ -178,8 +185,8 @@ Example: `node shot.cjs http://localhost:5173/ /tmp/x.png -7.95 52.49 11`. Keep 
 
 ## Status of checks (last run)
 
-`pnpm typecheck` passes (shared, etl, web); `pnpm test` passes (etl 195 tests, web 147 tests, ~10 s each). `wrangler whoami` works with the env token;
-`wrangler deploy --dry-run` succeeded on the assembled `dist/site` (1781 files). Expected harmless build warnings: a few feeds with
+`pnpm typecheck` passes (shared, etl, web); `pnpm test` passes (etl 274 tests, web 173 tests, ~10 s each). `wrangler whoami` works with the env token;
+`wrangler deploy --dry-run` succeeded on the assembled `dist/site` (2.7k files with the tile packs, Oct 2026; 14.8k before them). Expected harmless build warnings: a few feeds with
 "no trips within the horizon" (short-bus-only files such as lurraldebus-*), "out of date (service ended on …): kept, its last service pattern
 projected and labelled" for a feed whose calendar has run out (gtfs/validity.ts; `staleFeeds` in the build report, its routes carry
 `Route.expired`), "out of date (…, N days before the build (limit 730)), skipped" for one older than `staleMaxDays` (`expiredFeeds` –
@@ -225,8 +232,8 @@ remove it from feeds.json if it has ended for good), stop-names "not found withi
   (`/home/user/EuroTrainBusMap/packages/shared/src/index.ts`; `@etbm/shared` does not resolve from the scratchpad). Run them with
   `cd packages/etl && node --import tsx <script.mts>`.
 - Never `pkill -f <pattern>` where the pattern appears in your own command line (it killed the calling shell); find the pid with `ps aux | grep "[p]attern"`.
-- Tiles now go up to z9 (TILE_MAXZOOM): ~4100 tile files (~20 MB gz), full build ~5400 files / 1.2 GB; Cloudflare allows 20k files, so z10
-  (~+9k files) would still fit but leaves little headroom. A `mapdata`-only run takes ~2 min.
+- Tiles go up to z9 (TILE_MAXZOOM): ~4700 tiles (~41 MB gz), packed with the basemap and local-transport tiles into a few hundred
+  pack files, so tile counts no longer touch Cloudflare's 20k-file limit (more zooms cost bytes per view, not files). A `mapdata`-only run takes ~2 min.
 - A foreground command is moved to the background after 120 s; for long waits use `Monitor` (until-loop) or poll with `timeout 110 bash -c 'until ...'`.
 - Preview symlink `packages/web/public/data` is excluded via `.git/info/exclude`; remove it before deploying.
 - Density LOD v2 + mode scenarios (mapdata 6): `promoteScenarios` (shared/src/density.ts) runs the promotion for all 15 mode subsets
@@ -235,8 +242,8 @@ remove it from feeds.json if it has ended for good), stop-names "not found withi
   Northern Ireland got nothing). Connectivity is by city (a coach line from a bus station grows out of the city's rail network); subset
   scenarios may also grow out of nodes visible in the all-modes scenario. Tile props: `s{k}` / city `n{k}` packed base-16 levels per
   subset of the *other* categories (`scenarioDigit`; digit 7 = all on = `l{k}`), clamped per tile zoom by `forZoom` to [lo, hi + 1].
-  Low-zoom tiles with every scenario are 2–3× bigger (z4 max ~850 KB), hence `tiles-m/` (z2–6) for filtered views, switched with
-  `VectorTileSource.setTiles` in `mapview.setFilters`; `protocol.ts` redirects `tiles-m/` z > 6 to `tiles/`. Quick regional numbers without
+  Low-zoom tiles with every scenario are 2–3× bigger (z4 max ~850 KB), hence the tile layer `net-m` (z2–6, packs of its own) for
+  filtered views, switched with `VectorTileSource.setTiles` in `mapview.setFilters`; `protocol.ts` redirects `net-m` z > 6 to `net`. Quick regional numbers without
   the map: a script that runs `buildNetIndex(net, { density: {...} })` and sums visible km per bbox / zoom (density per 256² cell) was the
   fastest way to tune budget / cell size (each variant ~15 s).
 - LOD / fade-in design (phase C): hops (corridors) are grouped into per-category chains (`shared/src/lines.ts`: corridors meeting at a city where exactly two of that category meet; junctions and unsnapped long hops end a chain) and each chain gets the earliest level of its hops, then `promoteSparse` promotes whole chains (a chain is accepted if >= 75 % of the ink it adds lies in cells with room). Per-pattern grouping was rejected: patterns live in the shards (per city, no global id, trips/day per pattern would need calendars), whereas chains need only `network.json`, so the mapdata stage alone is enough (~80 s). Tile z holds every feature that starts fading in before z+1 (`x.z - FADE_ZOOM < z+1`, cities `- CITY_LEAD` too) and `forZoom` clamps only levels already reached at z; the style fades `line-opacity` to 1 AT the feature's level (0.7 zoom before it), so screenshots taken exactly at a level zoom (z6, z7...) show it complete, while at e.g. z5.5 lines of level 6 are half faded.
@@ -305,12 +312,13 @@ data, give the build a new id: rename the directory (e.g. append a letter, `2026
   Never `git stash` while vite / Playwright run: the page reloads half-way and the shot script dies.
 - Full ETL with `--reuse-db`, output into `work/out-new` (so the old build stays viewable), ~14 min: stations 48 s, cities 17 s, patterns
   93 s, geometry 150 s, segments ~6 min (125 k corridors instead of 69 k), mapdata ~3 min. Swap with `rm -rf work/out && mv work/out-new work/out`
-  (`basemap-v2-<coverage>` is unpacked into the out dir by every build, so it comes along).
+  (the basemap tiles are part of the build's `layers/` and `packs/`, so they come along).
 
 ## Basemap tiles (phase E)
 
-- The coastline / lakes are vector tiles unpacked by every build to `<out>/basemap-v2-<coverage>/` (not into the build dir, shared by all builds, ~4.9k files) from `work/assets/basemap/tiles-v2.tar`; `Manifest.basemap` points to them. Without the tar the build falls back to the coarse 1:50m GeoJSON. A mapdata-only run (`mapdata.ts`) keeps `manifest.basemap` and the directory untouched.
-- Assemble/deploy copies `work/out/.` so `data/basemap-v2-<coverage>/` is deployed too; total files = builds (~5.4k) + 4.9k tiles. Keep an eye on the 20k limit.
+- The coastline / lakes are vector tiles that every build turns from `work/assets/basemap/tiles-v2.tar` into its tile layer
+  `layers/base.pack` (stage basemap) and then into the tile packs; `Manifest.basemap` holds their zooms and bounds. Without the tar
+  the build falls back to the coarse 1:50m GeoJSON. A mapdata-only or urban-only run keeps `layers/base.pack` and repacks it.
 
 ## Local transport layer (phase G) – metro / tram / city bus
 
@@ -323,8 +331,8 @@ data, give the build a new id: rename the directory (e.g. append a letter, `2026
   in `urban/types.ts` when extraction changes). Needs `work/assets/rail/urbanrail-graph-v1.bin` (tram / metro track, see the refresh-geometry-assets skill;
   without it lines without shapes stay dashed stop-to-stop chains) and the road graph.
 - **Iterating on the look without touching the deployed build**: make a scratch out dir whose build dir holds symlinks to the real build's files
-  and real copies of `attribution.json` and `manifest.json` (`work/out-dev/<build>/*` -> `work/out/<build>/*`, `work/out-dev/basemap-v2-<coverage>` -> `work/out/basemap-v2-<coverage>`),
-  run `urban/index.ts` on it, point the preview symlink (`packages/web/public/data`) at `work/out-dev`. Swapping the symlink between `work/out` (before)
+  and real copies of `attribution.json`, `manifest.json` and `layers/` (`work/out-dev/<build>/*` -> `work/out/<build>/*`; `packs/` is
+  rewritten, so it must not be a symlink into the real build), run `urban/index.ts` on it, point the preview symlink (`packages/web/public/data`) at `work/out-dev`. Swapping the symlink between `work/out` (before)
   and `work/out-dev` (after) gives before/after screenshots with the same web code. `window.__etbm.map.queryRenderedFeatures({layers:["urb-rail-stop"]})` finds
   stops to click in Playwright; `jumpTo({..., padding: {left: 400}})` centres the view in the area not covered by the panel.
 - **`--reuse-db` gotcha**: the default `--start` is the Berlin date of yesterday, so on a new day the db-state key no longer matches and the whole
@@ -332,7 +340,7 @@ data, give the build a new id: rename the directory (e.g. append a letter, `2026
 - **Debugging coverage**: per feed lines / shaped patterns / dropped counts are logged (`urban <key>: N lines (S shaped patterns) …`), the alignment
   summary line `urban: alignment {"bus":{shape,routed,partial,stops},"rail":{…}}` shows how many patterns came from shapes, were routed completely /
   ≥ 70 % or stayed chords. Feeds without `shapes.txt` (DELFI, GB, CH, SE, parts of FR/IT) depend on the graphs.
-- **Sizes** (see README): 2.4k files / ~11 MB for the layer, largest tile < 100 KB; the site stays far below 20k files.
+- **Sizes** (see README): 2.4k tiles / ~11 MB for the layer, largest tile < 100 KB; they are deployed inside the tile packs.
 - A `DiscIndex` / `isCityBus` change moves which buses count as "city buses" (population ≥ 100 000 discs): bump `EXTRACT_VERSION`, the filter runs at extraction time.
 
 ## Villages (bus destinations in small places)

@@ -1,30 +1,20 @@
 /**
- * `etbmgz://<url>` – fetches a gzip-compressed static file and inflates it in
- * the browser (DecompressionStream). Static hosts such as Cloudflare do not
- * compress protobuf, so vector tiles and glyphs are stored pre-gzipped. Tiles
- * missing from the tile index are answered with an empty tile without a
- * request (no 404s for empty sea/land areas).
+ * `etbmgz://` – two kinds of URLs:
+ *  - `etbmgz://pack/<layer>/{z}/{x}/{y}`: a vector tile of the tile packs (packs.ts; every tile layer: basemap,
+ *    network, local transport). Fill tiles are answered with the all-land tile, missing ones with an empty tile.
+ *  - `etbmgz://<url>`: a gzip-compressed static file (glyphs), inflated in the browser (DecompressionStream).
+ * Static hosts such as Cloudflare do not compress protobuf, so tiles and glyphs are stored pre-gzipped.
  */
 import maplibregl from "maplibre-gl";
 import { inflate } from "../data/gz.ts";
+import { landBytes, PACK_URL_RE, type PackStore } from "./packs.ts";
 
 export { inflate };
 
 let registered = false;
-let known: Set<string> | null = null;
-
-/**
- * A second tile set for the network under mode filters (`TileIndex.modes`): up to `maxzoom` its own
- * tiles (`keys`), beyond it the URLs are redirected to the plain tile directory, which serves every filter.
- */
-export interface ModeTiles {
-  /** URL path parts of the two tile directories, e.g. "/tiles-m/" and "/tiles/" */
-  dir: string;
-  plainDir: string;
-  maxzoom: number;
-  keys: Set<string>;
-}
-let modeTiles: ModeTiles | null = null;
+let store: PackStore | null = null;
+/** layer → [maxzoom, layer serving the zooms above it] (the mode-filter network beyond its own zooms) */
+let redirects: Record<string, [number, string]> = {};
 const prefetched = new Map<string, Promise<ArrayBuffer>>();
 
 async function fetchGz(url: string, signal?: AbortSignal): Promise<ArrayBuffer | null> {
@@ -53,29 +43,32 @@ const key = (u: string) => {
   }
 };
 
-const TILE_RE = /\/(\d+)\/(\d+)\/(\d+)\.pbf\.gz$/;
+async function packTile(layer: string, z: number, x: number, y: number): Promise<ArrayBuffer> {
+  const r = redirects[layer];
+  if (r && z > r[0]) layer = r[1];
+  if (!store) return new ArrayBuffer(0);
+  const t = await store.tile(layer, z, x, y);
+  if (t.kind === "fill") return landBytes();
+  if (t.kind === "empty") return new ArrayBuffer(0);
+  return inflate(t.gz.slice().buffer); // a copy: MapLibre may transfer (detach) the buffer
+}
 
-export function registerGzProtocol(tiles?: Set<string>, modes?: ModeTiles | null): void {
-  if (tiles) known = tiles;
-  if (modes !== undefined) modeTiles = modes;
+export function registerGzProtocol(packs?: PackStore, packRedirects: Record<string, [number, string]> = {}): void {
+  if (packs) store = packs;
+  redirects = packRedirects;
   if (registered) return;
   registered = true;
   maplibregl.addProtocol("etbmgz", async (params, abort) => {
-    let url = params.url.slice("etbmgz://".length);
-    const m = TILE_RE.exec(url);
-    const mt = modeTiles;
-    if (m && mt && url.includes(mt.dir)) {
-      if (+m[1]! > mt.maxzoom) url = url.replace(mt.dir, mt.plainDir);
-      else if (!mt.keys.has(`${m[1]}/${m[2]}/${m[3]}`)) return { data: new ArrayBuffer(0) };
-    }
-    if (m && known && !(mt && url.includes(mt.dir)) && !known.has(`${m[1]}/${m[2]}/${m[3]}`)) return { data: new ArrayBuffer(0) };
+    const url = params.url.slice("etbmgz://".length);
+    const m = PACK_URL_RE.exec(url);
+    if (m) return { data: await packTile(m[1]!, +m[2]!, +m[3]!, +m[4]!) };
     const pre = prefetched.get(key(url));
     if (pre) {
       prefetched.delete(key(url)); // one use: MapLibre may transfer (detach) the buffer
       return { data: await pre };
     }
     const data = await fetchGz(url, abort.signal);
-    if (!data && !m) throw new Error(`404 ${url}`);
-    return { data: data ?? new ArrayBuffer(0) };
+    if (!data) throw new Error(`404 ${url}`);
+    return { data };
   });
 }

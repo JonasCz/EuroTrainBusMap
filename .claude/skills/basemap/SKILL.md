@@ -1,14 +1,14 @@
 ---
 name: basemap
-description: Rebuild or debug the basemap (coastline, lakes, borders) of EuroTrainBusMap. Land and lakes are gzipped vector tiles built from OSM land polygons + Natural Earth 10m lakes and stored in R2 as one tar (basemap/tiles-v2.tar); borders and country labels are small GeoJSON files. Use when the coastline looks coarse or wrong, when OSM publishes new land polygons, after changing tile zooms / simplification in packages/etl/src/basemap, or when the file count of the site gets close to the 20k limit.
+description: Rebuild or debug the basemap (coastline, lakes, borders) of EuroTrainBusMap. Land and lakes are gzipped vector tiles built from OSM land polygons + Natural Earth 10m lakes and stored in R2 as one tar (basemap/tiles-v2.tar), which every build turns into the tile layer `base` of its geographic tile packs; borders and country labels are small GeoJSON files. Use when the coastline looks coarse or wrong, when OSM publishes new land polygons, or after changing tile zooms / simplification in packages/etl/src/basemap.
 ---
 
 # Basemap (land, lakes, borders)
 
 | what | source | where it ends up |
 |---|---|---|
-| land | OSM land polygons, `land-polygons-complete-4326.zip` from https://osmdata.openstreetmap.de/download/ (923 MB, ODbL; reachable through the session proxy; 1.3 GB `.shp`, 334k polygons / 24 M points inside the Europe bbox) | vector tiles, layer `land` |
-| lakes | Natural Earth 10m `ne_10m_lakes` + `ne_10m_lakes_europe` (GitHub mirror nvkelso/natural-earth-vector, raw.githubusercontent.com) | vector tiles, layer `lake` |
+| land | OSM land polygons, `land-polygons-complete-4326.zip` from https://osmdata.openstreetmap.de/download/ (923 MB, ODbL; reachable through the session proxy; 1.3 GB `.shp`, 334k polygons / 24 M points inside the Europe bbox) | vector tiles, layer `land` (tile layer `base` in `data/<build>/packs/`) |
+| lakes | Natural Earth 10m `ne_10m_lakes` + `ne_10m_lakes_europe` (GitHub mirror nvkelso/natural-earth-vector, raw.githubusercontent.com) | vector tiles, layer `lake` (same tiles) |
 | borders | Natural Earth 10m `admin_0_boundary_lines_land`, 4 decimals (11 m), 308 KB | `data/<build>/basemap/borders.json` (GeoJSON) |
 | country labels | Natural Earth 50m countries | `data/<build>/basemap/labels.json` |
 
@@ -23,8 +23,8 @@ polygons and no artificial cuts. `simplified-land-polygons-complete-3857` is not
 ```sh
 # all slow-changing basemap assets into work/assets (basemap/borders.json, labels.json, tiles-v2.tar)
 pnpm --filter @etbm/etl run assets -- --out $PWD/work/assets --work $PWD/work --only basemap,tiles
-# only the tiles, with an unpacked copy for inspection:
-cd packages/etl && node --max-old-space-size=8192 --import tsx src/basemap/tiles.ts --out /tmp/x --cache $PWD/../../work/cache/basemap-src --unpacked /tmp/x/unpacked
+# only the tiles (inspect them with readTar / basemapLayerTiles from src/basemap/{tar,tiles}.ts):
+cd packages/etl && node --max-old-space-size=8192 --import tsx src/basemap/tiles.ts --out /tmp/x --cache $PWD/../../work/cache/basemap-src
 ```
 About 3 min and 3.6 GB RSS on 4 cores, after the 923 MB download (cached in `work/cache/basemap-src`; the
 `.shp` is unzipped next to the zip). Result: `basemap/tiles-v2.tar` = 30.9 MB: `index.json` (46 KB) + 4900 tile files.
@@ -38,24 +38,24 @@ About 3 min and 3.6 GB RSS on 4 cores, after the 923 MB download (cached in `wor
 | 9 | 3072 | 22.3 MB (largest tile 318 KB) | 2396 |
 
 z9 uses extent 8192 (≈ 6 m, MapLibre's internal precision), tiles are 512 px, so z9 data is overzoomed up to z15
-(z14 ≈ 2 px per unit; still crisp). z10 would add ~8k files: too many for the 20k-file limit (builds are ~5.4k files + 4.9k tiles).
+(z14 ≈ 2 px per unit; still crisp). The tiles are deployed inside the tile packs, so a z10 would cost bytes (~+60 MB), not files.
 
 ## Design
 
-- Files are the scarce resource (20k per deployment), so a tile is only written when it carries information:
-  no land → no file (sea); land only and completely covering the tile (a single rectangle) → no file either, the
-  tile is listed in `index.json` `land` (topmost such tile per branch; descendants inherit). The web protocol
-  `etbmbase://` (`packages/web/src/map/basemap.ts`) loads `index.json`, fetches files, answers all-land tiles with a
-  37-byte constant MVT and sea with an empty tile. Tiles with a lake are always files.
+- A tile is only stored when it carries information: no land → no tile (sea); land only and completely covering the
+  tile (a single rectangle) → no tile either, the tile is listed in `index.json` `land` (topmost such tile per branch;
+  descendants inherit). Tiles with a lake are always stored.
 - Memory: z2–z5 are cut from all polygons at once, z6–z9 block by block (one z5 tile + 12 % margin at a time), polygons
   are quantised to 1e-5° (1 m) when read.
-- R2 gets ONE object (`basemap/tiles-v2.tar`, plain ustar written by `src/basemap/tar.ts`) instead of 4.9k keys
-  (wrangler uploads one key per call). Every build unpacks it to `<out>/basemap-v2-<coverage>/` (`installBasemapTiles`), next to
-  `manifest.json`, and adds `Manifest.basemap` (`dir`, zooms, bounds). So the tiles live at the stable path
-  `data/basemap-v2-<coverage>/…`, not in the build directories, are not re-uploaded by `wrangler deploy` when unchanged (content hash)
-  and have their own cache rule in `packages/web/public/_headers` (1 week, not immutable; the `! Cache-Control` line detaches the
-  `/data/:build/*` immutable header that would otherwise match too). The directory name carries `COVERAGE_ID` because the tiles are cached for a week under a stable URL (a new coverage = a new path, else browsers keep the old index and draw the new area as sea). Bump `BASEMAP_DIR` / `BASEMAP_TILES_KEY` (v3) for a
-  format change; old builds keep working.
+- R2 gets ONE object (`basemap/tiles-v2.tar`, plain ustar written by `src/basemap/tar.ts`) instead of 5k keys
+  (wrangler uploads one key per call). Every build turns it into the tile layer `base` (`installBasemapLayer`:
+  `<build>/layers/base.pack`; the `land` tiles become *fill* entries) and adds `Manifest.basemap` (zooms, bounds). The pack
+  stage (`packages/etl/src/packs.ts`, README "Tile packs") puts the base tiles into the same geographic packs as the network
+  and local-transport tiles; the packs live in the build directory under content-hashed names, so they are immutable and a
+  new build (or coverage) can never be mixed with tiles a browser cached from an older one. The web app
+  (`packages/web/src/map/packs.ts`) answers fill tiles (also a pack node that is entirely land and has no file) with a
+  37-byte constant all-land MVT and missing tiles with an empty tile (sea). Bump `BASEMAP_TILES_KEY` (v3) for a change of
+  the asset format.
 - Without the tar in the assets the build warns and the app draws the coarse 1:50m `land.json` / `lakes.json` (generated on the
   fly by `web/scripts/basemap.ts` with `legacyLayers`; also used by `make-fixture.ts`).
 

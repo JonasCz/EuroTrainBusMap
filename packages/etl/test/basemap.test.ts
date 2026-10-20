@@ -1,10 +1,7 @@
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { clipRingFlat, quantize, simplifyRing } from "../src/basemap/geom.ts";
-import { tarEntries, untar } from "../src/basemap/tar.ts";
+import { readTar, tarEntries } from "../src/basemap/tar.ts";
 import { cutZoom, type Item } from "../src/basemap/tiles.ts";
 
 const ring = (...p: number[][]) => Float64Array.from(p.flat());
@@ -47,9 +44,8 @@ describe("basemap tiles", () => {
     expect(gunzipSync(t.pbf!).length).toBeGreaterThan(20);
   });
   it("round-trips a tar", () => {
-    const dir = mkdtempSync(join(tmpdir(), "tar-"));
-    const n = untar(tarEntries([{ name: "index.json", data: Buffer.from("{}") }, { name: "tiles/3/4/5.pbf.gz", data: Buffer.alloc(1000, 7) }]), dir);
-    expect(n).toBe(2);
-    expect(readFileSync(join(dir, "tiles/3/4/5.pbf.gz")).length).toBe(1000);
+    const e = readTar(tarEntries([{ name: "index.json", data: Buffer.from("{}") }, { name: "tiles/3/4/5.pbf.gz", data: Buffer.alloc(1000, 7) }]));
+    expect(e.map((x) => x.name)).toEqual(["index.json", "tiles/3/4/5.pbf.gz"]);
+    expect(new Uint8Array(e[1]!.data)).toEqual(new Uint8Array(1000).fill(7));
   });
 });

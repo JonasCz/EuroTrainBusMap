@@ -1,6 +1,6 @@
 /**
  * Local (within-city) transport layer – a display layer next to the intercity network: metro, tram and
- * city bus lines with their stops, as vector tiles of their own (`<build>/urban/{rail,bus}/{z}/{x}/{y}.pbf.gz`).
+ * city bus lines with their stops, as vector tiles of their own (tile layers `urb-rail` and `urb-bus` of the tile packs, tilepack.ts).
  * Tile layers:
  *   `ul` lines   m mode (0 bus 1 tram 2 metro 3 cable), n short name, c colour (hex, optional), a agency, d description,
  *                t trips per day (peak direction), z first zoom, g geometry quality (absent = feed shape, 1 rail, 2 road, 3 stop to stop),
@@ -16,9 +16,6 @@ export const UMODE = { Bus: 0, Tram: 1, Metro: 2, Cable: 3 } as const;
 export interface UrbanSourceInfo {
   /** The only zoom the tiles are stored at (MapLibre overzooms them). */
   zoom: number;
-  /** x,y pairs of the tiles that exist */
-  tiles: number[];
-  url: string;
 }
 
 export interface UrbanInfo {
@@ -27,9 +24,3 @@ export interface UrbanInfo {
   bus: UrbanSourceInfo;
 }
 
-/** Tile keys "z/x/y" of an urban source. */
-export function urbanTileSet(s: UrbanSourceInfo): Set<string> {
-  const out = new Set<string>();
-  for (let i = 0; i + 1 < s.tiles.length; i += 2) out.add(`${s.zoom}/${s.tiles[i]}/${s.tiles[i + 1]}`);
-  return out;
-}

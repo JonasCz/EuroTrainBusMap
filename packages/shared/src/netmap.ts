@@ -1,10 +1,10 @@
 /**
  * Map data derived from the network for fast, progressive loading:
  *
- *   core.json            CoreFile     – cities (+ timezones, tile index); everything the app needs to start
+ *   core.json            CoreFile     – cities (+ timezones, tile zooms); everything the app needs to start
  *   stations.json        StationsFile – station names/coords/cats (lazy, needed once a city is selected)
- *   tiles/{z}/{x}/{y}.pbf.gz          – gzipped Mapbox vector tiles of the drawn network
- *                                       (layers seg, city; at the max zoom also st = stations)
+ *   tile layers net, net-m            – gzipped Mapbox vector tiles of the drawn network, in the tile packs
+ *                                       (tilepack.ts; layers seg, city; at the max zoom also st = stations)
  *   geo/<shard>.json / geo/c<city>.json GeoFile – corridors (+ segment geometry) referenced by the
  *                                       patterns of one timetable shard, for highlighting a selection
  *
@@ -433,18 +433,15 @@ export function stationProps(c: City, s: Station, rank: number): Record<string, 
 
 // ---------------------------------------------------------------- core / stations files
 
+/** Zoom range of the network tiles (tile layers `net` and `net-m` of the tile packs, tilepack.ts). */
 export interface TileIndex {
   minzoom: number;
   maxzoom: number;
-  /** Per zoom: existing tiles as a flat [x0, y0, x1, y1, …] list. */
-  tiles: Record<string, number[]>;
-  /** Path template relative to the build dir. */
-  url: string;
   /**
-   * Tiles for mode filters up to `maxzoom` (they hold the lines every category subset shows earlier,
-   * density.ts); beyond it `url` serves every filter.
+   * Tile layer `net-m` for mode filters up to `maxzoom` (it holds the lines every category subset shows earlier,
+   * density.ts); beyond it `net` serves every filter.
    */
-  modes?: { maxzoom: number; tiles: Record<string, number[]>; url: string };
+  modes?: { maxzoom: number };
 }
 
 /** Startup file: cities only (stations, corridors and geometry are loaded on demand). */
@@ -696,13 +693,4 @@ export function mergeLines(features: GeoJSON.Feature[]): GeoJSON.Feature[] {
   return out;
 }
 
-/** Tile key list helpers. */
-export function tileKey(z: number, x: number, y: number): string {
-  return `${z}/${x}/${y}`;
-}
 
-export function tileSet(index: TileIndex): Set<string> {
-  const out = new Set<string>();
-  for (const [z, xy] of Object.entries(index.tiles)) for (let i = 0; i < xy.length; i += 2) out.add(tileKey(+z, xy[i]!, xy[i + 1]!));
-  return out;
-}

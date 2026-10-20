@@ -9,7 +9,9 @@
  *   data/<build>/calendars.json   CalendarsFile – shared service-day bitmasks
  *   data/<build>/city/<id>.json   CityFile – timetable data for one city (loaded on click)
  *   data/<build>/basemap/*.json   GeoJSON basemap layers (borders, country labels)
- *   data/basemap-v2-<coverage>/              OSM land / lake vector tiles shared by all builds (see BasemapInfo)
+ *   data/<build>/packs/<hash>.pack  every vector tile (basemap land / lakes, network, local transport) in geographic
+ *                                 tile packs, see tilepack.ts and Manifest.packs
+ *   data/<build>/core.json, geo/, shard/, sched/, tt/   map data and timetables (netmap.ts, tt.ts)
  *   data/<build>/attribution.json AttributionFile
  *
  * Conventions:
@@ -79,9 +81,11 @@ export interface Manifest {
    * `<build>/core.json` and the vector tiles listed here instead of network.json.
    */
   mapdata?: { version: number; core: string; tiles: import("./netmap.ts").TileIndex };
+  /** Where every vector tile is: the tile packs of the build (tilepack.ts). */
+  packs?: import("./tilepack.ts").TilePacks;
   /** Transfer timetable for connections with changes (see tt.ts): `<build>/<index>` is a TtIndex. */
   transfers?: { version: number; index: string };
-  /** Land / lake vector tiles (shared by all builds); without it the web app falls back to basemap/{land,lakes}.json. */
+  /** Land / lake vector tiles (tile layer `base` of the packs); without it the web app falls back to basemap/{land,lakes}.json. */
   basemap?: BasemapInfo;
   /** Local transport (metro / tram / city bus) vector tiles, see urban.ts; absent in builds without the layer. */
   urban?: import("./urban.ts").UrbanInfo;
@@ -375,19 +379,17 @@ export function hasCat(mask: number, cat: number): boolean {
 }
 
 /**
- * OSM-derived basemap vector tiles (layers `land`, `lake`), stored next to manifest.json in
- * `data/<dir>/` (not per build): `<dir>/index.json` (BasemapIndex) and `<dir>/tiles/{z}/{x}/{y}.pbf.gz`.
- * Tiles that are not listed are sea, or – inside a `land` entry – land (see web/src/map/basemap.ts).
+ * OSM-derived basemap vector tiles (layers `land`, `lake`): tile layer `base` of the tile packs (tilepack.ts), whose
+ * fill entries are tiles entirely covered by land; tiles without an entry are sea.
  */
 export interface BasemapInfo {
   version: number;
-  dir: string;
   minzoom: number;
   maxzoom: number;
   bounds: [number, number, number, number];
 }
 
-/** `<dir>/index.json`: flat x,y pairs per zoom. */
+/** `index.json` of the R2 basemap tiles asset (ETL only): flat x,y pairs per zoom. */
 export interface BasemapIndex {
   version: number;
   minzoom: number;

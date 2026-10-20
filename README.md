@@ -27,6 +27,7 @@ packages/
                         pattern building, cross-feed dedup) – unit tested in test/
     src/geometry/       corridor geometry: rail / coach+bus routing on graphs built from Overture (OSM) rail and major roads
     src/urban/          local transport (metro / tram / city bus) display layer: own GTFS pass, own tiles (see "Local transport" below)
+    src/packs.ts        last stage: groups every tile layer by area into a few hundred tile packs (see "Tile packs" below)
     urban-feeds.json    extra GTFS feeds that only feed the local layer (kept out of feeds.json: the intercity pipeline is untouched)
     src/assets.ts       builds the slow-changing inputs stored in R2 (see below)
   web/      MapLibre front end (Vite); reads data/ at runtime
@@ -138,12 +139,14 @@ Pipeline in short:
    `calendars.json`, `attribution.json`, `basemap/{borders,labels}.json` (Natural Earth 1:10m borders) and `shard/<n>.json` – the per-city
    timetables, grouped into ~600 shards of spatially neighbouring cities (`City.shard`), and `sched/<n>.json` – the full stop lists of
    the runs whose pattern leaves stops out (`Pattern.run`), one file per 4 shards (`scheduleFile`), loaded only when a trip's schedule opens.
+   `network.json` and `layers/` (the tile layers before packing) are not deployed.
    `data/manifest.json` points to the current build.
 10. **Map data** (`src/mapdata.ts`, formats in `packages/shared/src/netmap.ts`) – what the web app
    actually loads, so phones never download the whole network:
-   - `core.json` (~0.7 MB gzip): cities only (names, positions, importance, shard) + tile index;
+   - `core.json` (~0.7 MB gzip): cities only (names, positions, importance, shard) + tile zoom range;
      the only data needed to start.
-   - `tiles/{z}/{x}/{y}.pbf.gz` (z2–9, ~4100 files, ~30 MB gzip total, + `tiles-m/` z2–6 for mode filters; only tiles that contain data):
+   - Tile layer `net` (z2–9, ~4700 tiles, ~41 MB gzip total, + `net-m` z2–6 for mode filters; only tiles that contain data,
+     served from the tile packs, see "Tile packs" below):
      gzipped Mapbox vector tiles of the drawn network (layers `seg`, `city`, and at z9 also `st` stations),
      overzoomed beyond z9. z9 (extent 8192 ≈ 6 m) holds the stored
      geometry almost unsimplified, z7/z8 are simplified to ~200 / ~100 m. Features are filter-independent: per category width/LOD level; the
@@ -171,8 +174,8 @@ Pipeline in short:
      with "Coach" alone the coaches fill the room the trains left; a subset never shows a line later
      than a superset). Tiles store the all-modes level `l{k}` plus, where it differs, the subset levels
      packed as base-16 digits `s{k}` (cities: `n{k}`), and the style picks the digit of the active
-     filter. Up to z6 a filtered view loads its own tile set `tiles-m/` (~9 MB, 134 files: the union of
-     all scenarios is 2–3× heavier at low zoom), so the default view stays light; from z7 `tiles/`
+     filter. Up to z6 a filtered view loads its own tile layer `net-m` (~12 MB, ~160 tiles: the union of
+     all scenarios is 2–3× heavier at low zoom, kept in packs of their own), so the default view stays light; from z7 `net`
      serves every filter (the protocol redirects). Lines fade in over 0.7 zoom levels ending at their level
      (`FADE_ZOOM`; tile z already holds everything that starts fading in before z+1), city
      markers/labels and stations fade the same way (style `line-opacity` / `circle-opacity`
@@ -346,8 +349,8 @@ Pipeline in short:
      (names/positions). Loaded together with the shard on a click. Highlighted lines are sized by the
      selection's own trips/day (the selected city's / pair's patterns, a journey leg = 1), not by the line's
      total traffic, and a pair is drawn from the first stop of each trip in the origin city.
-   `manifest.json` points to `core.json` and lists the tiles (`Manifest.mapdata`) and the transfer timetable (`Manifest.transfers`, `tt/index.json`).
-   Rebuild just this stage for an existing build: `node --import tsx packages/etl/src/mapdata.ts <out>/<build>`.
+   `manifest.json` points to `core.json` (`Manifest.mapdata`), the tile packs (`Manifest.packs`) and the transfer timetable (`Manifest.transfers`, `tt/index.json`).
+   Rebuild just this stage for an existing build: `node --import tsx packages/etl/src/mapdata.ts <out>/<build>` (repacks the tiles too).
 
 11. **Local transport** (`src/urban/`, formats in `packages/shared/src/urban.ts`) – metro, tram, light rail,
    funicular / cable car and city bus lines with their stops, a *display layer* beside the intercity network: it has
@@ -377,9 +380,9 @@ Pipeline in short:
      within ~24 px is already shown (`thinZooms`, buses 14 / 14.8 at 12 px), so a centre shows its hubs first and
      fills in as one zooms; a stop never appears before its first line. Lines have a first zoom too (`lineZoom`):
      metro 10 / 10.8 (≥ 100 trips per direction and day), tram 11.2 / 12 / 12.6, cable 12.5, buses 12.4 … 14.2 by frequency.
-   - **Tiles**: two vector sources, `urban/rail/10/{x}/{y}.pbf.gz` (metro / tram / cable lines and the stops of
-     stations with such a line; extent 16384 ≈ 2.4 m) and `urban/bus/11/…` (bus lines and bus-only stops; extent 8192), stored at
-     one zoom only, non-empty tiles only (`Manifest.urban` lists them, the app answers the rest with an empty tile) and overzoomed by MapLibre.
+   - **Tiles**: two tile layers / vector sources, `urb-rail` at z10 (metro / tram / cable lines and the stops of
+     stations with such a line; extent 16384 ≈ 2.4 m) and `urb-bus` at z11 (bus lines and bus-only stops; extent 8192), stored at
+     one zoom only (`Manifest.urban`), non-empty tiles only (in the tile packs; the app answers the rest with an empty tile) and overzoomed by MapLibre.
      Lines are `ul` (mode, short name, feed colour clamped to a readable luminance, agency, description, tpd, first zoom, geometry quality),
      stops `us` (name, mode mask, line names, importance, first zoom, `x`).
    - **Web** (`map/urban.ts`, `ui/urbanpopup.ts`): drawn *below* the intercity network (land-coloured halo,
@@ -388,19 +391,34 @@ Pipeline in short:
      operator, frequency band); hover shows the name. The chip "Local transport" (on by default; `#local=0` in the URL when off)
      hides all of it. Nothing of this loads below zoom 10.
    Rebuild just this stage for an existing build: `node --import tsx packages/etl/src/urban/index.ts <out>/<build>`
-   (~1 min with warm caches, ~15 min when the zips of all feeds must be re-read), or skip it with `--no-urban`.
+   (repacks the tiles too; ~1 min with warm caches, ~15 min when the zips of all feeds must be re-read), or skip it with `--no-urban`.
 
-The coastline and lakes are not part of a build: `data/basemap-v2-<coverage>/` (next to `manifest.json`, shared by all
-builds, `Manifest.basemap`) holds OSM land polygons + Natural Earth 10m lakes as gzipped vector tiles z2–z9
-(extent 8192 at z9 ≈ 6 m, overzoomed to z15), ~4.9k files / ~31 MB. Tiles without land are missing (sea) and
-tiles entirely covered by land are missing too but listed in `basemap-v2-<coverage>/index.json`; the web app answers them
-with a synthetic all-land tile (`web/src/map/basemap.ts`). The tiles are built by `refresh-assets` as ONE R2 object
-(`basemap/tiles-v2.tar`) and unpacked by every build (see `.claude/skills/basemap/SKILL.md`).
+12. **Coastline and lakes** – tile layer `base`: OSM land polygons + Natural Earth 10m lakes as gzipped vector tiles z2–z9
+   (extent 8192 at z9 ≈ 6 m, overzoomed to z15), ~5.4k tiles / ~28 MB (`Manifest.basemap`). Tiles without land are missing (sea) and
+   tiles entirely covered by land are missing too: they are *fill* entries of the packs, answered by the web app with a synthetic
+   all-land tile. The tiles are built by `refresh-assets` as ONE R2 object (`basemap/tiles-v2.tar`); every build turns it into its
+   `base` layer (see `.claude/skills/basemap/SKILL.md`).
+13. **Tile packs** (`src/packs.ts`, format in `packages/shared/src/tilepack.ts`, stage `packs`, the last one) – Cloudflare's static
+   assets allow 20k files per deployment and do not answer HTTP Range requests, so the tiles are not deployed one file each.
+   The stages write each tile layer as ONE file (`<build>/layers/{base,net,net-m,urb-rail,urb-bus}.pack`, not deployed); the pack
+   stage regroups them by area into `<build>/packs/<content hash>.pack`. A pack is a node of a quadtree (tile z/x/y) plus a
+   band of tile zooms and holds every tile of its layers under the node within the band, behind a small binary index
+   (layer, z, x, y, length; the tiles stay individually gzipped). Quadtree rule: a node takes the tiles under it from the first zoom
+   its ancestors did not take; if they fit the target (default 384 KiB, `--pack-target-kb`) they are one pack, else the node keeps
+   the lowest zooms that fit (at least its own zoom) and its four children split the rest – sparse areas get large packs over many
+   zooms, dense cities small ones, the lowest zooms a few overview packs. The basemap, network and local-transport layers share
+   one quadtree (a view needs one or a few packs for all of them); `net-m` has its own, so the default view never downloads it.
+   `Manifest.packs` lists every pack (node, zoom band, hash; a node that is all land needs no file). The web app
+   (`web/src/map/packs.ts`) downloads a pack once (in-flight requests shared, LRU of 64 MB) and serves each tile from it through
+   the `etbmgz://pack/<layer>/{z}/{x}/{y}` protocol, so the MapLibre sources stay ordinary vector sources. Content-addressed
+   names under the immutable `data/<build>/` path: a browser can never mix packs of two builds. Full build (Oct 2026): 14.1k tiles of the main
+   set in 504 packs (7 of them all-land nodes without a file) + 159 `net-m` tiles in 67 packs: 564 files, 92 MB, median 144 KiB,
+   largest 914 KiB (a single z4 network tile that cannot be split); before, the same tiles were 12.7k files. Build log line `packs: …`. Repack an existing build: `node --import tsx packages/etl/src/packs.ts <out>/<build>`.
 
 Typical full build: ~150 feed files, ~920k stops → ~73k stations (served) in ~41k cities, ~125k corridors on ~176k line-graph segments, ~2.1M trips,
-~1.4 GB in ~12.9k files incl. ~4.9k basemap tiles and ~2.4k local-transport tiles (Cloudflare limit: 20k files per deployment); ~12 min on a 4-core machine with a warm DuckDB
+~2 GB in ~2.5k files, of them a few hundred tile packs (Cloudflare limit: 20k files per deployment); ~12 min on a 4-core machine with a warm DuckDB
 (`--reuse-db`; ~75 min from scratch on a runner, see "Building from scratch"). The local-transport stage adds ~25 min when its per-feed caches are cold
-(129 feeds with local lines: 21k lines / 25k alignments, 179k stations, 2 384 tiles / 11 MB gz, largest tile 86 KB).
+(129 feeds with local lines: 21k lines / 25k alignments, 179k stations, 2 400 tiles / 11 MB gz, largest tile 86 KB).
 
 ## Running locally
 
@@ -471,7 +489,7 @@ rebuilt from public sources by refresh-assets (`only` = the part name):
 | `geonames/places-europe.tsv.gz` | `geonames` | places ≥ 1000 inhabitants with local names (cities) | GeoNames `cities1000.zip`, `countryInfo.txt`, `alternatenames/<CC>.zip` | 2 MB | builds it from GeoNames (~30 MB download) |
 | `geonames/villages-europe.tsv.gz` | `geonames` | every populated place incl. villages (bus destinations) | GeoNames per-country dumps `<CC>.zip` | 21 MB | builds it from GeoNames (~110 MB download, ~1 min) |
 | `basemap/borders.json`, `basemap/labels.json` | `basemap` | country borders, country labels | Natural Earth 10m / 50m | 0.3 MB | builds them from Natural Earth |
-| `basemap/tiles-v2.tar` | `tiles` | land + lake vector tiles z2–9, unpacked to `data/basemap-v2-<coverage>/` | OSM land polygons (osmdata.openstreetmap.de, ~1 GB) + Natural Earth lakes | 31 MB | draws the coarse 1:50m land (warning) |
+| `basemap/tiles-v2.tar` | `tiles` | land + lake vector tiles z2–9, the tile layer `base` of the packs | OSM land polygons (osmdata.openstreetmap.de, ~1 GB) + Natural Earth lakes | 31 MB | draws the coarse 1:50m land (warning) |
 | `rail/rail-graph-v1.bin` | `rail` | rail routing graph | Overture Maps transportation (S3, ~30 min extraction) | 27 MB | draws rail lines as unsnapped curves (warning) |
 | `rail/urbanrail-graph-v1.bin` | `urbanrail` | tram / metro track graph | Overture Maps (~25 min extraction) | 2 MB | draws local lines without shapes as dashed chords |
 | `road/road-graph-v1.bin` | `road` | motorway…tertiary road graph | Overture Maps (~30 min extraction) | 114 MB | draws coach / bus lines as unsnapped curves (warning) |
@@ -519,7 +537,7 @@ Designed to run for free:
 
 - **GitHub Actions** – free for public repositories (weekly ~75 min job, monthly asset refresh, plus a refresh when the
   asset code changes).
-- **Cloudflare Workers static assets** – requests to static assets are free; ~10k files ≈ 1.1 GB per
+- **Cloudflare Workers static assets** – requests to static assets are free; ~2.7k files ≈ 2 GB per
   build (limits: 25 MiB per file, 20k files per deployment on the free plan).
 - **Cloudflare R2** – ~200 MB stored, a handful of operations per week: well inside the free tier
   (10 GB storage, 1M class A / 10M class B ops per month, no egress fees).

@@ -1,7 +1,7 @@
 /**
  * Local transport (metro / tram / city bus) display layer: lines and stops from the GTFS feeds as
- * vector tiles of their own. Independent of the intercity pipeline (own DuckDB, own tiles), so it can
- * be rebuilt on an existing build directory:
+ * vector tiles of their own (tile layers `urb-rail`, `urb-bus`). Independent of the intercity pipeline (own DuckDB,
+ * own tiles), so it can be rebuilt on an existing build directory (also repacks the tiles, packs.ts):
  *
  *   node --import tsx src/urban/index.ts <outDir>/<build> [--work <dir>] [--assets <dir>]
  */
@@ -17,6 +17,7 @@ import { alignFeed, loadAligners, type AlignStats } from "./align.ts";
 import { gatherFeeds } from "./feeds.ts";
 import { buildUrban } from "./model.ts";
 import { writeUrbanTiles } from "./tiles.ts";
+import { repackBuild } from "../packs.ts";
 import { UMODE_NAME, type UrbanFeed } from "./types.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -36,7 +37,7 @@ export interface UrbanOptions {
 
 export interface UrbanResult {
   info: UrbanInfo;
-  files: number;
+  tiles: number;
   bytes: number;
   stats: Record<string, number>;
 }
@@ -61,12 +62,12 @@ export async function writeUrbanLayer(o: UrbanOptions): Promise<UrbanResult> {
   log(`urban: alignment ${JSON.stringify(astats.patterns)}`);
   const built = buildUrban(feeds, o.stations, cities);
   const w = await writeUrbanTiles(o.buildDir, built, log);
-  const stats: Record<string, number> = { urbanFeeds: feeds.length, urbanLines: built.lines.length, urbanStations: built.stations.length, urbanFiles: w.files, urbanBytes: w.bytes };
+  const stats: Record<string, number> = { urbanFeeds: feeds.length, urbanLines: built.lines.length, urbanStations: built.stations.length, urbanTiles: w.tiles, urbanBytes: w.bytes };
   for (const m of [0, 1, 2, 3]) stats[`urban_${UMODE_NAME[m]}`] = built.lines.filter((l) => l.mode === m).length;
   for (const g of ["shape", "rail", "road", "stops"]) stats[`urbanGeom_${g}`] = built.lines.filter((l) => l.geom === g).length;
-  log(`urban: ${built.lines.length} alignments, ${built.stations.length} stations (${built.stations.filter((s) => s.ix).length} at intercity stations), ${w.files} files, ${(w.bytes / 1e6).toFixed(1)} MB`);
+  log(`urban: ${built.lines.length} alignments, ${built.stations.length} stations (${built.stations.filter((s) => s.ix).length} at intercity stations), ${w.tiles} tiles, ${(w.bytes / 1e6).toFixed(1)} MB`);
   await addAttribution(o.buildDir, feeds, urbanFeeds, o.licenses ?? []);
-  return { info: w.info, files: w.files, bytes: w.bytes, stats };
+  return { info: w.info, tiles: w.tiles, bytes: w.bytes, stats };
 }
 
 interface LicenseEntry {
@@ -134,4 +135,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     await writeFile(mf, JSON.stringify(manifest));
     console.log("manifest updated");
   }
+  await repackBuild(buildDir);
 }

@@ -705,9 +705,11 @@ await w("network.json", network);
 await w("calendars.json", calendars);
 await w("attribution.json", attribution);
 for (const c of cities) await w(`city/${c.id}.json`, cityFile(c));
-// progressive map data (core.json, stations.json, vector tiles, geo files) – same writer as the ETL
+// progressive map data (core.json, stations.json, vector tiles, geo files) and the tile packs – same writers as the ETL
 const { writeMapData } = await import("../../etl/src/mapdata.ts");
+const { writePacks } = await import("../../etl/src/packs.ts");
 manifest.mapdata = (await writeMapData(structuredClone(network), dir, () => undefined)).mapdata;
+manifest.packs = (await writePacks(dir, { log: () => undefined })).packs;
 await writeFile(join(OUT, "manifest.json"), JSON.stringify(manifest, null, 2));
 console.log(`fixture: ${cities.length} cities, ${stations.length} stations, ${corridors.length} corridors, ${patterns.length} patterns, ${trips.length} trips, start ${startDate}`);
 

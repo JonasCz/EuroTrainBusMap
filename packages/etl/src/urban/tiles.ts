@@ -1,12 +1,10 @@
 /// <reference path="../vt-pbf.d.ts" />
-import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import geojsonvt from "geojson-vt";
 import vtpbf from "vt-pbf";
 import type { UrbanInfo } from "@etbm/shared";
-import { URBAN_LAYERS, URBAN_VERSION } from "@etbm/shared";
+import { PACK_LAYER, URBAN_LAYERS, URBAN_VERSION } from "@etbm/shared";
+import { writeLayerFile } from "../tilelayers.ts";
 import { UMode } from "./types.ts";
 import type { BuiltUrban, DrawnLine, UrbanStation } from "./model.ts";
 
@@ -40,12 +38,12 @@ export function stationFeature(s: UrbanStation): Feature {
 
 async function writeSource(
   buildDir: string,
-  kind: "rail" | "bus",
+  layer: string,
   cfg: { zoom: number; extent: number },
   lines: Feature[],
   stations: Feature[],
   log: (m: string) => void,
-): Promise<{ tiles: number[]; files: number; bytes: number; maxBytes: number }> {
+): Promise<{ tiles: number; bytes: number; maxBytes: number }> {
   const z = cfg.zoom;
   const opts = { maxZoom: z, indexMaxZoom: z, indexMaxPoints: 0, extent: cfg.extent, buffer: Math.round(cfg.extent / 16), tolerance: 1 };
   const fc = (fs: Feature[]): GeoJSON.FeatureCollection => ({ type: "FeatureCollection", features: fs });
@@ -55,7 +53,8 @@ async function writeSource(
   const keys = new Map<string, [number, number]>();
   for (const l of Object.values(layers))
     for (const t of (l as unknown as { tileCoords: { z: number; x: number; y: number }[] }).tileCoords) if (t.z === z) keys.set(`${t.x}/${t.y}`, [t.x, t.y]);
-  const out = { tiles: [] as number[], files: 0, bytes: 0, maxBytes: 0 };
+  const out = { tiles: 0, bytes: 0, maxBytes: 0 };
+  const tiles: { z: number; x: number; y: number; data: Uint8Array }[] = [];
   for (const [x, y] of [...keys.values()].sort((a, b) => a[0] - b[0] || a[1] - b[1])) {
     const tl: Record<string, unknown> = {};
     let n = 0;
@@ -68,33 +67,25 @@ async function writeSource(
     }
     if (!n) continue;
     const gz = gzipSync(vtpbf.fromGeojsonVt(tl, { version: 2, extent: cfg.extent }), { level: 9 });
-    const rel = join("urban", kind, String(z), String(x), `${y}.pbf.gz`);
-    await mkdir(join(buildDir, rel, ".."), { recursive: true });
-    await writeFile(join(buildDir, rel), gz);
-    out.tiles.push(x, y);
-    out.files++;
+    tiles.push({ z, x, y, data: gz });
+    out.tiles++;
     out.bytes += gz.length;
     out.maxBytes = Math.max(out.maxBytes, gz.length);
   }
-  log(`urban ${kind}: ${out.files} tiles at z${z}, ${(out.bytes / 1e6).toFixed(1)} MB gz, largest ${(out.maxBytes / 1024).toFixed(0)} KB`);
+  await writeLayerFile(buildDir, layer, { minzoom: z, maxzoom: z }, tiles);
+  log(`urban ${layer}: ${out.tiles} tiles at z${z}, ${(out.bytes / 1e6).toFixed(1)} MB gz, largest ${(out.maxBytes / 1024).toFixed(0)} KB`);
   return out;
 }
 
-/** Write the vector tiles of the local-transport layer into `<buildDir>/urban/`. */
-export async function writeUrbanTiles(buildDir: string, built: BuiltUrban, log: (m: string) => void = console.log): Promise<{ info: UrbanInfo; files: number; bytes: number }> {
-  const dir = join(buildDir, "urban");
-  if (existsSync(dir)) await rm(dir, { recursive: true });
+/** Write the vector tiles of the local-transport layer: tile layers `urb-rail` and `urb-bus` (`<buildDir>/layers/`, see packs.ts). */
+export async function writeUrbanTiles(buildDir: string, built: BuiltUrban, log: (m: string) => void = console.log): Promise<{ info: UrbanInfo; tiles: number; bytes: number }> {
   const railLines = built.lines.filter((l) => isRailMode(l.mode)).map(lineFeature);
   const busLines = built.lines.filter((l) => !isRailMode(l.mode)).map(lineFeature);
   // a station with any metro / tram / cable line is a rail station (its bus lines are listed too); the rest are bus stops
   const railStations = built.stations.filter((s) => s.modes & ~(1 << UMode.Bus)).map(stationFeature);
   const busStations = built.stations.filter((s) => !(s.modes & ~(1 << UMode.Bus))).map(stationFeature);
-  const rail = await writeSource(buildDir, "rail", RAIL_TILE, railLines, railStations, log);
-  const bus = await writeSource(buildDir, "bus", BUS_TILE, busLines, busStations, log);
-  const info: UrbanInfo = {
-    version: URBAN_VERSION,
-    rail: { zoom: RAIL_TILE.zoom, tiles: rail.tiles, url: "urban/rail/{z}/{x}/{y}.pbf.gz" },
-    bus: { zoom: BUS_TILE.zoom, tiles: bus.tiles, url: "urban/bus/{z}/{x}/{y}.pbf.gz" },
-  };
-  return { info, files: rail.files + bus.files, bytes: rail.bytes + bus.bytes };
+  const rail = await writeSource(buildDir, PACK_LAYER.urbRail, RAIL_TILE, railLines, railStations, log);
+  const bus = await writeSource(buildDir, PACK_LAYER.urbBus, BUS_TILE, busLines, busStations, log);
+  const info: UrbanInfo = { version: URBAN_VERSION, rail: { zoom: RAIL_TILE.zoom }, bus: { zoom: BUS_TILE.zoom } };
+  return { info, tiles: rail.tiles + bus.tiles, bytes: rail.bytes + bus.bytes };
 }

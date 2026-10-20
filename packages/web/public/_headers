@@ -1,12 +1,9 @@
 # Cloudflare static-asset caching (Workers/Pages `_headers`).
 # Hashed bundles and build-versioned data never change; only data/manifest.json moves.
+# Every vector tile is in data/<build>/packs/<content hash>.pack (immutable like the rest of the build).
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 /data/:build/*
   Cache-Control: public, max-age=31536000, immutable
-# Basemap tiles are shared by all builds and regenerated rarely (monthly at most): not immutable.
-/data/basemap-v2-*/*
-  ! Cache-Control
-  Cache-Control: public, max-age=604800, stale-while-revalidate=86400
 /glyphs/*
   Cache-Control: public, max-age=604800

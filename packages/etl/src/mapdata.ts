@@ -1,9 +1,10 @@
 /// <reference path="./vt-pbf.d.ts" />
 /**
  * Progressive map data (see packages/shared/src/netmap.ts): core.json,
- * stations.json, gzipped vector tiles of the drawn network and per-shard
- * highlight geometry. Run as part of build.ts, or standalone on an existing
- * build directory:
+ * stations.json, gzipped vector tiles of the drawn network (tile layers `net` and
+ * `net-m`, regrouped into the tile packs by packs.ts) and per-shard highlight
+ * geometry. Run as part of build.ts, or standalone on an existing build directory
+ * (also repacks the tiles and updates manifest.json):
  *
  *   node --import tsx src/mapdata.ts <outDir>/<build>
  */
@@ -13,6 +14,8 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { TransferCollector } from "./transfers.ts";
+import { repackBuild } from "./packs.ts";
+import { writeLayerFile } from "./tilelayers.ts";
 import geojsonvt from "geojson-vt";
 import vtpbf from "vt-pbf";
 import {
@@ -42,6 +45,7 @@ import {
   type MapNet,
   type Manifest,
   MAPDATA_VERSION,
+  PACK_LAYER,
   TT_VERSION,
   type NetworkFile,
   type Segment,
@@ -51,9 +55,6 @@ type Feature = GeoJSON.Feature;
 type Log = (msg: string) => void;
 
 const TILE_MINZOOM = 2;
-const TILES_DIR = "tiles";
-/** Tiles for mode filters (see writeMapData), up to MODES_TILE_MAXZOOM. */
-const MODES_TILES_DIR = "tiles-m";
 /** City markers are fully shown this much before the zoom of their level (must match the style); they fade in over FADE_ZOOM before that. */
 const CITY_LEAD = 0.5;
 
@@ -114,12 +115,11 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
   log(`mapdata: ${segFeatures.length} segments, ${cityFeatures.length} cities, ${stationFeatures.length} stations`);
 
   // ---- vector tiles (tileSize 512: tile zoom z is shown from map zoom z to z+1, and overzoomed past TILE_MAXZOOM)
-  // Up to MODES_TILE_MAXZOOM there are two sets: `tiles/` with every mode on (what nearly everybody loads)
-  // and `tiles-m/` with the lines of every mode filter (density.ts scenarios; far more lines at low zoom).
-  // From there on `tiles/` serves both.
-  for (const d of [TILES_DIR, MODES_TILES_DIR]) if (existsSync(join(buildDir, d))) await rm(join(buildDir, d), { recursive: true });
-  const index: Record<string, number[]> = {};
-  const modesIndex: Record<string, number[]> = {};
+  // Up to MODES_TILE_MAXZOOM there are two layers: `net` with every mode on (what nearly everybody loads)
+  // and `net-m` with the lines of every mode filter (density.ts scenarios; far more lines at low zoom).
+  // From there on `net` serves both.
+  type T = { z: number; x: number; y: number; data: Uint8Array };
+  const netTiles: T[] = [], modesTiles: T[] = [];
   let tileBytes = 0, maxTile = 0, modesBytes = 0;
   for (let z = TILE_MINZOOM; z <= TILE_MAXZOOM; z++) {
     const last = z === TILE_MAXZOOM;
@@ -129,7 +129,7 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
     const opts = { maxZoom: z, indexMaxZoom: z, indexMaxPoints: 0, extent, buffer: last ? 512 : 256, tolerance: last ? 1 : 4 };
     const fc = (fs: Feature[]): GeoJSON.FeatureCollection => ({ type: "FeatureCollection", features: fs });
     const cityVt = geojsonvt(fc(cityFeatures.filter((x) => last || x.z - CITY_LEAD - FADE_ZOOM < z + 1).map((x) => x.f)), { ...opts, buffer: 64 });
-    const sets = z <= MODES_TILE_MAXZOOM ? [{ dir: MODES_TILES_DIR, modes: true }, { dir: TILES_DIR, modes: false }] : [{ dir: TILES_DIR, modes: true }];
+    const sets = z <= MODES_TILE_MAXZOOM ? [{ out: modesTiles, modes: true }, { out: netTiles, modes: false }] : [{ out: netTiles, modes: true }];
     for (const set of sets) {
       const segs = segFeatures.filter((x) => last || (set.modes ? x.z : x.zAll) - FADE_ZOOM < z + 1).map((x) => (last ? x.f : forZoom(x.f, z, set.modes)));
       const layers: Record<string, ReturnType<typeof geojsonvt>> = {
@@ -141,7 +141,7 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
       for (const l of Object.values(layers)) {
         for (const t of (l as unknown as { tileCoords: { z: number; x: number; y: number }[] }).tileCoords) if (t.z === z) keys.set(`${t.x}/${t.y}`, [t.x, t.y]);
       }
-      const list: number[] = [];
+      let count = 0;
       for (const [x, y] of keys.values()) {
         const tl: Record<string, unknown> = {};
         let n = 0;
@@ -155,16 +155,18 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
         if (!n) continue;
         const pbf = vtpbf.fromGeojsonVt(tl, { version: 2, extent });
         const gz = gzipSync(pbf, { level: 9 });
-        await write(join(set.dir, String(z), String(x), `${y}.pbf.gz`), gz);
-        if (set.dir === TILES_DIR) tileBytes += gz.length;
+        set.out.push({ z, x, y, data: gz });
+        if (set.out === netTiles) tileBytes += gz.length;
         else modesBytes += gz.length;
         maxTile = Math.max(maxTile, gz.length);
-        list.push(x, y);
+        count++;
       }
-      (set.dir === TILES_DIR ? index : modesIndex)[z] = list;
-      log(`mapdata: z${z}${set.dir === TILES_DIR ? "" : " (mode filters)"}: ${list.length / 2} tiles`);
+      log(`mapdata: z${z}${set.out === netTiles ? "" : " (mode filters)"}: ${count} tiles`);
     }
   }
+  bytes += await writeLayerFile(buildDir, PACK_LAYER.net, { minzoom: TILE_MINZOOM, maxzoom: TILE_MAXZOOM }, netTiles);
+  bytes += await writeLayerFile(buildDir, PACK_LAYER.netModes, { minzoom: TILE_MINZOOM, maxzoom: MODES_TILE_MAXZOOM }, modesTiles);
+  files += 2;
   log(`mapdata: tiles ${(tileBytes / 1e6).toFixed(1)} MB gz + ${(modesBytes / 1e6).toFixed(1)} MB for mode filters (z≤${MODES_TILE_MAXZOOM}), largest ${(maxTile / 1024).toFixed(0)} KB`);
 
   // ---- core + stations
@@ -175,13 +177,7 @@ export async function writeMapData(network: NetworkFile, buildDir: string, log: 
     cityList: network.cities,
     nStations: network.stations.length,
     counts: { stations: network.stations.length, corridors: network.corridors.length, segments: segments.length },
-    tiles: {
-      minzoom: TILE_MINZOOM,
-      maxzoom: TILE_MAXZOOM,
-      tiles: index,
-      url: `${TILES_DIR}/{z}/{x}/{y}.pbf.gz`,
-      modes: { maxzoom: MODES_TILE_MAXZOOM, tiles: modesIndex, url: `${MODES_TILES_DIR}/{z}/{x}/{y}.pbf.gz` },
-    },
+    tiles: { minzoom: TILE_MINZOOM, maxzoom: TILE_MAXZOOM, modes: { maxzoom: MODES_TILE_MAXZOOM } },
   });
   await write("core.json", JSON.stringify(core));
 
@@ -303,4 +299,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       console.log("manifest updated");
     }
   }
+  await repackBuild(resolve(dir));
 }

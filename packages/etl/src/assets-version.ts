@@ -73,7 +73,7 @@ export const ASSET_SOURCES = [
 ];
 
 /** Hash of ASSET_SOURCES as last reviewed (`--hash`); the version line of this file is left out of it. */
-export const ASSETS_SOURCE_HASH = "6704c19829977c91";
+export const ASSETS_SOURCE_HASH = "a3b4a7feb6280a73";
 
 /** What the bucket's version.json holds. */
 export interface AssetsStamp {

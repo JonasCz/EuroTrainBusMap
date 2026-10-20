@@ -58,7 +58,8 @@ import { writeMapData } from "./mapdata.ts";
 import { loadUrbanFeedDefs, writeUrbanLayer } from "./urban/index.ts";
 import { computeTransit, gatherTransitFeeds } from "./urban/transit.ts";
 import { BASEMAP_FILES } from "./assets-version.ts";
-import { BASEMAP_DIR, BASEMAP_MAXZOOM, BASEMAP_MINZOOM, BASEMAP_TILES_KEY, BASEMAP_VERSION, installBasemapTiles } from "./basemap/tiles.ts";
+import { BASEMAP_MAXZOOM, BASEMAP_MINZOOM, BASEMAP_TILES_KEY, BASEMAP_VERSION, installBasemapLayer } from "./basemap/tiles.ts";
+import { packStats, writePacks } from "./packs.ts";
 import type { GeneratorReport } from "./generators/types.ts";
 import { readRetrievedAt } from "./generators/gtfs.ts";
 
@@ -1460,14 +1461,15 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
         }
       } else warn("basemap script not found, skipping");
       if (haveTiles) {
-        const { files: n, bounds, coverage } = await installBasemapTiles(tarFile, outRoot);
-        const bytes = (await readFile(join(outRoot, BASEMAP_DIR, "index.json"), "utf8")).length;
-        basemapInfo = { version: BASEMAP_VERSION, dir: BASEMAP_DIR, minzoom: BASEMAP_MINZOOM, maxzoom: BASEMAP_MAXZOOM, bounds: [...bounds] };
+        const { files: n, bytes, bounds, coverage } = await installBasemapLayer(tarFile, outDir);
+        basemapInfo = { version: BASEMAP_VERSION, minzoom: BASEMAP_MINZOOM, maxzoom: BASEMAP_MAXZOOM, bounds: [...bounds] };
         if (coverage !== COVERAGE_ID) {
           warn(`basemap: ${BASEMAP_TILES_KEY} was cut for ${coverage ?? "the Europe-only box"} [${bounds.join(", ")}], not ${COVERAGE_ID}: no land drawn outside it (run the refresh-assets workflow with only=tiles)`);
         }
-        stats.basemapTiles = n - 1;
-        log(`basemap: ${n} tile files unpacked to ${join(outRoot, BASEMAP_DIR)} (index ${(bytes / 1024).toFixed(0)} KiB)`);
+        stats.basemapTiles = n;
+        totalBytes += bytes;
+        fileCount++;
+        log(`basemap: ${n} tiles, base layer ${(bytes / 1e6).toFixed(1)} MB`);
       } else warn(`basemap: ${BASEMAP_TILES_KEY} not in the assets; drawing the coarse 1:50m land / lakes (run the refresh-assets workflow)`);
     } catch (e) {
       warn(`basemap failed: ${(e as Error).message}`);
@@ -1491,11 +1493,16 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
       urbanInfo = ur.info;
       urbanStats = ur.stats;
       totalBytes += ur.bytes;
-      fileCount += ur.files;
+      fileCount += 2;
     } catch (e) {
       warn(`urban: local transport layer failed, building without it: ${(e as Error).stack ?? e}`);
     }
   }
+
+  // ------------------------------------------------------------------ tile packs (every tile layer, grouped by area; packs.ts)
+  timer.start("packs");
+  const packed = await writePacks(outDir, { target: args.packTargetKb ? args.packTargetKb * 1024 : undefined, log });
+  Object.assign(stats, packStats(packed.stats));
 
   // ------------------------------------------------------------------ stats, sanity, manifest
   timer.start("sanity");
@@ -1546,7 +1553,7 @@ export async function runBuild(ctx: BuildCtx): Promise<void> {
   timer.end();
 
   stats.durationSec = Math.round((Date.now() - ctx.t0) / 1000);
-  const manifest: Manifest = { schema: SCHEMA_VERSION, build, generatedAt: new Date().toISOString(), startDate: args.startDate, days: D, stats, mapdata: md.mapdata, transfers: md.transfers, ...(basemapInfo ? { basemap: basemapInfo } : {}), ...(urbanInfo ? { urban: urbanInfo } : {}) };
+  const manifest: Manifest = { schema: SCHEMA_VERSION, build, generatedAt: new Date().toISOString(), startDate: args.startDate, days: D, stats, mapdata: md.mapdata, transfers: md.transfers, packs: packed.packs, ...(basemapInfo ? { basemap: basemapInfo } : {}), ...(urbanInfo ? { urban: urbanInfo } : {}) };
   Object.assign(report, {
     build,
     stats,

@@ -1,18 +1,19 @@
 /**
  * Basemap vector tiles: OSM land polygons (osmdata.openstreetmap.de, ODbL) + Natural Earth 10m lakes,
  * cut into gzipped MVTs per zoom (layers `land`, `lake`), shipped as ONE tar asset in R2
- * (`basemap/tiles-v2.tar`) that every build unpacks to `<out>/basemap-v2-<coverage>/` (see `installBasemapTiles`).
+ * (`basemap/tiles-v2.tar`) that every build turns into its `base` tile layer (`installBasemapLayer`; the pack stage
+ * then puts the tiles into the geographic tile packs, packages/etl/src/packs.ts).
  *
- * File count is kept low by omitting tiles that carry no information: tiles without land are simply
- * missing (= sea), and tiles completely covered by land and without lakes are missing too, but listed
- * in `index.json` (`land`: the topmost such tiles; their descendants are land as well), so the client
- * answers them with a synthetic all-land tile (web/src/map/basemap.ts).
+ * Tiles that carry no information are omitted: tiles without land are simply missing (= sea), and tiles completely
+ * covered by land and without lakes are missing too, but listed in `index.json` (`land`: the topmost such tiles; their
+ * descendants are land as well). They become fill entries of the packs, answered with a synthetic all-land tile by
+ * the client (web/src/map/packs.ts).
  *
  * CLI: node --import tsx src/basemap/tiles.ts --out <dir> [--cache <dir>] [--maxzoom 9]
  */
 import { execFileSync } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { join, resolve } from "node:path";
@@ -22,17 +23,11 @@ import geojsonvt from "geojson-vt";
 import vtpbf from "vt-pbf";
 import { boxesOverlap, clipRingFlat, quantize, ringBox, simplifyRing, type Poly, type Ring } from "./geom.ts";
 import { readPolygons, type Box } from "./shp.ts";
-import { tarEntries, untar } from "./tar.ts";
-import { COVERAGE_ID, MAP_BBOX, type BasemapIndex } from "@etbm/shared";
+import { readTar, tarEntries } from "./tar.ts";
+import { writeLayerFile } from "../tilelayers.ts";
+import { COVERAGE_ID, MAP_BBOX, PACK_LAYER, type BasemapIndex } from "@etbm/shared";
 
 export const BASEMAP_TILES_KEY = "basemap/tiles-v2.tar";
-/**
- * Directory (below the data root, next to manifest.json) the tiles are unpacked to. The name carries the coverage:
- * the tiles are cached for a week under a stable URL, so tiles cut for another area (e.g. the Europe-only index.json
- * of before the Canary Islands / Morocco were added: no land south of 34 degrees N) would stay in browsers and keep the
- * new area drawn as sea. A new coverage is a new path.
- */
-export const BASEMAP_DIR = `basemap-v2-${COVERAGE_ID}`;
 export const BASEMAP_VERSION = 2;
 /** Area the tiles are cut for: the box around the map's coverage (packages/shared/src/coverage.ts). */
 export const BASEMAP_BBOX: Box = [...MAP_BBOX];
@@ -227,8 +222,6 @@ export interface TilesOptions {
   minZoom?: number;
   maxZoom?: number;
   log?: Log;
-  /** Also write the unpacked tiles to this directory. */
-  outDir?: string;
 }
 
 /** Build all tiles; returns the tar bytes (index.json + tiles/…) and the index. */
@@ -310,25 +303,32 @@ export async function buildBasemapTiles(o: TilesOptions): Promise<{ tar: Buffer;
     index.land[z] = list;
   }
   entries.unshift({ name: "index.json", data: Buffer.from(JSON.stringify(index)) });
-  if (o.outDir) {
-    await rm(o.outDir, { recursive: true, force: true });
-    untar(tarEntries(entries), o.outDir);
-  }
   for (const [z, s] of Object.entries(stats)) log(`basemap: z${z}: ${s.files} files, ${(s.bytes / 1e6).toFixed(2)} MB, ${s.pure} all-land tiles`);
   return { tar: tarEntries(entries), index, stats };
 }
 
+/** The tiles of the asset as `base` layer tiles (fill = the topmost all-land tiles), with its index. */
+export function basemapLayerTiles(tar: Buffer): { tiles: { z: number; x: number; y: number; data: Uint8Array | null }[]; index: BasemapIndex } {
+  let index: BasemapIndex | null = null;
+  const tiles: { z: number; x: number; y: number; data: Uint8Array | null }[] = [];
+  for (const e of readTar(tar)) {
+    if (e.name === "index.json") index = JSON.parse(Buffer.from(e.data).toString("utf8")) as BasemapIndex;
+    const m = /^tiles\/(\d+)\/(\d+)\/(\d+)\.pbf\.gz$/.exec(e.name);
+    if (m) tiles.push({ z: +m[1]!, x: +m[2]!, y: +m[3]!, data: e.data });
+  }
+  if (!index) throw new Error("basemap tiles: no index.json in the tar");
+  for (const [z, xy] of Object.entries(index.land)) for (let i = 0; i + 1 < xy.length; i += 2) tiles.push({ z: +z, x: xy[i]!, y: xy[i + 1]!, data: null });
+  return { tiles, index };
+}
+
 /**
- * Unpack the tiles asset into `<outRoot>/${BASEMAP_DIR}/`; returns the file count and the area and coverage the tiles
- * were cut for (tiles from before the index recorded them: the Europe-only box, no coverage).
+ * Turn the tiles asset into the build's `base` tile layer (`<buildDir>/layers/base.pack`); returns the tile count and
+ * the area and coverage the tiles were cut for (tiles from before the index recorded them: the Europe-only box, no coverage).
  */
-export async function installBasemapTiles(tarFile: string, outRoot: string): Promise<{ files: number; bounds: Box; coverage: string | null }> {
-  const dir = join(outRoot, BASEMAP_DIR);
-  await rm(dir, { recursive: true, force: true });
-  await mkdir(dir, { recursive: true });
-  const files = untar(await readFile(tarFile), dir);
-  const index = JSON.parse(await readFile(join(dir, "index.json"), "utf8")) as BasemapIndex;
-  return { files, bounds: index.bounds ?? LEGACY_BASEMAP_BBOX, coverage: index.coverage ?? null };
+export async function installBasemapLayer(tarFile: string, buildDir: string): Promise<{ files: number; bytes: number; bounds: Box; coverage: string | null }> {
+  const { tiles, index } = basemapLayerTiles(await readFile(tarFile));
+  const bytes = await writeLayerFile(buildDir, PACK_LAYER.base, { minzoom: index.minzoom, maxzoom: index.maxzoom }, tiles);
+  return { files: tiles.filter((t) => t.data).length, bytes, bounds: index.bounds ?? LEGACY_BASEMAP_BBOX, coverage: index.coverage ?? null };
 }
 
 // CLI
@@ -338,7 +338,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const out = resolve(get("--out") ?? "work/assets");
   const cache = resolve(get("--cache") ?? "work/cache/basemap-src");
   const maxZoom = Number(get("--maxzoom") ?? BASEMAP_MAXZOOM);
-  const r = await buildBasemapTiles({ cacheDir: cache, maxZoom, outDir: get("--unpacked") ? resolve(get("--unpacked")!) : undefined });
+  const r = await buildBasemapTiles({ cacheDir: cache, maxZoom });
   await mkdir(join(out, "basemap"), { recursive: true });
   await writeFile(join(out, BASEMAP_TILES_KEY), r.tar);
   console.log(`wrote ${BASEMAP_TILES_KEY} ${(r.tar.length / 1e6).toFixed(1)} MB`);
