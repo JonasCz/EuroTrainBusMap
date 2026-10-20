@@ -1,7 +1,8 @@
 /**
- * Local transport (metro / tram / city bus) display layer: lines and stops from the GTFS feeds as
- * vector tiles of their own (tile layers `urb-rail`, `urb-bus`). Independent of the intercity pipeline (own DuckDB,
- * own tiles), so it can be rebuilt on an existing build directory (also repacks the tiles, packs.ts):
+ * Local transport (metro / tram / local bus) display layer: lines and stops from the GTFS feeds as
+ * vector tiles of their own (tile layers `urb-rail`, `urb-bus`), built region by region (regions.ts). Independent of
+ * the intercity pipeline (own DuckDB, own tiles), so it can be rebuilt on an existing build directory (also repacks
+ * the tiles, packs.ts):
  *
  *   node --import tsx src/urban/index.ts <outDir>/<build> [--work <dir>] [--assets <dir>]
  */
@@ -14,11 +15,11 @@ import { todayIn } from "../core/time.ts";
 import { loadFeedsConfig, type FeedDef } from "../feeds.ts";
 import { log as defaultLog, warn } from "../util/log.ts";
 import { alignFeed, loadAligners, type AlignStats } from "./align.ts";
-import { gatherFeeds } from "./feeds.ts";
-import { buildUrban } from "./model.ts";
-import { writeUrbanTiles } from "./tiles.ts";
+import { gatherFeeds, type GatheredFeed } from "./feeds.ts";
+import { bucketByRegion, buildRegion, DiskSpill, spillFeed } from "./regions.ts";
+import { cutAllTiles, routeFeatures, writeUrbanTiles } from "./tiles.ts";
 import { repackBuild } from "../packs.ts";
-import { UMODE_NAME, type UrbanFeed } from "./types.ts";
+import { UMODE_NAME } from "./types.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -52,21 +53,50 @@ export async function writeUrbanLayer(o: UrbanOptions): Promise<UrbanResult> {
   const log = o.log ?? defaultLog;
   const cfg = await loadFeedsConfig(join(here, "../../feeds.json"));
   const urbanFeeds = await loadUrbanFeedDefs();
-  const gathered = await gatherFeeds({ cfg, urbanFeeds, workDir: o.work, assetsDir: o.assets, startDate: o.startDate, download: true, staleMaxDays: o.staleMaxDays ?? cfg.staleMaxDays });
-  const feeds = gathered.feeds;
-  const cities = gathered.cities;
-  log(`urban: ${feeds.length} feeds with local lines`);
+  const t0 = Date.now();
+  const secs = () => `${Math.round((Date.now() - t0) / 1000)} s`;
   const al = loadAligners(o.work, o.assets, log);
   const astats: AlignStats = { patterns: {} };
-  for (const f of feeds) alignFeed(f, al, astats);
+  // step 1: extract, align and split every feed into its regions (regions.ts); nothing of a feed stays in memory
+  const spill = new DiskSpill(join(o.work, "urban", "regions"));
+  await spill.clear();
+  let parts = 0;
+  const gathered = await gatherFeeds(
+    { cfg, urbanFeeds, workDir: o.work, assetsDir: o.assets, startDate: o.startDate, download: true, staleMaxDays: o.staleMaxDays ?? cfg.staleMaxDays },
+    async (feed, fi) => {
+      alignFeed(feed, al, astats);
+      parts += await spillFeed(spill, fi, feed);
+    },
+  );
+  al.rail = al.road = null; // the graphs are not needed any more
+  const regions = (await spill.groups("in")).map((g) => g.slice("in/".length));
+  log(`urban: ${gathered.feeds.length} feeds with local lines, ${regions.length} regions (${parts} feed parts), ${secs()}`);
   log(`urban: alignment ${JSON.stringify(astats.patterns)}`);
-  const built = buildUrban(feeds, o.stations, cities);
-  const w = await writeUrbanTiles(o.buildDir, built, log);
-  const stats: Record<string, number> = { urbanFeeds: feeds.length, urbanLines: built.lines.length, urbanStations: built.stations.length, urbanTiles: w.tiles, urbanBytes: w.bytes };
-  for (const m of [0, 1, 2, 3]) stats[`urban_${UMODE_NAME[m]}`] = built.lines.filter((l) => l.mode === m).length;
-  for (const g of ["shape", "rail", "road", "stops"]) stats[`urbanGeom_${g}`] = built.lines.filter((l) => l.geom === g).length;
-  log(`urban: ${built.lines.length} alignments, ${built.stations.length} stations (${built.stations.filter((s) => s.ix).length} at intercity stations), ${w.tiles} tiles, ${(w.bytes / 1e6).toFixed(1)} MB`);
-  await addAttribution(o.buildDir, feeds, urbanFeeds, o.licenses ?? []);
+  // step 2: build each region, keep what it owns, route the tile features to the regions whose tiles they reach
+  const stats: Record<string, number> = { urbanFeeds: gathered.feeds.length, urbanRegions: regions.length, urbanLines: 0, urbanStations: 0, urbanStationsAtIntercity: 0 };
+  for (const m of [0, 1, 2, 3]) stats[`urban_${UMODE_NAME[m]}`] = 0;
+  for (const g of ["shape", "rail", "road", "stops"]) stats[`urbanGeom_${g}`] = 0;
+  const near = bucketByRegion(o.stations);
+  for (const rk of regions) {
+    const out = await buildRegion(spill, rk, near.get(rk) ?? [], gathered.cities);
+    stats.urbanLines! += out.lines.length;
+    stats.urbanStations! += out.stations.length;
+    stats.urbanStationsAtIntercity! += out.stations.filter((s) => s.ix).length;
+    for (const l of out.lines) {
+      stats[`urban_${UMODE_NAME[l.mode]}`]!++;
+      stats[`urbanGeom_${l.geom}`]!++;
+    }
+    for (const [dest, f] of routeFeatures(out)) await spill.put(`out/${dest}`, rk, f);
+  }
+  log(`urban: regions built, ${secs()}`);
+  // step 3: cut each region's tiles
+  const tiles = await cutAllTiles(spill);
+  await spill.clear();
+  const w = await writeUrbanTiles(o.buildDir, tiles, log);
+  stats.urbanTiles = w.tiles;
+  stats.urbanBytes = w.bytes;
+  log(`urban: ${stats.urbanLines} alignments, ${stats.urbanStations} stations (${stats.urbanStationsAtIntercity} at intercity stations), ${w.tiles} tiles, ${(w.bytes / 1e6).toFixed(1)} MB, ${secs()}`);
+  await addAttribution(o.buildDir, gathered.feeds, urbanFeeds, o.licenses ?? []);
   return { info: w.info, tiles: w.tiles, bytes: w.bytes, stats };
 }
 
@@ -78,7 +108,7 @@ interface LicenseEntry {
 }
 
 /** Add the extra local feeds that contributed lines to attribution.json (once). */
-async function addAttribution(buildDir: string, feeds: UrbanFeed[], defs: FeedDef[], licenses: unknown[]): Promise<void> {
+async function addAttribution(buildDir: string, feeds: GatheredFeed[], defs: FeedDef[], licenses: unknown[]): Promise<void> {
   const f = join(buildDir, "attribution.json");
   if (!existsSync(f)) return;
   const att = JSON.parse(await readFile(f, "utf8")) as AttributionFile;

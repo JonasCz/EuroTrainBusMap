@@ -320,15 +320,19 @@ data, give the build a new id: rename the directory (e.g. append a letter, `2026
   `layers/base.pack` (stage basemap) and then into the tile packs; `Manifest.basemap` holds their zooms and bounds. Without the tar
   the build falls back to the coarse 1:50m GeoJSON. A mapdata-only or urban-only run keeps `layers/base.pack` and repacks it.
 
-## Local transport layer (phase G) – metro / tram / city bus
+## Local transport layer (phase G) – metro / tram / local bus
 
 - **Separate pass**: stage `urban` of `build-data` (after `mapdata`, skip with `--no-urban`) runs `packages/etl/src/urban/index.ts` on the feed zips
   already in `work/cache/feeds` plus the ~60 extra city feeds of `packages/etl/urban-feeds.json` (downloaded into the same cache; the intercity
   feeds are NOT downloaded by it). `feeds.json` is untouched, so `--reuse-db` keys are unaffected by urban changes. Standalone, on an existing build:
   `cd packages/etl && node --no-warnings --max-old-space-size=8192 --import tsx src/urban/index.ts ../../work/out/<build>` (updates `urban/`,
-  `attribution.json` and `manifest.json` (`urban`, `urban*` stats) of that build; ~1 min with warm per-feed caches in `work/urban/feeds/*.json.gz`,
-  first run ~15 min because every cached zip is read once; the cache key is zip size + `EXTRACT_VERSION` + reference weekday, bump `EXTRACT_VERSION`
-  in `urban/types.ts` when extraction changes). Needs `work/assets/rail/urbanrail-graph-v1.bin` (tram / metro track, see the refresh-geometry-assets skill;
+  `attribution.json` and `manifest.json` (`urban`, `urban*` stats) of that build and repacks; a few minutes with warm per-feed caches in
+  `work/urban/feeds/*.json.gz`, a first run ~25 min because every cached zip is read once; the cache key is zip size + `EXTRACT_VERSION` + reference
+  weekday + the feed's bus rule, bump `EXTRACT_VERSION` in `urban/types.ts` when extraction changes).
+  The layer is built **region by region** (`urban/regions.ts`, z6 squares + 60 km halo): feeds are split into `work/urban/regions/in/<region>/`
+  while they are extracted, each region is built and keeps what it owns, features go to `work/urban/regions/out/<region>/`, then each region cuts
+  its tiles; the directory is deleted at the end (a crashed run leaves it, the next run clears it). Log lines `urban: … regions …, N s` give
+  the time of each step and `(rss …)` the memory. Needs `work/assets/rail/urbanrail-graph-v1.bin` (tram / metro track, see the refresh-geometry-assets skill;
   without it lines without shapes stay dashed stop-to-stop chains) and the road graph.
 - **Iterating on the look without touching the deployed build**: make a scratch out dir whose build dir holds symlinks to the real build's files
   and real copies of `attribution.json`, `manifest.json` and `layers/` (`work/out-dev/<build>/*` -> `work/out/<build>/*`; `packs/` is
@@ -340,8 +344,11 @@ data, give the build a new id: rename the directory (e.g. append a letter, `2026
 - **Debugging coverage**: per feed lines / shaped patterns / dropped counts are logged (`urban <key>: N lines (S shaped patterns) …`), the alignment
   summary line `urban: alignment {"bus":{shape,routed,partial,stops},"rail":{…}}` shows how many patterns came from shapes, were routed completely /
   ≥ 70 % or stayed chords. Feeds without `shapes.txt` (DELFI, GB, CH, SE, parts of FR/IT) depend on the graphs.
-- **Sizes** (see README): 2.4k tiles / ~11 MB for the layer, largest tile < 100 KB; they are deployed inside the tile packs.
-- A `DiscIndex` / `isCityBus` change moves which buses count as "city buses" (population ≥ 100 000 discs): bump `EXTRACT_VERSION`, the filter runs at extraction time.
+- **Sizes** (see README): 192 feeds with local lines, 97k alignments (95k bus), 626k stations, 13.7k tiles / ~44 MB gz (urb-bus 42.7 MB, largest tile 87 KB), 87 regions; cold run (all feeds re-extracted) 28 min / peak RSS 9.2 GB (the extraction: DuckDB 4 GB limit + road graph), warm 5.3 min / 3.1 GB (Oct 2026). The bus tiles have a pack set of their own (270 packs, median 138 KiB); they are deployed inside the tile packs.
+- **Which buses**: every local bus route (`busExclusion`, `urban/classify.ts`): routes of a feed whose buses the intercity network loads are
+  local below the feed's `minBusKm` (the intercity network draws the rest), all other routes up to 30 km. A change of a feed's `minBusKm`,
+  `keep` or agency filters re-extracts that feed (part of the cache stamp); a change of the rule itself needs an `EXTRACT_VERSION` bump.
+  Per feed, the log's dropped counts show `main-network` (left to the intercity layer) and `long` (> 30 km, not in the intercity network either).
 
 ## Villages (bus destinations in small places)
 

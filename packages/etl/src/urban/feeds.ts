@@ -7,13 +7,13 @@ import { downloadWithFallback } from "../download.ts";
 import { resolveFeeds, type FeedDef, type FeedsConfig, type ResolvedFeed } from "../feeds.ts";
 import { loadPlaces } from "../geonames.ts";
 import { log, warn } from "../util/log.ts";
-import { cityDiscs, DiscIndex } from "./classify.ts";
+import { cityDiscs, DiscIndex, type MainBusRule } from "./classify.ts";
 import { extractFeed } from "./extract.ts";
 import { STALE_MAX_DAYS, zipState } from "../gtfs/validity.ts";
 import { EXTRACT_VERSION, type UrbanFeed } from "./types.ts";
 
-/** Cities from this population on count for bus lines. */
-export const BUS_CITY_MIN_POP = 100_000;
+/** Cities from this population on are left out of their stops' names (stripCityName). */
+export const NAME_CITY_MIN_POP = 100_000;
 
 export interface UrbanFeedsFile {
   feeds: FeedDef[];
@@ -50,11 +50,31 @@ export function staleRefWeekday(end: string): string {
 }
 
 /**
+ * From which span the intercity network carries a feeds.json feed's buses (classify.ts busExclusion): the feeds that
+ * load buses, with their `minBusKm` and the agency filters of the intercity loader (gtfs/load.ts, core/classify.ts).
+ */
+export function mainBusRule(def: FeedDef, cfg: FeedsConfig): MainBusRule | null {
+  const o = def.options ?? {};
+  if (!def.keep.includes("bus") && !(o.allCoach && def.keep.includes("coach"))) return null;
+  const drop = [cfg.urbanAgencies, o.dropAgencies].filter(Boolean).map((r) => `(?:${r})`).join("|");
+  return { minKm: o.minBusKm ?? cfg.minBusKm, dropAgency: drop ? new RegExp(drop, "i") : null, onlyAgency: o.onlyAgencies ? new RegExp(o.onlyAgencies, "i") : null };
+}
+
+const ruleStamp = (r: MainBusRule | null) => (r ? `${r.minKm}/${r.dropAgency?.source ?? ""}/${r.onlyAgency?.source ?? ""}` : "local");
+
+/** A feed that contributed lines (attribution). */
+export interface GatheredFeed {
+  key: string;
+  expired?: string;
+}
+
+/**
  * Extract the local lines of every feed: the intercity feeds of feeds.json (re-using their cached zips)
  * and the extra local feeds of urban-feeds.json (downloaded into the same cache). Extractions are cached
- * per feed in work/urban/ keyed by zip size and extractor version.
+ * per feed in work/urban/ keyed by zip size, extractor version, reference day and bus rule. The feeds are handed to
+ * `onFeed` one by one, in a fixed order (its index), and not kept: the layer is built region by region (regions.ts).
  */
-export async function gatherFeeds(o: GatherOptions): Promise<{ feeds: UrbanFeed[]; cities: DiscIndex }> {
+export async function gatherFeeds(o: GatherOptions, onFeed: (feed: UrbanFeed, index: number) => Promise<void> | void): Promise<{ feeds: GatheredFeed[]; cities: DiscIndex }> {
   const cacheDir = join(o.workDir, "cache");
   const outDir = join(o.workDir, "urban");
   await mkdir(join(outDir, "feeds"), { recursive: true });
@@ -65,12 +85,12 @@ export async function gatherFeeds(o: GatherOptions): Promise<{ feeds: UrbanFeed[
   const baseFeeds = base.filter((f) => f.def.keep.some((k) => k !== "coach"));
   const extra = await resolveFeeds({ ...o.cfg, feeds: o.urbanFeeds }, { tiers: ["core"], cacheDir });
   const places = await loadPlaces(cacheDir, o.cfg.userAgent, o.assetsDir);
-  const cityIdx = new DiscIndex(cityDiscs(places, BUS_CITY_MIN_POP));
+  const cityIdx = new DiscIndex(cityDiscs(places, NAME_CITY_MIN_POP));
   const coachRe = new RegExp(o.cfg.coachOperators, "i");
   const refDate = refWeekday(o.startDate);
   const db = await Db.open(":memory:", { threads: 4, memoryLimit: process.env.ETL_DUCKDB_MEMORY ?? "4GB", tempDir: join(tmpDir, "duckdb-urban") });
-  const result: UrbanFeed[] = [];
-  const todo: { rf: ResolvedFeed; extra: boolean }[] = [...baseFeeds.map((rf) => ({ rf, extra: false })), ...extra.map((rf) => ({ rf, extra: true }))];
+  const result: GatheredFeed[] = [];
+  const todo: { rf: ResolvedFeed; main: MainBusRule | null }[] = [...baseFeeds.map((rf) => ({ rf, main: mainBusRule(rf.def, o.cfg) })), ...extra.map((rf) => ({ rf, main: null }))];
   // downloads of extra feeds run a few ahead of the extraction
   const dl = new Map<string, Promise<string | null>>();
   const extraKeys = new Set(extra.map((e) => e.key));
@@ -92,7 +112,7 @@ export async function gatherFeeds(o: GatherOptions): Promise<{ feeds: UrbanFeed[
   };
   let nextDl = 0;
   for (let i = 0; i < todo.length; i++) {
-    const { rf } = todo[i]!;
+    const { rf, main } = todo[i]!;
     while (nextDl < todo.length && nextDl < i + 4) startDl(todo[nextDl++]!.rf);
     const zip = await dl.get(rf.key);
     if (!zip) continue;
@@ -107,7 +127,7 @@ export async function gatherFeeds(o: GatherOptions): Promise<{ feeds: UrbanFeed[
     const ref = state.kind === "stale" ? staleRefWeekday(state.end) : refDate;
     const st = await stat(zip);
     const cacheFile = join(outDir, "feeds", `${rf.key}.json.gz`);
-    const stamp = `${st.size}:${EXTRACT_VERSION}:${ref}:${BUS_CITY_MIN_POP}`;
+    const stamp = `${st.size}:${EXTRACT_VERSION}:${ref}:${ruleStamp(main)}`;
     let feed: UrbanFeed | null = null;
     if (existsSync(cacheFile)) {
       try {
@@ -119,12 +139,16 @@ export async function gatherFeeds(o: GatherOptions): Promise<{ feeds: UrbanFeed[
     }
     if (!feed) {
       const t0 = Date.now();
-      feed = await extractFeed(db, rf.key, zip, { refDate: ref, coachRe, cityIdx, tmpDir });
+      feed = await extractFeed(db, rf.key, zip, { refDate: ref, coachRe, mainBus: main, tmpDir });
       if (feed) await writeFile(cacheFile, gzipSync(JSON.stringify({ ...feed, stamp })));
       else await writeFile(cacheFile, gzipSync(JSON.stringify({ key: rf.key, version: EXTRACT_VERSION, lines: [], stops: [], stats: { routes: 0, kept: 0, shaped: 0, dropped: {} }, stamp })));
       if (feed) log(`urban ${rf.key}: ${feed.lines.length} lines (${feed.stats.shaped} shaped patterns), ${feed.stops.length} stops, ${feed.stats.routes} candidate routes, ${JSON.stringify(feed.stats.dropped)} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     }
-    if (feed && feed.lines.length) result.push({ ...feed, key: rf.key, ...(state.kind === "stale" ? { expired: state.end } : {}) });
+    if (feed && feed.lines.length) {
+      const expired = state.kind === "stale" ? { expired: state.end } : {};
+      await onFeed({ ...feed, key: rf.key, ...expired }, i);
+      result.push({ key: rf.key, ...expired });
+    }
   }
   db.close();
   return { feeds: result, cities: cityIdx };

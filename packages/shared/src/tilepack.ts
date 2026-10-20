@@ -36,7 +36,7 @@ export const PACK_LAYER = {
   netModes: "net-m",
   /** metro / tram lines and their stops */
   urbRail: "urb-rail",
-  /** city bus lines and bus stops */
+  /** local bus lines and bus stops */
   urbBus: "urb-bus",
 } as const;
 export type PackLayer = (typeof PACK_LAYER)[keyof typeof PACK_LAYER];

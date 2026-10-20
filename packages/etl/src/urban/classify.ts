@@ -31,8 +31,8 @@ export interface CityDisc {
 }
 
 /**
- * Discs around the larger cities in which bus lines count as "city buses": radius grows with the
- * population (about 4 km for 100 000 inhabitants up to 16 km for the biggest metropolises).
+ * Discs around the larger cities (radius grows with the population: about 4 km for 100 000 inhabitants up to 16 km
+ * for the biggest metropolises): the city a stop name may repeat (stripCityName) and the cities of the transit profiles.
  */
 export function cityDiscs(places: Place[], minPop: number): CityDisc[] {
   return places
@@ -71,22 +71,53 @@ export class DiscIndex {
   }
 }
 
+/** Longest straight stop span (km) of a local bus line whose buses the intercity network does not carry. */
+export const LOCAL_BUS_MAX_KM = 30;
+
 /**
- * Whether a bus line is a city bus: short (the straight span of its stops is below `maxSpanKm`) and
- * at least `share` of its stops lie inside the disc of a big city.
+ * Straight-line span (km) of a set of stops: the diagonal of their bounding box, the same measure as the intercity
+ * loader's short-bus filter (gtfs/load.ts `minBusKm`).
  */
-export function isCityBus(stops: { lon: number; lat: number }[], idx: DiscIndex, maxSpanKm = 30, share = 0.6): boolean {
-  if (stops.length < 2) return false;
-  let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity, inside = 0;
+export function stopSpanKm(stops: { lon: number; lat: number }[]): number {
+  if (!stops.length) return 0;
+  let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity, sumLat = 0;
   for (const s of stops) {
     minLon = Math.min(minLon, s.lon);
     maxLon = Math.max(maxLon, s.lon);
     minLat = Math.min(minLat, s.lat);
     maxLat = Math.max(maxLat, s.lat);
-    if (idx.contains(s.lon, s.lat)) inside++;
+    sumLat += s.lat;
   }
-  const span = fastDist(minLon, minLat, maxLon, maxLat) / 1000;
-  return span <= maxSpanKm && inside / stops.length >= share;
+  const cos = Math.cos(((sumLat / stops.length) * Math.PI) / 180);
+  return Math.hypot((maxLat - minLat) * 111.2, (maxLon - minLon) * 111.2 * cos);
+}
+
+/**
+ * Whether the intercity network carries the buses of a route and from which span on: its feed is a feeds.json feed
+ * that loads buses, and the route's agency passes that feed's agency filters and is not one of the city operators
+ * the intercity classifier rejects (feeds.json `urbanAgencies`). Null for the extra local feeds (urban-feeds.json).
+ */
+export interface MainBusRule {
+  /** the feed's `minBusKm`: bus trips spanning at least this are part of the intercity network */
+  minKm: number;
+  /** agency names whose buses the intercity network leaves out */
+  dropAgency: RegExp | null;
+  /** when set, only these agencies' buses are in the intercity network */
+  onlyAgency: RegExp | null;
+}
+
+/**
+ * Which bus routes the local layer draws: every local bus route (city, town and village buses, island buses) except
+ * the ones the intercity network already draws. A route of a feed whose buses the intercity network loads
+ * (`main`) is local when its longest pattern spans less than the feed's `minBusKm` (the intercity loader drops exactly
+ * those trips), so no line is drawn by both. Routes of the extra local feeds, of feeds without buses in the intercity
+ * network and of agencies it rejects are local up to LOCAL_BUS_MAX_KM; longer ones are regional lines. Returns the
+ * reason a route is left out, or null when it is kept.
+ */
+export function busExclusion(spanKm: number, agency: string, main: MainBusRule | null): "main-network" | "long" | null {
+  const inMain = !!main && !(main.dropAgency && main.dropAgency.test(agency)) && !(main.onlyAgency && !main.onlyAgency.test(agency));
+  if (inMain) return spanKm >= main!.minKm ? "main-network" : null;
+  return spanKm > LOCAL_BUS_MAX_KM ? "long" : null;
 }
 
 const fold = (s: string) => s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();

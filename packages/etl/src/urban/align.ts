@@ -8,7 +8,7 @@ import { UMode, type LonLat, type UrbanFeed, type UrbanPattern } from "./types.t
 export interface Aligners {
   /** tram / metro / light-rail track */
   rail: Router | null;
-  /** tertiary and above roads (city buses) */
+  /** tertiary and above roads (local buses) */
   road: Router | null;
 }
 
@@ -33,7 +33,7 @@ export function loadAligners(workDir: string, assetsDir: string, log: (m: string
   if (df) {
     out.road = new Router(deserializeRailGraph(readFileSync(df)).graph, { ...SNAP, minComponent: 3000 });
     log(`urban: road graph ${df}`);
-  } else log("urban: WARNING no road graph: city buses without shapes stay stop-to-stop");
+  } else log("urban: WARNING no road graph: local buses without shapes stay stop-to-stop");
   return out;
 }
 

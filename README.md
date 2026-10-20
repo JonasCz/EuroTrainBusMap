@@ -26,7 +26,7 @@ packages/
     src/core/*          pure logic (classification, calendars, names, city assignment, station merging,
                         pattern building, cross-feed dedup) – unit tested in test/
     src/geometry/       corridor geometry: rail / coach+bus routing on graphs built from Overture (OSM) rail and major roads
-    src/urban/          local transport (metro / tram / city bus) display layer: own GTFS pass, own tiles (see "Local transport" below)
+    src/urban/          local transport (metro / tram / local bus) display layer: own GTFS pass, own tiles (see "Local transport" below)
     src/packs.ts        last stage: groups every tile layer by area into a few hundred tile packs (see "Tile packs" below)
     urban-feeds.json    extra GTFS feeds that only feed the local layer (kept out of feeds.json: the intercity pipeline is untouched)
     src/assets.ts       builds the slow-changing inputs stored in R2 (see below)
@@ -353,9 +353,9 @@ Pipeline in short:
    Rebuild just this stage for an existing build: `node --import tsx packages/etl/src/mapdata.ts <out>/<build>` (repacks the tiles too).
 
 11. **Local transport** (`src/urban/`, formats in `packages/shared/src/urban.ts`) – metro, tram, light rail,
-   funicular / cable car and city bus lines with their stops, a *display layer* beside the intercity network: it has
+   funicular / cable car and local bus lines with their stops, a *display layer* beside the intercity network: it has
    no timetables, no cities and no shards (urban trips would multiply both), only lines and stops shown from
-   zoom 10 / 12. Own pass over the cached feed zips (`work/cache/feeds`: the intercity feeds of `feeds.json` plus
+   zoom 10 / 11.6. Own pass over the cached feed zips (`work/cache/feeds`: the intercity feeds of `feeds.json` plus
    the extra ones of `urban-feeds.json`, ~60 city feeds such as IDFM, Madrid, Barcelona, Rome, Milan, Warsaw, Budapest,
    Prague, Helsinki, Lisbon…, downloaded into the same cache), its own in-memory DuckDB, per-feed results cached in
    `work/urban/feeds/*.json.gz`:
@@ -363,9 +363,13 @@ Pipeline in short:
      (rail-replacement, school, shuttle and coach operators dropped). Per route and direction the most frequent
      shape (or headsign) plus up to two frequent variants, one representative trip each (a few trips per route, so
      `stop_times` is filtered down before it is read); trips per direction on a typical weekday (a Wednesday a week
-     after the start date) give `tpd`, shown as "every ~10 min". City buses are lines whose stops lie ≥ 60 % inside
-     the disc (4–16 km, grows with population) of a place with ≥ 100 000 inhabitants and span ≤ 30 km;
-     metro / tram / cable lines are kept anywhere.
+     after the start date) give `tpd`, shown as "every ~10 min". **Buses**: every local bus route of every town, village
+     and island, decided per route on the straight span of its longest pattern (`busExclusion`, `classify.ts`) so that
+     no line is drawn twice: a route of a `feeds.json` feed whose buses the intercity network loads (and whose agency
+     its filters let through, `urbanAgencies` rejects) is local only below that feed's `minBusKm` (15 km, TITSA 8 km)
+     – exactly the trips the intercity loader drops; from it on the intercity network draws it. Routes of the extra
+     local feeds, of feeds without buses in the intercity network and of the rejected city operators are local up to
+     30 km (`LOCAL_BUS_MAX_KM`); longer ones are regional lines. Metro / tram / cable lines are kept anywhere.
    - **Alignment**: the feed's `shapes.txt` where there is one (simplified to 3 m); lines without shapes (all of
      DELFI, GB, CH, SE, …) are routed hop by hop between their stops on a tram / metro / light-rail track graph
      (`rail/urbanrail-graph-v1.bin`, Overture classes the intercity rail graph drops) – buses on the road graph
@@ -379,7 +383,19 @@ Pipeline in short:
      mode × frequency) and each takes the first zoom level (10.5, 11.5 … 14.5) at which no more important station
      within ~24 px is already shown (`thinZooms`, buses 14 / 14.8 at 12 px), so a centre shows its hubs first and
      fills in as one zooms; a stop never appears before its first line. Lines have a first zoom too (`lineZoom`):
-     metro 10 / 10.8 (≥ 100 trips per direction and day), tram 11.2 / 12 / 12.6, cable 12.5, buses 12.4 … 14.2 by frequency.
+     metro 10 / 10.8 (≥ 100 trips per direction and day), tram 11.2 / 12 / 12.6, cable 12.5, buses 12.4 … 14.2 by frequency;
+     a bus line shows earlier, from 11.6 (fully drawn by 12.2), where the map is sparse (`busLineZooms`: in order of frequency a line takes the
+     first level at which every 160 px cell it crosses holds fewer than 6 lines), so a town's or an island's few lines
+     appear with the city buses' busiest lines and a dense centre still fills in by frequency.
+   - **Regions** (`regions.ts`): the layer is built region by region (web-mercator z6 tiles, ~400 km) so memory stays
+     bounded (~100 k bus lines, ~0.8 M stops). Every feed is split while it is extracted: each pattern goes, with its
+     stops, to every region whose square grown by 60 km its bounding box touches (`work/urban/regions/`, deleted
+     afterwards). Each region is then built on its own (de-duplication, stations, zoom levels) and keeps what it owns:
+     an alignment belongs to the region holding the centre of its bounding box, a station to the region holding its
+     position, so each comes out once, decided with all the context it depends on (same-name lines, stops a few hundred
+     metres away, busier lines in the same cells) inside the halo. The owned features are routed to every region whose
+     tiles (plus buffer) they touch, and each region cuts only its own tiles: a tile at a seam holds both sides'
+     features, none twice (tests in `test/urban-regions.test.ts`).
    - **Tiles**: two tile layers / vector sources, `urb-rail` at z10 (metro / tram / cable lines and the stops of
      stations with such a line; extent 16384 ≈ 2.4 m) and `urb-bus` at z11 (bus lines and bus-only stops; extent 8192), stored at
      one zoom only (`Manifest.urban`), non-empty tiles only (in the tile packs; the app answers the rest with an empty tile) and overzoomed by MapLibre.
@@ -391,7 +407,7 @@ Pipeline in short:
      operator, frequency band); hover shows the name. The chip "Local transport" (on by default; `#local=0` in the URL when off)
      hides all of it. Nothing of this loads below zoom 10.
    Rebuild just this stage for an existing build: `node --import tsx packages/etl/src/urban/index.ts <out>/<build>`
-   (repacks the tiles too; ~1 min with warm caches, ~15 min when the zips of all feeds must be re-read), or skip it with `--no-urban`.
+   (repacks the tiles too; a few minutes with warm caches, ~25 min when the zips of all feeds must be re-read), or skip it with `--no-urban`.
 
 12. **Coastline and lakes** – tile layer `base`: OSM land polygons + Natural Earth 10m lakes as gzipped vector tiles z2–z9
    (extent 8192 at z9 ≈ 6 m, overzoomed to z15), ~5.4k tiles / ~28 MB (`Manifest.basemap`). Tiles without land are missing (sea) and
@@ -406,19 +422,21 @@ Pipeline in short:
    (layer, z, x, y, length; the tiles stay individually gzipped). Quadtree rule: a node takes the tiles under it from the first zoom
    its ancestors did not take; if they fit the target (default 384 KiB, `--pack-target-kb`) they are one pack, else the node keeps
    the lowest zooms that fit (at least its own zoom) and its four children split the rest – sparse areas get large packs over many
-   zooms, dense cities small ones, the lowest zooms a few overview packs. The basemap, network and local-transport layers share
-   one quadtree (a view needs one or a few packs for all of them); `net-m` has its own, so the default view never downloads it.
+   zooms, dense cities small ones, the lowest zooms a few overview packs. The basemap, network and metro / tram layers share
+   one quadtree (a view needs one or a few packs for all of them); the local buses (`urb-bus`, drawn from zoom 11.6) and `net-m`
+   have their own, so lower views never download the bus tiles and the default view never `net-m`.
    `Manifest.packs` lists every pack (node, zoom band, hash; a node that is all land needs no file). The web app
    (`web/src/map/packs.ts`) downloads a pack once (in-flight requests shared, LRU of 64 MB) and serves each tile from it through
    the `etbmgz://pack/<layer>/{z}/{x}/{y}` protocol, so the MapLibre sources stay ordinary vector sources. Content-addressed
-   names under the immutable `data/<build>/` path: a browser can never mix packs of two builds. Full build (Oct 2026): 14.1k tiles of the main
-   set in 504 packs (7 of them all-land nodes without a file) + 159 `net-m` tiles in 67 packs: 564 files, 92 MB, median 144 KiB,
-   largest 914 KiB (a single z4 network tile that cannot be split); before, the same tiles were 12.7k files. Build log line `packs: …`. Repack an existing build: `node --import tsx packages/etl/src/packs.ts <out>/<build>`.
+   names under the immutable `data/<build>/` path: a browser can never mix packs of two builds. Full build (Oct 2026): 12.1k tiles of the main
+   set in 452 packs (2 of them all-land nodes without a file), 13.3k bus tiles in 270 packs (median 138 KiB, largest 383 KiB) and 159
+   `net-m` tiles in 67 packs: 787 files, 125 MB, largest 914 KiB (a single z4 network tile that cannot be split). Build log line `packs: …`. Repack an existing build: `node --import tsx packages/etl/src/packs.ts <out>/<build>`.
 
 Typical full build: ~150 feed files, ~920k stops → ~73k stations (served) in ~41k cities, ~125k corridors on ~176k line-graph segments, ~2.1M trips,
 ~2 GB in ~2.5k files, of them a few hundred tile packs (Cloudflare limit: 20k files per deployment); ~12 min on a 4-core machine with a warm DuckDB
 (`--reuse-db`; ~75 min from scratch on a runner, see "Building from scratch"). The local-transport stage adds ~25 min when its per-feed caches are cold
-(129 feeds with local lines: 21k lines / 25k alignments, 179k stations, 2 400 tiles / 11 MB gz, largest tile 86 KB).
+(192 feeds with local lines: 97k alignments, of them 95k bus, 626k stations, 13.7k tiles / 44 MB gz, largest tile 87 KB; built in 87
+regions, peak RSS 9.2 GB during the extraction, ~3 GB with warm caches).
 
 ## Running locally
 

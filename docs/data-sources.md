@@ -51,6 +51,8 @@ Aggregates such as DELFI, NL, CH, NO, SE, DK, the FR regional sets, AT PTA and T
 - Keep rail types 2 and 100–117 (drop 109 suburban as an optional layer).
 - For buses (3, 700–716, 200–209), keep only routes whose trips span at least about 15 km between first and last stop and that serve at least 2 distinct municipalities. A cheap version is the stop bbox diagonal, or `route_type` 200/701/702 where those types are used.
 
+As built: the intercity network keeps bus trips whose stop bounding-box diagonal is at least `minBusKm` (15 km; per feed, e.g. TITSA 8 km). The local-transport layer (`packages/etl/src/urban/`) draws the complement: every bus route of those feeds below the feed's `minBusKm`, and every route up to 30 km of the extra local feeds (`urban-feeds.json`), of feeds whose buses the network does not load and of the city operators it rejects (`urbanAgencies`). Each route is drawn by one of the two layers only.
+
 ## 4. Rail geometry
 
 | Option | Verdict |

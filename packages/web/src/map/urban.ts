@@ -1,5 +1,5 @@
 /**
- * Local transport layers (metro / tram / city bus lines and their stops). The data is a display layer
+ * Local transport layers (metro / tram / local bus lines and their stops). The data is a display layer
  * of its own (vector tiles `urb-rail` stored at z10, `urb-bus` at z11, see @etbm/shared urban.ts), drawn
  * below the intercity network. Lines fade in at their own zoom (`z`: metro first, then trams, then buses by
  * frequency); stops thin out over several zoom levels (ETL `thinZooms`), so a city centre fills in
@@ -54,7 +54,8 @@ export function urbanLayers(t: Theme, dim: boolean): LayerSpecification[] {
     type: "line",
     source: "urb-bus",
     "source-layer": line,
-    minzoom: 12,
+    // a sparse area's lines start at 11.6 (ETL busLineZooms) and are faded in by 12.2; busy ones follow by frequency
+    minzoom: 11.6,
     filter: shown,
     layout: lineLayout,
     paint: {

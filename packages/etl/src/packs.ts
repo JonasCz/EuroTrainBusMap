@@ -41,10 +41,13 @@ export const PACKS_DIR = "packs";
 
 /**
  * Layer groups, one quadtree each. The mode-filter network is its own set: it replaces `net` at low zooms only while
- * a mode filter is on, so the default view never downloads it.
+ * a mode filter is on, so the default view never downloads it. The local buses (z11 tiles, ~40 MB) are their own set
+ * too: they are drawn from zoom 11.6 only, so the packs of lower views must not carry them (a z9 – z10 view would
+ * otherwise download the bus tiles of a whole region).
  */
 export const PACK_SETS: { layers: string[]; fill?: string }[] = [
-  { layers: [PACK_LAYER.base, PACK_LAYER.net, PACK_LAYER.urbRail, PACK_LAYER.urbBus], fill: PACK_LAYER.base },
+  { layers: [PACK_LAYER.base, PACK_LAYER.net, PACK_LAYER.urbRail], fill: PACK_LAYER.base },
+  { layers: [PACK_LAYER.urbBus] },
   { layers: [PACK_LAYER.netModes] },
 ];
 

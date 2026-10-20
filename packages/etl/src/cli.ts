@@ -26,7 +26,7 @@ export interface CliArgs {
   reuseDb: boolean;
   geometry: boolean;
   basemap: boolean;
-  /** Build the local-transport layer (metro / tram / city bus tiles). */
+  /** Build the local-transport layer (metro / tram / local bus tiles). */
   urban: boolean;
   /** Compute transit transfer times from the local timetables (metro / tram / suburban rail, urban/transit.ts). */
   transit: boolean;

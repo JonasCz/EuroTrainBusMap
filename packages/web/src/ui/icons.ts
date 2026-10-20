@@ -12,7 +12,7 @@ type Shape = [string, Record<string, string | number>];
 const STROKE = { fill: "none", stroke: "currentColor", "stroke-width": 1.9, "stroke-linecap": "round", "stroke-linejoin": "round" };
 const FILL = { fill: "currentColor" };
 
-/** Pictograms, keyed by Cat bit; "local" = metro / tram / city bus. */
+/** Pictograms, keyed by Cat bit; "local" = metro / tram / local bus. */
 const SHAPES: Record<string, Shape[]> = {
   // high-speed train, side view: streamlined nose, window band, track
   [Cat.LongDistance]: [
@@ -83,7 +83,7 @@ export function modeIcon(cat: number, size = 16, label?: string): SVGSVGElement 
   return build(SHAPES[cat] ?? SHAPES[Cat.Bus]!, size, "mode-icon", `var(--cat-${cat})`, label);
 }
 
-/** The pictogram of local transport (metro / tram / city bus), in the local-transport colour. */
+/** The pictogram of local transport (metro / tram / local bus), in the local-transport colour. */
 export function localIcon(size = 16, label?: string): SVGSVGElement {
   return build(SHAPES.local!, size, "mode-icon", "var(--urban)", label);
 }

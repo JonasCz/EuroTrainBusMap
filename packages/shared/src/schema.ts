@@ -87,7 +87,7 @@ export interface Manifest {
   transfers?: { version: number; index: string };
   /** Land / lake vector tiles (tile layer `base` of the packs); without it the web app falls back to basemap/{land,lakes}.json. */
   basemap?: BasemapInfo;
-  /** Local transport (metro / tram / city bus) vector tiles, see urban.ts; absent in builds without the layer. */
+  /** Local transport (metro / tram / local bus) vector tiles, see urban.ts; absent in builds without the layer. */
   urban?: import("./urban.ts").UrbanInfo;
 }
 

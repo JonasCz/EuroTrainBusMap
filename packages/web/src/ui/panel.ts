@@ -294,7 +294,7 @@ export class Panel {
         this.actions.set({ filters: { ...f, cats: f.cats ^ cat } });
       }),
     );
-    const local = this.chip({ class: "chip chip-local", "data-local": "1", style: "--c:var(--urban)", title: "Metro, tram and city bus lines, shown when zoomed in" }, localIcon(16), "Local transport", () => {
+    const local = this.chip({ class: "chip chip-local", "data-local": "1", style: "--c:var(--urban)", title: "Metro, tram and local bus lines, shown when zoomed in" }, localIcon(16), "Local transport", () => {
       const f = this.actions.state.filters;
       this.actions.set({ filters: { ...f, local: !localOn(f) } });
     });
@@ -582,7 +582,7 @@ export class Panel {
           { class: "legend", "aria-label": "Transport modes on the map" },
           CAT_ORDER.map((cat) => item(!f || (f.cats & cat) !== 0, modeIcon(cat, 16), h("span", { class: "legend-line", style: `--c:var(--cat-${cat})` }), CAT_LABEL[cat]!)),
           this.localAvailable
-            ? item(!f || localOn(f), localIcon(16), h("span", { class: "legend-line thin", style: "--c:var(--urban)" }), "Metro, tram, city bus – zoom in", true)
+            ? item(!f || localOn(f), localIcon(16), h("span", { class: "legend-line thin", style: "--c:var(--urban)" }), "Metro, tram, local bus – zoom in", true)
             : null,
         ),
         h(

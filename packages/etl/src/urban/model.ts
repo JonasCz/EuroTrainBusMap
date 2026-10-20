@@ -182,6 +182,48 @@ export function thinZooms(pts: { lon: number; lat: number; imp: number }[], leve
   return out;
 }
 
+/** Zoom levels at which a bus line can appear (its frequency zoom, lineZoom, is the latest). */
+export const BUS_LINE_LEVELS = [11.6, 12.4, 13, 13.6, 14.2];
+/** Bus line density limit: at most this many lines per cell of BUS_CELL_PX screen pixels (512 px tiles) before a line waits for its frequency zoom. */
+export const BUS_CELL_PX = 160;
+export const BUS_CELL_MAX = 6;
+
+/**
+ * First zoom of each bus line: as early as BUS_LINE_LEVELS[0] where the map is sparse (a town's or a village's few
+ * lines, island buses), but never later than its frequency zoom (lineZoom), which is what a dense city centre falls
+ * back to. In order of frequency every line takes the first level at which each screen cell it crosses holds fewer
+ * than BUS_CELL_MAX lines already shown at that level. Returns the zoom per line.
+ */
+export function busLineZooms(lines: { tpd: number; coords: LonLat[] }[]): number[] {
+  const out = lines.map((l) => lineZoom(UMode.Bus, l.tpd));
+  const len = lines.map((l) => pathLen(l.coords));
+  const order = lines.map((_, i) => i).sort((a, b) => lines[b]!.tpd - lines[a]!.tpd || len[b]! - len[a]! || a - b);
+  const counts = BUS_LINE_LEVELS.map(() => new Map<number, number>());
+  const cellsAt = (li: number, c: LonLat[]): number[] => {
+    // cells in metres (equirectangular at 50° N, like thinZooms), sampled at half a cell
+    const m = BUS_CELL_PX * metresPerPixel(50, BUS_LINE_LEVELS[li]!);
+    const ks = new Set<number>();
+    for (const p of samplePath(c, m / 2)) ks.add(Math.floor((p[0] * 71_700) / m + 2e6) * 4e6 + Math.floor((p[1] * 111_200) / m + 2e6));
+    return [...ks];
+  };
+  for (const i of order) {
+    const c = lines[i]!.coords;
+    if (c.length < 2) continue;
+    const latest = out[i]!;
+    let chosen = BUS_LINE_LEVELS.findIndex((z) => z >= latest - 1e-9);
+    if (chosen < 0) chosen = BUS_LINE_LEVELS.length - 1;
+    const cells = BUS_LINE_LEVELS.map((_, li) => cellsAt(li, c));
+    for (let li = 0; li < chosen; li++)
+      if (cells[li]!.every((k) => (counts[li]!.get(k) ?? 0) < BUS_CELL_MAX)) {
+        chosen = li;
+        break;
+      }
+    out[i] = Math.min(latest, BUS_LINE_LEVELS[chosen]!);
+    for (let li = chosen; li < BUS_LINE_LEVELS.length; li++) for (const k of cells[li]!) counts[li]!.set(k, (counts[li]!.get(k) ?? 0) + 1);
+  }
+  return out;
+}
+
 export interface BuiltUrban {
   lines: DrawnLine[];
   stations: UrbanStation[];
@@ -205,7 +247,7 @@ export function buildUrban(feeds: UrbanFeed[], intercity: { lon: number; lat: nu
   feeds.forEach((f, fi) => {
     stopBase.push(stopsIn.length);
     f.stops.forEach((s) => {
-      stopsIn.push({ lon: s.lon, lat: s.lat, name: s.name, rail: false, parent: s.parent ? `${fi}:${s.parent}` : null, feed: fi, weight: 0 });
+      stopsIn.push({ lon: s.lon, lat: s.lat, name: s.name, rail: false, parent: s.parent ? `${f.key}:${s.parent}` : null, feed: fi, weight: 0 });
       stopMode.push(0);
     });
   });
@@ -225,6 +267,8 @@ export function buildUrban(feeds: UrbanFeed[], intercity: { lon: number; lat: nu
       }
   });
   const lines = dedupeLines(items);
+  const bus = lines.filter((l) => l.mode === UMode.Bus);
+  busLineZooms(bus).forEach((z, k) => (bus[k]!.lz = z));
   // ---- stations (only stops that a kept alignment calls at)
   const used = new Uint8Array(stopsIn.length);
   for (const l of lines) for (const s of l.stops) used[s] = 1;
@@ -293,13 +337,13 @@ export function buildUrban(feeds: UrbanFeed[], intercity: { lon: number; lat: nu
     }
   }
   // ---- zoom levels of the stations
-  const rail = stations.map((s, i) => i).filter((i) => stations[i]!.modes & ~(1 << UMode.Bus));
-  const bus = stations.map((s, i) => i).filter((i) => !(stations[i]!.modes & ~(1 << UMode.Bus)));
-  for (const [set, levels, px] of [[rail, RAIL_STATION_LEVELS, 24], [bus, BUS_STATION_LEVELS, 12]] as const) {
+  const railSt = stations.map((s, i) => i).filter((i) => stations[i]!.modes & ~(1 << UMode.Bus));
+  const busSt = stations.map((s, i) => i).filter((i) => !(stations[i]!.modes & ~(1 << UMode.Bus)));
+  for (const [set, levels, px] of [[railSt, RAIL_STATION_LEVELS, 24], [busSt, BUS_STATION_LEVELS, 12]] as const) {
     const z = thinZooms(set.map((i) => stations[i]!), levels, px);
     set.forEach((i, k) => {
       const s = stations[i]!;
-      s.lz = set === rail ? railLz[i]! : busLz[i]!;
+      s.lz = set === railSt ? railLz[i]! : busLz[i]!;
       // a stop shows with its first line, not before: a dot in the middle of nowhere reads as an error
       s.z = Math.max(z[k]!, s.lz < 99 ? s.lz : 0);
     });

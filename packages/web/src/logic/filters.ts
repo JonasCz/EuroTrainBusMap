@@ -3,7 +3,7 @@ import { Cat, type Route } from "@etbm/shared";
 export interface Filters {
   /** Enabled Cat bits. */
   cats: number;
-  /** Local transport layer (metro / tram / city bus) shown; undefined = on. */
+  /** Local transport layer (metro / tram / local bus) shown; undefined = on. */
   local?: boolean;
 }
 

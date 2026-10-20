@@ -6,14 +6,15 @@ import { c, columns, csv, extract, listZip } from "../gtfs/load.ts";
 import { simplifyLine } from "../util/geo.ts";
 import { warn } from "../util/log.ts";
 import { BBOX } from "../geonames.ts";
-import { DiscIndex, NOT_LOCAL_RE, isCityBus, readableColor, urbanModeOf } from "./classify.ts";
+import { NOT_LOCAL_RE, busExclusion, readableColor, stopSpanKm, urbanModeOf, type MainBusRule } from "./classify.ts";
 import { EXTRACT_VERSION, UMode, type LonLat, type UrbanFeed, type UrbanLine, type UrbanPattern, type UrbanStop } from "./types.ts";
 
 export interface ExtractOptions {
   /** Reference weekday (YYYY-MM-DD) for trips per day. */
   refDate: string;
   coachRe: RegExp;
-  cityIdx: DiscIndex;
+  /** The intercity network carries this feed's buses from a span on (busExclusion); null for the extra local feeds. */
+  mainBus: MainBusRule | null;
   tmpDir: string;
 }
 
@@ -218,16 +219,26 @@ export async function extractFeed(db: Db, key: string, zip: string, opt: Extract
       }
       return i;
     };
-    const lines = new Map<string, UrbanLine>();
-    let shaped = 0, keptBus = 0;
+    // bus routes: decided per route on its longest pattern (busExclusion), so a route is drawn by one layer only
+    const busSpan = new Map<string, number>();
     chosen.forEach((ch, ix) => {
       const seq = seqOf.get(ix);
-      if (!seq || seq.length < 2) return;
-      const r = routes.get(ch.route)!;
-      if (r.mode === UMode.Bus && !isCityBus(seq.map((s) => ({ lon: s.lon, lat: s.lat })), opt.cityIdx)) {
-        drop("bus-outside-cities");
-        return;
+      if (routes.get(ch.route)!.mode === UMode.Bus && seq && seq.length >= 2) busSpan.set(ch.route, Math.max(busSpan.get(ch.route) ?? 0, stopSpanKm(seq)));
+    });
+    const busOut = new Set<string>();
+    for (const [rid, span] of busSpan) {
+      const why = busExclusion(span, routes.get(rid)!.agency, opt.mainBus);
+      if (why) {
+        drop(why);
+        busOut.add(rid);
       }
+    }
+    const lines = new Map<string, UrbanLine>();
+    let shaped = 0;
+    chosen.forEach((ch, ix) => {
+      const seq = seqOf.get(ix);
+      if (!seq || seq.length < 2 || busOut.has(ch.route)) return;
+      const r = routes.get(ch.route)!;
       const sh = ch.shape ? shapes.get(ch.shape) : undefined;
       let coords: LonLat[];
       let geom: UrbanPattern["geom"];
@@ -241,7 +252,6 @@ export async function extractFeed(db: Db, key: string, zip: string, opt: Extract
       }
       let line = lines.get(ch.route);
       if (!line) {
-        keptBus += r.mode === UMode.Bus ? 1 : 0;
         const first = seq[0]!.name, last = seq[seq.length - 1]!.name;
         line = {
           mode: r.mode as UrbanLine["mode"],

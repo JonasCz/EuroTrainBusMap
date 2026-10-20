@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { DiscIndex, cityDiscs, isCityBus, readableColor, stripCityName, urbanModeOf } from "../src/urban/classify.ts";
+import { LOCAL_BUS_MAX_KM, busExclusion, readableColor, stopSpanKm, stripCityName, urbanModeOf, type MainBusRule } from "../src/urban/classify.ts";
+import { mainBusRule } from "../src/urban/feeds.ts";
+import type { FeedDef, FeedsConfig } from "../src/feeds.ts";
 import { alignFeed } from "../src/urban/align.ts";
-import { buildUrban, dedupeLines, lineZoom, metresPerPixel, samplePath, thinZooms } from "../src/urban/model.ts";
+import { BUS_LINE_LEVELS, buildUrban, busLineZooms, dedupeLines, lineZoom, metresPerPixel, samplePath, thinZooms } from "../src/urban/model.ts";
 import { lineFeature, stationFeature } from "../src/urban/tiles.ts";
 import { UMode, type LonLat, type UrbanFeed } from "../src/urban/types.ts";
-import type { Place } from "../src/core/cities.ts";
-
-const place = (lon: number, lat: number, population: number): Place => ({ id: 1, name: "X", lat, lon, country: "DE", population, tz: "Europe/Berlin", fcode: "PPL", admin: ["", "", "", ""] });
 
 describe("urbanModeOf", () => {
   it("maps GTFS route types to local modes and leaves heavy rail / coaches to the intercity network", () => {
@@ -22,14 +21,44 @@ describe("urbanModeOf", () => {
   });
 });
 
-describe("city buses", () => {
-  const idx = new DiscIndex(cityDiscs([place(13.4, 52.5, 3_700_000), place(10, 50, 30_000)], 100_000));
-  it("keeps short lines inside the disc of a big city, drops rural and long ones", () => {
-    const inCity = [{ lon: 13.4, lat: 52.5 }, { lon: 13.45, lat: 52.52 }, { lon: 13.5, lat: 52.55 }];
-    expect(isCityBus(inCity, idx)).toBe(true);
-    expect(isCityBus([{ lon: 10, lat: 50 }, { lon: 10.02, lat: 50.01 }], idx)).toBe(false); // town below the threshold
-    expect(isCityBus([{ lon: 13.4, lat: 52.5 }, { lon: 14.9, lat: 52.9 }, { lon: 16.5, lat: 53.1 }], idx)).toBe(false); // long
-    expect(isCityBus([{ lon: 13.4, lat: 52.5 }], idx)).toBe(false);
+describe("local buses", () => {
+  const main: MainBusRule = { minKm: 15, dropAgency: /\bbvg\b/i, onlyAgency: null };
+  it("measures the span like the intercity loader", () => {
+    expect(stopSpanKm([{ lon: 10, lat: 50 }, { lon: 10, lat: 50.1 }])).toBeCloseTo(11.12, 1);
+    expect(stopSpanKm([{ lon: 10, lat: 50 }])).toBe(0);
+  });
+  it("leaves to the intercity network exactly the routes it draws, keeps every other local route", () => {
+    expect(busExclusion(5, "Stadtbus Hof", main)).toBeNull(); // town bus, below minBusKm: dropped by the intercity loader
+    expect(busExclusion(14.9, "TITSA", main)).toBeNull();
+    expect(busExclusion(15, "Regionalbus", main)).toBe("main-network"); // drawn by the intercity network
+    expect(busExclusion(25, "BVG", main)).toBeNull(); // a city operator the intercity network rejects
+    expect(busExclusion(LOCAL_BUS_MAX_KM + 1, "BVG", main)).toBe("long");
+    expect(busExclusion(25, "Any", null)).toBeNull(); // extra local feed
+    expect(busExclusion(LOCAL_BUS_MAX_KM + 1, "Any", null)).toBe("long");
+    expect(busExclusion(20, "Other", { ...main, onlyAgency: /^Regio/ })).toBeNull(); // not in the intercity network
+  });
+  it("derives the rule from the feed definition", () => {
+    const cfg = { minBusKm: 15, urbanAgencies: "\\bbvg\\b" } as FeedsConfig;
+    const def = (keep: FeedDef["keep"], options = {}) => ({ id: "x", country: "ES", name: "x", tier: "bus", keep, sources: [], options }) as FeedDef;
+    expect(mainBusRule(def(["rail"]), cfg)).toBeNull();
+    const titsa = mainBusRule(def(["coach", "bus"], { minBusKm: 8, dropAgencies: "^Taxi" }), cfg)!;
+    expect(titsa.minKm).toBe(8);
+    expect(titsa.dropAgency!.test("BVG")).toBe(true);
+    expect(titsa.dropAgency!.test("Taxi Sur")).toBe(true);
+    expect(titsa.dropAgency!.test("TITSA")).toBe(false);
+  });
+});
+
+describe("busLineZooms", () => {
+  const ln = (x: number, y: number, tpd: number): { tpd: number; coords: LonLat[] } => ({ tpd, coords: [[x, y], [x + 0.03, y + 0.005]] });
+  it("shows a town's rare lines from the first level, but makes a crowded centre wait for the frequency zoom", () => {
+    expect(busLineZooms([ln(10, 50, 8), ln(10.001, 50, 4)])).toEqual([BUS_LINE_LEVELS[0], BUS_LINE_LEVELS[0]]);
+    const crowd = Array.from({ length: 20 }, (_, i) => ln(13.4, 52.5 + i * 1e-4, 100 - i * 4));
+    const z = busLineZooms(crowd);
+    expect(z[0]).toBe(BUS_LINE_LEVELS[0]);
+    expect(z[19]).toBe(lineZoom(UMode.Bus, crowd[19]!.tpd)); // never later than its frequency zoom
+    expect(z[19]!).toBeGreaterThan(BUS_LINE_LEVELS[0]!);
+    for (let i = 0; i < 20; i++) expect(z[i]!).toBeLessThanOrEqual(lineZoom(UMode.Bus, crowd[i]!.tpd));
   });
 });
 

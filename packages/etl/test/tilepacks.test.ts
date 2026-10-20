@@ -123,7 +123,7 @@ describe("writePacks", () => {
       await writeLayerFile(dir, "urb-bus", { minzoom: 11, maxzoom: 11 }, [{ z: 11, x: 1080, y: 680, data: bytes(900) }]);
       const { packs, stats } = await writePacks(dir, { target: 12_000, log: () => undefined });
       expect(packs.layers.base).toEqual({ minzoom: 2, maxzoom: 9 });
-      expect(packs.sets.map((s) => s.layers)).toEqual([["base", "net", "urb-bus"], ["net-m"]]);
+      expect(packs.sets.map((s) => s.layers)).toEqual([["base", "net"], ["urb-bus"], ["net-m"]]);
       expect(stats.files).toBeGreaterThan(2);
       for (const t of net) expect(readTile(dir, packs, "net", t.z, t.x, t.y)).toEqual(t.data);
       expect(readTile(dir, packs, "base", 2, 2, 1)).toEqual(bytes(3000, 9));
