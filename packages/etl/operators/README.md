@@ -17,6 +17,7 @@ share one quirk), applied at fixed points of every build.
 | `hu-volanbusz.ts` | hu-volanbusz | route_type 200 on nearly every line: coach types count as buses (`feedOptions.coachTypesAsBus`) |
 | `livnobus.ts` | ba-livnobus | Li-Bus Livno only from its own feed (`exclusive`; the redvoznje.ba boards list it too) |
 | `ma-oncf.ts` | ma-oncf, agency Supratours | "(suprat.)" marker removed from trip headsigns (`onLoad`, `setHeadsigns`) |
+| `es-titsa.ts` | es-titsa, agency TITSA | "(T)" marker and ALL CAPS removed from stop names (`onLoad`, `setStopNames`) |
 | `se-train-operators.ts` | se-trafiklab, train operators' agencies | their bus routes are replacement buses: dropped (`classify.after`) |
 | `sncf.ts` | fr-sncf-national | feed options (category from trip_id, number in headsign, category names); CTE / CRE trips on rail routes are buses, CRE reservation only (`classify.before`) |
 | `trenitalia.ts` | agency Trenitalia | end-station-named long-distance trains: brand "Frecciarossa", high speed (`route`) |
@@ -76,7 +77,7 @@ limited to the trips of in-scope routes, `route` per route in scope. `feedOption
 | `extraFeeds`, `feedOptions`, `exclusive` | when `feeds.json` is loaded (`loadFeedsConfig`), before anything else, for every stage (load, urban, transit) | the in-memory config only; `feeds.json` is never written |
 | `classify.before(r, mode, feed)` | load, per route and trip category, before the generic rules of `src/core/classify.ts` | return `{ mode?, flags? }` to force the mode class (a coach category on a rail route) and add `Flag` bits; `undefined` = no opinion |
 | `classify.after(r, cl, feed)` | load, after the generic rules, before the feed's `railCatDefault` | return a new `Classification`, `null` to drop the route, `undefined` to keep it |
-| `onLoad(api)` | load, after the feed's stop_times and stops are read, before the short-bus filter | read-only `api.all` / `api.scalar` over the feed's temp tables (`t_kt`, `t_st`, `t_stops_all`, `t_trips`, `t_routes`; see `src/operators/types.ts`), `api.columns(file)`, `api.dropTrips(selectTripKeys, reason)`, `api.setHeadsigns(selectTripKeyHeadsign, reason)` |
+| `onLoad(api)` | load, after the feed's stop_times and stops are read, before the short-bus filter | read-only `api.all` / `api.scalar` over the feed's temp tables (`t_kt`, `t_st`, `t_stops_all`, `t_trips`, `t_routes`; see `src/operators/types.ts`), `api.columns(file)`, `api.dropTrips(selectTripKeys, reason)`, `api.setHeadsigns(selectTripKeyHeadsign, reason)`, `api.setStopNames(selectStopIdName, reason)` |
 | `route(r)` | build, when the route of a trip is created (`build.ts`) | return `{ brand?, highSpeed? }`: `Route.brand` for a route named only by its end stations, high-speed service for rail geometry |
 
 `exclusive`: routes of other feeds whose agency, route short or long name matches `pattern` (case-insensitive) are

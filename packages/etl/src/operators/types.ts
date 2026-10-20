@@ -77,6 +77,12 @@ export interface LoadApi {
    * trips whose headsign changed.
    */
   setHeadsigns(selectTripKeyHeadsign: string, reason: string): Promise<number>;
+  /**
+   * Replaces stop names: `selectStopIdName` is a query returning (stop_id, name) rows over the tables above. Only
+   * stops served by trips in the adapter's scope are changed; logs `reason` with the count and returns the number
+   * of stops whose name changed.
+   */
+  setStopNames(selectStopIdName: string, reason: string): Promise<number>;
 }
 
 /** A route as the build stage sees it (build.ts, when the route of a trip is created). */

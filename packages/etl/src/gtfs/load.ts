@@ -605,6 +605,19 @@ function loadApi(db: Db, a: OperatorAdapter, ops: FeedOperators, key: string, fi
       }
       return n;
     },
+    setStopNames: async (sql, reason) => {
+      readOnly(sql);
+      const scope = scoped ? ` AND trip_key IN (SELECT trip_key FROM t_kt WHERE rc IN (${scoped.join(",")}))` : "";
+      await db.run(`DROP TABLE IF EXISTS t_sn; CREATE TEMP TABLE t_sn AS SELECT DISTINCT ON (stop_id) stop_id::VARCHAR AS stop_id, name::VARCHAR AS name FROM (${sql}) ORDER BY stop_id`);
+      const own = `t_stops_all.stop_id IN (SELECT stop_id FROM t_st WHERE true${scope})`;
+      const n = await db.scalar(`SELECT count(*) FROM t_stops_all JOIN t_sn USING (stop_id) WHERE t_stops_all.name IS DISTINCT FROM t_sn.name AND ${own}`);
+      await db.run(`UPDATE t_stops_all SET name = t_sn.name FROM t_sn WHERE t_stops_all.stop_id = t_sn.stop_id AND t_stops_all.name IS DISTINCT FROM t_sn.name AND ${own}; DROP TABLE t_sn`);
+      if (n) {
+        log(`feed ${key}: operator ${a.id}: ${n} stop names changed (${reason})`);
+        ops.registry.record(a.id, key, "onLoad.setStopNames", n);
+      }
+      return n;
+    },
   };
 }
 

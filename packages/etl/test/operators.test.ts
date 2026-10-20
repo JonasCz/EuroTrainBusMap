@@ -8,6 +8,7 @@ import { loadFeedsConfig, type FeedDef, type FeedsConfig } from "../src/feeds.ts
 import { runLoadHooks } from "../src/gtfs/load.ts";
 import { applyOperators, loadOperatorFiles, OperatorConflictError, OperatorRegistry } from "../src/operators/registry.ts";
 import type { FeedRef, OperatorAdapter } from "../src/operators/types.ts";
+import { cleanTitsaStopName } from "../operators/es-titsa.ts";
 
 const here = import.meta.dirname;
 const feedDef = (id: string, country = "XX", options?: FeedDef["options"]): FeedDef => ({ id, country, name: id, tier: "core", keep: ["rail", "coach", "bus"], sources: [{ url: `https://example.org/${id}.zip` }], ...(options ? { options } : {}) });
@@ -78,6 +79,22 @@ describe("operator adapters of the repository", () => {
     const def = cfg.feeds.find((f) => f.id === "ma-oncf")!;
     await runLoadHooks(db, cfg.operators!.forFeed(ref(def)), "ma-oncf", new Map(), [[10, 0, "coach", 4, 0, "Supratours"], [20, 0, "rail", 1, 0, "ONCF"]]);
     expect((await db.all<{ headsign: string }>(`SELECT headsign FROM t_kt ORDER BY trip_key`)).map((r) => r.headsign)).toEqual(["Agadir", "Inezgane", "Fnideq", "Marrakech", "Tanger Ville (suprat.)"]);
+    db.close();
+  });
+
+  it("es-titsa: the (T) marker, double spaces and ALL CAPS leave the stop names of TITSA only", async () => {
+    expect(cleanTitsaStopName("ARICO EL VIEJO (T)")).toBe("Arico el Viejo");
+    expect(cleanTitsaStopName("ADEJE (LAS TORRES) (T)")).toBe("Adeje (Las Torres)");
+    expect(cleanTitsaStopName("ALDEA BLANCA  (T)")).toBe("Aldea Blanca");
+    expect(cleanTitsaStopName("HOSP. DEL SUR EL MOJÓN")).toBe("Hosp. del Sur el Mojón");
+    expect(cleanTitsaStopName("Puerto de la Cruz (T)")).toBe("Puerto de la Cruz");
+    const db = await Db.open(":memory:");
+    await db.run(`CREATE TABLE t_kt AS SELECT * FROM (VALUES (1, 10), (2, 20)) v(trip_key, rc)`);
+    await db.run(`CREATE TABLE t_st AS SELECT * FROM (VALUES (1, 'a'), (1, 'b'), (2, 'c')) v(trip_key, stop_id)`);
+    await db.run(`CREATE TABLE t_stops_all AS SELECT * FROM (VALUES ('a', 'ABAMA (T)'), ('b', 'AMBULATORIO  RAVELO'), ('c', 'OTHER (T)')) v(stop_id, name)`);
+    const def = cfg.feeds.find((f) => f.id === "es-titsa")!;
+    await runLoadHooks(db, cfg.operators!.forFeed(ref(def)), "es-titsa", new Map(), [[10, 0, "bus", 8, 0, "TITSA"], [20, 0, "bus", 8, 0, "Xunta"]]);
+    expect((await db.all<{ name: string }>(`SELECT name FROM t_stops_all ORDER BY stop_id`)).map((r) => r.name)).toEqual(["Abama", "Ambulatorio Ravelo", "OTHER (T)"]);
     db.close();
   });
 

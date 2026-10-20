@@ -70,7 +70,7 @@ Sahara. Feeds checked (downloaded, calendars read):
 | Feed | Source | Valid | Used |
 |---|---|---|---|
 | ONCF rail (Al Boraq, Al Atlas, TNR, Al Bidaoui) + Supratours coaches | Transitous `ma_oncf` (unofficial, scraped from oncf-voyages.ma, ODbL) | 2026-08-18 – 2028-08-18 (one week repeated; Fridays nearly empty) | `ma-oncf` (rail + coach) |
-| TITSA (Tenerife buses) | Transitous `es_Autobús-interurbano-de-Tenerife` (NAP) = `es_Transportes-interurbanos-de-Tenerife-(TITSA)` | calendar_dates 2026-10-13 – 2027-04-11 | already matched by `es-regional-bus`; was dropped by the old bbox |
+| TITSA (Tenerife buses) | Transitous `es_Autobús-interurbano-de-Tenerife` (NAP) = `es_Transportes-interurbanos-de-Tenerife-(TITSA)` | calendar_dates 2026-10-13 – 2027-04-11 | own feed `es-titsa` (minBusKm 8 instead of 15: most lines span 3–15 km); was dropped by the old bbox |
 | Guaguas Municipales (Las Palmas city bus) | Transitous `es_Guaguas-Municipales` (MDB `tld-767`) | 2015 – 2035 | local layer (`urban-feeds.json`) |
 | Metrotenerife (tram) | Transitous `es_Metrotenerife` = operator URL | ended 2025-07-15 | local layer, **stale** (lines from its last weeks, labelled out of date) |
 | Casablanca tramway T1–T4, busway BW1/BW2 | MDB `mdb-3462` (unofficial) | feed_info 2026-05-31 – 06-30, only Sunday / holiday dates after that | local layer `u-ma-casatramway`, **stale** |

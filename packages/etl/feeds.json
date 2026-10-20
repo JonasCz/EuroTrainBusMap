@@ -1227,11 +1227,31 @@
    ],
    "sources": [
     {
-     "transitousMatch": "^es_(Autobuses-Xunta-de-Galicia|Autobús-interurbano-de-Cataluña|Autobús-interurbano-Comunidad-Valenciana|Generalitat-Valenciana-\\(Intercity-bus\\)|Autobús-interurbano-de-Navarra|Autobús-Principado-de-Asturias|Transporte-metropolitano-Andalucía|Sarfa-autobuses|Bizkaibus|Lurraldebus-.*|La-Veloz-SA|Autobuses-Sarbus|Autobús-en-Cantabria|Consorcio-Regional-de-Transportes-de-Madrid-CRTM-I|Transporte-público-de-la-Isla-de-Mallorca|Autobús-interurbano-de-Tenerife|Trasnportes-Insular-de-La-Palma-\\(TILP\\)|Unauto|Alavabus)\\.gtfs\\.zip$"
+     "transitousMatch": "^es_(Autobuses-Xunta-de-Galicia|Autobús-interurbano-de-Cataluña|Autobús-interurbano-Comunidad-Valenciana|Generalitat-Valenciana-\\(Intercity-bus\\)|Autobús-interurbano-de-Navarra|Autobús-Principado-de-Asturias|Transporte-metropolitano-Andalucía|Sarfa-autobuses|Bizkaibus|Lurraldebus-.*|La-Veloz-SA|Autobuses-Sarbus|Autobús-en-Cantabria|Consorcio-Regional-de-Transportes-de-Madrid-CRTM-I|Transporte-público-de-la-Isla-de-Mallorca|Trasnportes-Insular-de-La-Palma-\\(TILP\\)|Unauto|Alavabus)\\.gtfs\\.zip$"
     }
    ],
    "notes": "Several files; no national aggregate (NAP has a bus-concessions dataset VAC-*).",
    "approxMB": 200
+  },
+  {
+   "id": "es-titsa",
+   "country": "ES",
+   "name": "TITSA (Tenerife island buses)",
+   "tier": "bus",
+   "keep": [
+    "coach",
+    "bus"
+   ],
+   "options": {
+    "minBusKm": 8
+   },
+   "sources": [
+    {
+     "transitous": "es_Autobús-interurbano-de-Tenerife.gtfs.zip"
+    }
+   ],
+   "notes": "Own feed because of minBusKm: most TITSA lines span 3-15 km (the island is 80 km long, and the guaguas are its only public transport), so the global 15 km would keep 51 of 181 routes; at 8 km it keeps 104.",
+   "approxMB": 18
   },
   {
    "id": "pt-cp",
