@@ -14,7 +14,7 @@
       "exp", "express", "sc", "le", "d", "flx", "flixtrain", "intercity", "eurocity", "eurocity-express", "nightjet",
       "euronight", "railjet", "ics", "icd", "es", "x2000", "sj", "snabbtag", "snabbtåg", "icl", "pendolino",
       "westbahn", "wb", "rjc", "mtx", "ic-bus", "intercites", "intercités", "ter-ic", "lyria", "ecm", "icm", "iry",
-      "ic2", "regiojet", "leo", "arenaways", "lumo", "ecr", "fernverkehr", "icp", "ice-l"
+      "ic2", "regiojet", "leo", "arenaways", "lumo", "ecr", "fernverkehr", "icp", "ice-l", "tgd"
     ],
     "longDistanceCaseSensitive": [
       "rj", "RJ", "RJX"
@@ -30,6 +30,12 @@
     "night": [
       "nj", "en", "ej", "nightjet", "euronight", "sleeper", "cn"
     ]
+  },
+  "categoryDisplayNames": {
+    "$comment": "Internal train category codes shown under the name the train is sold as (exact route short name / trip category). DB data (gtfs.de, DELFI) codes SNCF's TGV trains in Germany 'TGD'.",
+    "names": {
+      "TGD": "TGV"
+    }
   },
   "roadTripCategories": {
     "$comment": "Trip categories that mean a road vehicle even on a rail route (route_type 2): bus / coach in any language (Irish Rail 'BUS123', French 'Car').",

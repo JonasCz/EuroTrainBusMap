@@ -38,6 +38,8 @@ describe("rail category", () => {
   });
   it("uses train name tokens for route_type 2", () => {
     expect(classifyRoute(r(2, "A-1", "RJX"), ctx())?.cat).toBe(Cat.LongDistance);
+    // gtfs.de rv_free: SNCF's Paris – Freiburg TGVs as route "TGD", feed default Regional
+    expect(classifyRoute(r(2, "TGD", "", "SNCF"), ctx({ opts: { railCatDefault: "Regional" } }))?.cat).toBe(Cat.LongDistance);
     expect(classifyRoute(r(2, "A-1", "REX"), ctx())?.cat).toBe(Cat.Regional);
     expect(classifyRoute(r(2, "ICE 597"), ctx())?.cat).toBe(Cat.LongDistance);
     expect(classifyRoute(r(2, "RE1"), ctx())?.cat).toBe(Cat.Regional);
@@ -140,6 +142,10 @@ describe("displayName", () => {
     expect(displayName("IR13", "", "21174", "SBB")).toEqual({ name: "IR13", number: "21174" });
     expect(displayName("RE 1", "", "", "DB")).toEqual({ name: "RE 1" });
     expect(displayName("", "Berlin - Hamburg", "", "X")).toEqual({ name: "Berlin - Hamburg" });
+  });
+  it("shows internal category codes under the sold name", () => {
+    expect(displayName("TGD", "", "", "SNCF")).toEqual({ name: "TGV" });
+    expect(displayName("TGD", "", "TGD 9577", "SNCF")).toEqual({ name: "TGV", number: "TGD 9577" });
   });
 });
 

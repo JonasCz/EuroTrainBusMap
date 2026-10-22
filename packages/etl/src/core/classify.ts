@@ -48,6 +48,7 @@ interface KeywordPattern {
 }
 interface Keywords {
   trainCategories: { longDistance: string[]; longDistanceCaseSensitive: string[]; regional: string[]; night: string[] };
+  categoryDisplayNames: { names: Record<string, string> };
   roadTripCategories: { list: string[] };
   nightNames: KeywordPattern;
   longDistanceOperators: KeywordPattern;
@@ -74,6 +75,8 @@ const LD_CASE_SENSITIVE = new Set(KW.trainCategories.longDistanceCaseSensitive);
 const REG_TOKENS = new Set(KW.trainCategories.regional.map((s) => s.toLowerCase()));
 const NIGHT_TOKENS = new Set(KW.trainCategories.night);
 const NIGHT_RE = kwRe(KW.nightNames);
+/** Internal category codes shown under the name the train is sold as (DB "TGD" → "TGV"). */
+const CATEGORY_NAMES = new Map(Object.entries(KW.categoryDisplayNames.names));
 
 /** Operators whose rail services are long distance whatever the route_type. */
 const LD_OPERATORS = kwRe(KW.longDistanceOperators);
@@ -263,8 +266,20 @@ export function heuristicRailCat(spanKm: number, nStops: number, durationMin: nu
  * Display name and number for a trip.
  *  - route "ICE 597" (train number as route) → name "ICE", number "597"
  *  - trip_short_name "REX 1234" with route "A-1" → name "REX", number "REX 1234"
+ *  - route "TGD" (DB's code for SNCF TGVs) → name "TGV" (data/classify-keywords.json, categoryDisplayNames)
  */
 export function displayName(
+  shortName: string,
+  longName: string,
+  tripShortName: string,
+  agency: string,
+): { name: string; number?: string } {
+  const dn = rawDisplayName(shortName, longName, tripShortName, agency);
+  const alias = CATEGORY_NAMES.get(dn.name);
+  return alias ? { ...dn, name: alias } : dn;
+}
+
+function rawDisplayName(
   shortName: string,
   longName: string,
   tripShortName: string,
