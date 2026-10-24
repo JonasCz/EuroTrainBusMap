@@ -1,15 +1,20 @@
 {
-  // Static-assets-only Worker: no server code, just serves the built site.
-  // The same dist/site directory can be hosted on any static host.
+  // Static-assets Worker: worker/index.ts only redirects the workers.dev address to the custom domain,
+  // everything else is served from dist/site. The same dist/site directory can be hosted on any static host.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "eurotrainbusmap",
+  "main": "worker/index.ts",
   "compatibility_date": "2026-09-01",
   "assets": {
     "directory": "./dist/site",
-    "not_found_handling": "404-page"
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    // run the Worker before the assets so workers.dev requests are redirected too
+    "run_worker_first": true
   },
+  "routes": [{ "pattern": "trains.jonas.bike", "custom_domain": true }],
+  // kept on so old links reach the Worker and get redirected
   "workers_dev": true
-  // To serve under a path on your own domain, add e.g.:
-  // "routes": [{ "pattern": "example.com/transit/*", "zone_name": "example.com" }]
+  // To serve under a path instead, use e.g. { "pattern": "example.com/transit/*", "zone_name": "example.com" }
   // and build with BASE_PATH=/transit/
 }
