@@ -20,7 +20,6 @@ on:
       - "packages/**"
       - "pnpm-lock.yaml"
       - "wrangler.jsonc"
-      - "worker/**"
       - ".github/workflows/build-deploy.yml"
       - ".github/workflows/refresh-assets.yml"
   schedule:

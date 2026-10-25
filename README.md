@@ -512,8 +512,8 @@ Tests: `pnpm test`, types: `pnpm typecheck`.
   3. `build-deploy` – *schedule* (Mondays 03:17 UTC) and *manual dispatch*: download assets from R2, run the full
      ETL, cache the output (`actions/cache`, keyed by a hash of the ETL/schema sources), build the web app, assemble
      `dist/site` (web + `data/` under `BASE_PATH`, repo variable, default `/`) and `wrangler deploy` (static-assets
-     Worker, `wrangler.jsonc`, live at https://trains.jonas.bike; `worker/index.ts` 301-redirects the old
-     workers.dev address there). *push*: reuses the cached data (web-only rebuild + redeploy, a few minutes); data is
+     Worker without a script, `wrangler.jsonc`, live at https://trains.jonas.bike; the workers.dev address is
+     disabled). *push*: reuses the cached data (web-only rebuild + redeploy, a few minutes); data is
      rebuilt only when no compatible cached data exists (ETL/schema code changed), when the assets were just refreshed,
      or when the cached data was built with other assets (`.assets-stamp` in the cached output vs the hash of
      `version.json`).

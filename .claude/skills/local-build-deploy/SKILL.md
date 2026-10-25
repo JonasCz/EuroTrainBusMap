@@ -128,11 +128,9 @@ npx -y wrangler@4 deploy --dry-run             # validates wrangler.jsonc + dist
 npx -y wrangler@4 deploy                       # REAL deploy to the live site; only on explicit request
 ```
 
-`wrangler.jsonc`: Worker `eurotrainbusmap`, static assets from `./dist/site`, custom domain
-`trains.jonas.bike`; `worker/index.ts` (run first) 301-redirects the workers.dev address there.
-Live URL: **https://trains.jonas.bike**. The old address `https://eurotrainbusmap.<subdomain>.workers.dev`
-(subdomain `jonascz`) only redirects (look the subdomain up with
-`GET /accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain` using the token; `https://trains.jonas.bike/data/manifest.json` shows
+`wrangler.jsonc`: Worker `eurotrainbusmap` (assets only, no script), static assets from `./dist/site`, custom domain
+`trains.jonas.bike`; the workers.dev address is disabled (`workers_dev: false`).
+Live URL: **https://trains.jonas.bike** (`https://trains.jonas.bike/data/manifest.json` shows
 which build is live). A deploy replaces the live site for everybody, and the weekly workflow will
 overwrite it again on its next run (Mondays 03:17 UTC) or on the next push to main.
 
