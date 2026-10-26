@@ -1234,6 +1234,26 @@
    "approxMB": 200
   },
   {
+   "id": "es-busbam",
+   "country": "ES",
+   "name": "BusBam (coaches and buses Almería – Cartagena – Alicante, Madrid, Murcia – Torrevieja, Granada / Jaén / Baza area)",
+   "tier": "bus",
+   "keep": [
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "generated": "es-busbam"
+    }
+   ],
+   "license": "timetable published by the operator",
+   "licenseUrl": "https://www.busbam.com/horarios/",
+   "attribution": "BusBam (Autobuses Bam)",
+   "notes": "Generated on every build by packages/etl/generators/es-busbam.ts from the HTML timetables of the line pages on busbam.com/horarios (no GTFS published).",
+   "approxMB": 0.1
+  },
+  {
    "id": "es-titsa",
    "country": "ES",
    "name": "TITSA (Tenerife island buses)",

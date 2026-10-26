@@ -9,6 +9,7 @@ through the normal pipeline (load, stations, dedup, patterns, …) like a downlo
 | --- | --- | --- | --- |
 | `ba-zfbih.ts` | ba-zfbih | <https://www.zfbh.ba/en/time-table/> | ŽFBiH (Federation of Bosnia and Herzegovina) trains: the timetable table, its asterisk footnotes (exact texts mapped to hard-coded calendar rules) and the page's station form for the intermediate stops |
 | `ba-redvoznje.ts` | ba-redvoznje | <https://redvoznje.ba/api/> | Intercity buses of Bosnia and Herzegovina (and the diaspora coaches leaving it): the JSON API's city-pair files (their `lines`: full runs with stops), deduplicated, coordinates from the API's stations or a table in the script; freshness from `health.json` |
+| `es-busbam.ts` | es-busbam | <https://www.busbam.com/horarios/> | BusBam (Almería) coaches and buses: the index and its four line pages (Almería – Cartagena – Alicante, Almería – Madrid, Murcia – Torrevieja, Almería / Granada / Jaén / Baza area); three TablePress layouts (stops down, both directions side by side, one trip per row), calendar labels mapped to exact rules, stop coordinates from a table in the script |
 
 ## How it runs
 

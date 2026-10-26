@@ -138,6 +138,16 @@ A line source counts as valid for 60 days after its last confirmation; when that
 feed is kept as **stale** (masks on the six weeks up to the end, repeated by the build, labelled out of date) instead of
 being dropped.
 
+## 6b. Generated feed: Spain, BusBam (checked 26 Oct 2026)
+
+BusBam (Autobuses Bam, Almería) publishes no GTFS, only HTML timetables: <https://www.busbam.com/horarios/> links four
+line pages (Almería – Cartagena – Alicante `VAC-228/250`, Almería – Jaén and the Granada / Baza / Mojácar / Castril lines
+`VJA-157/158/174`, Madrid – Almería `VAC-216`, Murcia – Torrevieja `VAC-250`), 21 TablePress tables in total. The feed
+`es-busbam` is **generated** from them (`packages/etl/generators/es-busbam.ts`, ~90 trips, 119 stops). Not stated on the
+pages: validity (only the new direct Madrid ↔ Almería service has dates, 02/11/2026 – 31/03/2027), what "laborables" /
+"festivos" mean (assumed Mon–Fri / Sundays and national holidays) and coordinates (a table in the script, 11 villages
+estimated). The pages' last edit is 2025 (`article:modified_time`), so the timetable is not known to be current.
+
 ## 7. Feed audit (19 Oct 2026) and stale feeds
 
 Every feed of `feeds.json` and `urban-feeds.json` was checked against its downloaded zip (last service day from
