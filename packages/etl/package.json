@@ -7,6 +7,7 @@
     "build-data": "NODE_USE_ENV_PROXY=1 node --no-warnings --max-old-space-size=8192 --expose-gc --import tsx src/cli.ts",
     "generate": "NODE_USE_ENV_PROXY=1 node --no-warnings --import tsx src/generators/cli.ts",
     "geocode": "NODE_USE_ENV_PROXY=1 node --no-warnings --import tsx src/generators/geocode.ts",
+    "run-summary": "node --no-warnings --import tsx src/run-summary.ts",
     "rail:refresh": "NODE_USE_ENV_PROXY=1 node --no-warnings --max-old-space-size=4096 --import tsx src/geometry/refresh-rail.ts",
     "test": "vitest run",
     "typecheck": "tsc -p .",

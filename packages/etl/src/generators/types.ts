@@ -8,6 +8,7 @@
  */
 import type { GtfsFeed } from "./gtfs.ts";
 import type { Observation } from "./state.ts";
+import type { MissingStop } from "./geocodes.ts";
 
 export type { GtfsFeed } from "./gtfs.ts";
 
@@ -28,6 +29,12 @@ export interface GeneratorContext {
    * build; this never affects whether the feed is built.
    */
   observe(key: string, content: string): Observation;
+  /**
+   * Stops of the timetable that have no reviewed coordinates (geocodes.ts) and the routes / trains / lines dropped for
+   * it. The generator keeps building the rest; the report carries both so that an agent can geocode the stops
+   * (`pnpm run geocode -- <id>`). Call once, with the store's `missing`.
+   */
+  needsGeocoding(missing: MissingStop[], dropped: string[]): void;
   /** Keys of the pages the last saved build observed for this generator (empty without state): pages that went away. */
   knownPages(): string[];
   log(msg: string): void;
@@ -80,6 +87,8 @@ export interface GeneratorReport {
   stale?: { until: string; reason: string };
   /** Pages observed with ctx.observe: content hash, whether it changed since the last build and when it last did. */
   pages?: Observation[];
+  /** Stops waiting for geocoding and what was left out of the feed because of them (the rest of the feed is built). */
+  needsGeocoding?: { stops: MissingStop[]; dropped: string[] };
   /** Pages of the last build that this run did not see any more. */
   removedPages?: string[];
   counts?: { stops: number; routes: number; trips: number; stopTimes: number; serviceDays: number; firstDate?: string; lastDate?: string };

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { validateGtfs, type GtfsFeed } from "../src/generators/gtfs.ts";
 import { generatorContext, loadGeneratorFiles, serviceWindow } from "../src/generators/registry.ts";
-import { GeocodeStore, NeedsGeocodingError, geoKey, type GeocodeFile } from "../src/generators/geocodes.ts";
+import { GeocodeStore, NeedsGeocodingError, geoKey, type GeocodeFile, type MissingStop } from "../src/generators/geocodes.ts";
 import { GeneratorState } from "../src/generators/state.ts";
 import { GeneratorError, type GeneratorContext } from "../src/generators/types.ts";
 import { GENERATORS_DIR, loadFeedsConfig } from "../src/feeds.ts";
@@ -165,28 +165,40 @@ describe("es-busbam (BusBam timetable pages)", () => {
     await expect(busbam.generate(ctxWith(site.fetchText))).rejects.toThrow(/trips have times that go backwards/);
   });
 
-  it("a new stop is an error that asks for geocoding, naming all new stops at once", async () => {
-    const site = await fakeSite((slug, h) => (slug === "murcia-torrevieja" ? h.replace("SANTOMERA", "SANTOMERÍA").replace(">BIGASTRO<", ">NUEVA VILLA<") : h));
-    const err = await busbam.generate(ctxWith(site.fetchText)).catch((e) => e);
+  it("a new stop is reported with the routes dropped for it; the other routes are built", async () => {
+    const site = await fakeSite((slug, h) => (slug === "murcia-torrevieja" ? h.replace(/SANTOMERA/g, "SANTOMERÍA").replace(/>BIGASTRO</g, ">NUEVA VILLA<") : h));
+    const needs = { stops: [] as MissingStop[], dropped: [] as string[] };
+    const feed = await busbam.generate(generatorContext({ id: "es-busbam", userAgent: "t", startDate: START, days: DAYS, warnings: [], fetchText: site.fetchText, needs, log: () => {}, warn: () => {} }));
+    expect(needs.stops.map((m) => m.name).sort()).toEqual(["NUEVA VILLA", "SANTOMERÍA"]);
+    expect(needs.dropped).toHaveLength(2); // both directions of Murcia – Torrevieja
+    expect(needs.dropped[0]).toMatch(/VAC-250 Murcia – Torrevieja \(murcia-torrevieja, table \d+\)/);
+    expect(feed.routes.some((r) => r.route_id.startsWith("murcia-torrevieja"))).toBe(false);
+    expect(feed.trips.length).toBeGreaterThan(80);
+    // only when nothing at all can be built does the source fail, with the instructions
+    const only = await fakeSite((slug, h) => (slug === "index" ? h.replace(/<a [^>]*horarios\/(?!murcia)[^>]*>[^<]*<\/a>/g, "") : slug === "murcia-torrevieja" ? h.replace(/SANTOMERA/g, "SANTOMERÍA") : h));
+    const err = await busbam.generate(ctxWith(only.fetchText)).catch((e) => e);
     expect(err).toBeInstanceOf(NeedsGeocodingError);
-    expect(err.missing.map((m: { name: string }) => m.name).sort()).toEqual(["NUEVA VILLA", "SANTOMERÍA"].sort());
-    expect(err.message).toMatch(/2 stop\(s\) need geocoding.*"SANTOMERÍA" \(table .*"NUEVA VILLA".*run geocode -- es-busbam|run `pnpm --filter @etbm\/etl run geocode -- es-busbam`/s);
+    expect(err.message).toMatch(/1 stop\(s\) need geocoding.*"SANTOMERÍA" \(table .*run `pnpm --filter @etbm\/etl run geocode -- es-busbam`/s);
   });
 
-  it("a stop looked up automatically but not reviewed yet fails the same way; removed stops do not matter", async () => {
-    const site = await fakeSite();
+  it("a stop looked up automatically but not reviewed yet counts as missing; unused entries do not matter", async () => {
     const pages = await Promise.all(SLUGS.map(async (slug) => ({ slug, page: parsePage(await read(slug), pageUrl(slug)) })));
     const unreviewed = await realStore((f) => {
       f.entries[geoKey("Baza")]!.checked = null;
       f.entries[geoKey("Baza")]!.source = "osm-auto";
     });
-    expect(() => buildFeed(pages, START, DAYS, () => {}, unreviewed)).toThrow(/looked up but not reviewed yet.*"BAZA"/s);
+    const dropped: string[] = [];
+    buildFeed(pages, START, DAYS, () => {}, unreviewed, dropped);
+    expect(unreviewed.missing).toEqual([expect.objectContaining({ name: "BAZA", unchecked: true })]);
+    expect(dropped.length).toBeGreaterThan(3); // every route through Baza
     // an entry for a stop that is not in the timetable (any more) is unused, not an error
     const extra = await realStore((f) => {
       f.entries.GONEVILLAGE = { name: "Gone Village", lat: 37.5, lon: -2.5, source: "osm", checked: "2026-10-26" };
     });
-    expect(buildFeed(pages, START, DAYS, () => {}, extra).trips.length).toBeGreaterThan(80);
-    void site;
+    const none: string[] = [];
+    expect(buildFeed(pages, START, DAYS, () => {}, extra, none).trips.length).toBeGreaterThan(80);
+    expect(none).toEqual([]);
+    expect(extra.missing).toEqual([]);
   });
 
   it("a new line page linked from the index is parsed like the others", async () => {
@@ -195,9 +207,13 @@ describe("es-busbam (BusBam timetable pages)", () => {
     const site = await fakeSite(undefined, { "nueva-linea": copy });
     const feed = await busbam.generate(ctxWith(site.fetchText, START, warnings));
     expect(feed.routes.filter((r) => r.route_url === pageUrl("nueva-linea")).map((r) => r.route_short_name)).toEqual(["VAC-999", "VAC-999"]);
-    // …and if it has a stop nobody geocoded, the source fails asking for it
-    const odd = await fakeSite(undefined, { "otra-linea": copy.replace("LA APARECIDA", "VILLA NUEVA") });
-    await expect(busbam.generate(ctxWith(odd.fetchText))).rejects.toThrow(/1 stop\(s\) need geocoding.*"VILLA NUEVA"/s);
+    // …and if it has a stop nobody geocoded, only that line is left out and reported
+    const odd = await fakeSite(undefined, { "otra-linea": copy.replace(/LA APARECIDA/g, "VILLA NUEVA") });
+    const needs = { stops: [] as MissingStop[], dropped: [] as string[] };
+    const feed2 = await busbam.generate(generatorContext({ id: "es-busbam", userAgent: "t", startDate: START, days: DAYS, warnings: [], fetchText: odd.fetchText, needs, log: () => {}, warn: () => {} }));
+    expect(needs.stops.map((m) => m.name)).toEqual(["VILLA NUEVA"]);
+    expect(feed2.routes.some((r) => r.route_url === pageUrl("otra-linea"))).toBe(false);
+    expect(feed2.routes.some((r) => r.route_url === pageUrl("murcia-torrevieja"))).toBe(true);
   });
 
   it("keeps the hash of every page's timetable between builds and notices changes and removed pages", async () => {

@@ -98,9 +98,10 @@ const INDEX_URL = "https://www.busbam.com/horarios/";
  *
  * FAILS ON PURPOSE (the build skips the feed) when
  *   - the index links no line page at all, or a linked page has no tables or no line code;
- *   - a stop in the timetable has no reviewed entry in data/geocodes/es-busbam.json (NeedsGeocodingError: all such
- *     stops of the run are listed, with the command to geocode them; an entry looked up automatically but not yet
- *     reviewed counts as missing) – new stops are never guessed;
+ *   - (not a failure) a stop in the timetable has no reviewed entry in data/geocodes/es-busbam.json (an entry looked up
+ *     automatically but not yet reviewed counts as missing): the routes calling there are left out, the other routes
+ *     are built, and the build report lists the stops (`needsGeocoding`) with the command to geocode them. Only when
+ *     no route is left the source fails (NeedsGeocodingError). New stops are never guessed;
  *   - a table has an unknown layout / header, an unknown calendar label, a cell
  *     that is neither a time nor `---`, many trips with times that go backwards (other than past midnight), a `*` /
  *     marker without its known note, or `NUEVO · DIRECTO` without its validity note;
@@ -489,7 +490,11 @@ export interface FetchedPage {
   page: Page;
 }
 
-export function buildFeed(pages: FetchedPage[], startDate: string, days: number, warn: (m: string) => void, geo: GeocodeStore): GtfsFeed {
+/**
+ * The feed of the pages. A route (one direction of a table) that calls at a stop without reviewed coordinates is left
+ * out as a whole and named in `dropped`; the other routes are built.
+ */
+export function buildFeed(pages: FetchedPage[], startDate: string, days: number, warn: (m: string) => void, geo: GeocodeStore, dropped: string[] = []): GtfsFeed {
   const sink: Sink = { geo, warn, dropped: [] };
   const { from, to } = serviceWindow(startDate, days);
   const window = dateRange(from, to);
@@ -506,6 +511,10 @@ export function buildFeed(pages: FetchedPage[], startDate: string, days: number,
       const dirs = readTable(table, sink);
       dirs.forEach((dir, di) => {
         if (!dir.trips.length) return;
+        if (dir.trips.some((t) => t.calls.some((c) => c.stop === NO_STOP))) {
+          dropped.push(`${page.line} ${dir.name.replace(/\s+-\s+/g, " – ")} (${slug}, table ${table.id})`);
+          return;
+        }
         const baseId = `${slug}-${table.id}${dirs.length > 1 ? (di ? "-v" : "-i") : ""}`;
         let routeId = baseId;
         for (let n = 2; usedRoutes.has(routeId); n++) routeId = `${baseId}-${n}`;
@@ -546,7 +555,6 @@ export function buildFeed(pages: FetchedPage[], startDate: string, days: number,
       });
     }
   }
-  geo.assertComplete();
   if (sink.dropped.length > Math.max(2, trips.length / 10)) throw new GeneratorError(`${sink.dropped.length} of ${trips.length + sink.dropped.length} trips have times that go backwards – the tables were misread: ${sink.dropped[0]}`);
   return {
     agency: [{ agency_id: "busbam", agency_name: "BusBam", agency_url: "https://www.busbam.com/", agency_timezone: "Europe/Madrid", agency_lang: "es" }],
@@ -579,7 +587,9 @@ export default defineGenerator({
       return { slug, page };
     });
     for (const gone of ctx.knownPages().filter((k) => !slugs.includes(k))) ctx.warn(`page /horarios/${gone}/ is not linked any more: its lines are no longer offered`);
-    const feed = buildFeed(pages, ctx.startDate, ctx.days, ctx.warn, geo);
+    const dropped: string[] = [];
+    const feed = buildFeed(pages, ctx.startDate, ctx.days, ctx.warn, geo, dropped);
+    geo.finish(ctx, dropped, feed.routes.length); // names the stops to geocode; fails only when no route is left
     const approx = feed.stops.filter((s) => geo.lookup(s.stop_name)?.approx);
     if (approx.length) ctx.log(`${approx.length} stops with estimated coordinates: ${approx.map((s) => s.stop_name).join(", ")}`);
     return feed;

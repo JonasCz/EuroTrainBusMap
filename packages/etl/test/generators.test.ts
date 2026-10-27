@@ -10,6 +10,7 @@ import { dateRange, gtfsFiles, readRetrievedAt, writeGtfsZip, isoWeekday, timeta
 import { applyGenerators, generatorContext, loadGeneratorFiles, runGenerator, serviceWindow, staleServiceWindow, type GeneratorSet } from "../src/generators/registry.ts";
 import { zipState } from "../src/gtfs/validity.ts";
 import { GeneratorError, type FeedGenerator, type GeneratorContext } from "../src/generators/types.ts";
+import type { MissingStop } from "../src/generators/geocodes.ts";
 import zfbih, { FOOTNOTES, STATIONS, parseMainPage, parsePairPage } from "../generators/ba-zfbih.ts";
 import { API, generateFrom, mergeDuplicates, repairMask, type Line } from "../generators/ba-redvoznje.ts";
 
@@ -182,8 +183,16 @@ describe("ba-zfbih (ŽFBiH timetable page)", () => {
     await expect(zfbih.generate(ctxWith(site.fetchText))).rejects.toThrow(/unreadable relation/);
     site = await fakeSite((h) => h.replace("<td>720</td><td>Fast train</td>", "<td>720</td><td>Night train</td>"));
     await expect(zfbih.generate(ctxWith(site.fetchText))).rejects.toThrow(/unknown train type/);
-    site = await fakeSite((h) => h.replace("<td>Čapljina - Sarajevo</td>", "<td>Neum - Sarajevo</td>"));
-    await expect(zfbih.generate(ctxWith(site.fetchText))).rejects.toThrow(/1 stop\(s\) need geocoding.*"Neum"/s);
+  });
+
+  it("a station without reviewed coordinates is reported and the trains calling there are left out, the rest is built", async () => {
+    const site = await fakeSite((h) => h.replace("<td>Čapljina - Sarajevo</td>", "<td>Neum - Sarajevo</td>"));
+    const needs = { stops: [] as MissingStop[], dropped: [] as string[] };
+    const feed = await zfbih.generate(generatorContext({ id: "ba-zfbih", userAgent: "t", startDate: START, days: DAYS, warnings: [], fetchText: site.fetchText, needs, log: () => {}, warn: () => {} }));
+    expect(needs.stops.map((m) => m.name)).toEqual(["Neum"]);
+    expect(needs.dropped).toEqual([expect.stringMatching(/^train 720 Neum – Sarajevo \(no coordinates: Neum\)/)]);
+    expect(feed.trips.some((t) => t.trip_id === "720")).toBe(false);
+    expect(feed.trips.length).toBeGreaterThan(25);
   });
 
   it("an outdated page (an earlier timetable year) gives a stale feed on the last weeks of its timetable", async () => {
@@ -427,9 +436,16 @@ describe("ba-redvoznje (redvoznje.ba API)", () => {
     await expect(run((p, j) => (p.startsWith("/stations/") ? { ...j, departures: j.departures.map((d: any) => ({ ...d, url: "/bus/x/" })) } : j))).rejects.toThrow(/unexpected url/);
   });
 
-  it("places without coordinates fail the source and are named for geocoding", async () => {
-    const unknown = (n: number) => (p: string, j: any) =>
-      p === "/stations.json" ? { ...j, stations: j.stations.map((s: any, i: number) => (i < n ? { ...s, slug: `${s.slug}-moved` } : s)) } : j;
-    await expect(run(unknown(20))).rejects.toThrow(/stop\(s\) need geocoding.*geocode -- ba-redvoznje/s);
+  it("places without coordinates are reported, the lines calling there are left out, the rest is built", async () => {
+    const unknown = (slug: string) => (p: string, j: any) =>
+      p === "/stations.json" ? { ...j, stations: j.stations.map((s: any) => (s.slug === slug ? { ...s, slug: `${s.slug}-moved` } : s)) } : j;
+    const ok = await run();
+    const api = await fakeApi(unknown("kakanj"));
+    const needs = { stops: [] as MissingStop[], dropped: [] as string[] };
+    const feed = await generateFrom(generatorContext({ id: "ba-redvoznje", userAgent: "t", startDate: START, days: DAYS, warnings: [], fetchText: api.fetchText, needs, log: () => {}, warn: () => {} }), 1);
+    expect(needs.stops.length).toBeGreaterThan(0);
+    expect(needs.dropped[0]).toMatch(/all lines calling at/);
+    expect(feed.trips.length).toBeLessThan(ok.feed.trips.length);
+    expect(feed.trips.length).toBeGreaterThan(0);
   });
 });

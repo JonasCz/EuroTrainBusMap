@@ -99,16 +99,21 @@ Rules that keep generated data honest:
   weeks before that day (`staleServiceWindow(until)`); the build repeats and labels them. Throw only when the page no
   longer parses or makes no sense (a later timetable year than the build's, unknown footnotes).
 - **Coordinates** come from the reviewed geocode file `data/geocodes/<id>.json` (`src/generators/geocodes.ts`), never
-  from a table in the script and never guessed. A stop that is not in the file fails the source with a
-  `NeedsGeocodingError` that lists *all* new stops of the run at once; `pnpm --filter @etbm/etl run geocode -- <id>`
+  from a table in the script and never guessed. A stop that is not in the file is reported (`ctx.needsGeocoding`
+  via `GeocodeStore.finish`: all new stops of the run at once, in the log, the build report and the run summary in R2)
+  and the routes / trains calling there are left out of the feed; the rest is built, the build never fails for it
+  (only if nothing is left does the source fail with `NeedsGeocodingError`). `pnpm --filter @etbm/etl run geocode -- <id>`
   looks them up on OSM (restricted to the country and to the area of the stops already known, re-searched near the
   neighbouring stops when the leg speeds are implausible), writes them as unchecked entries (`checked: null`; the
-  build refuses these as well) and prints the legs that look wrong; an agent corrects entries by hand, reruns, and
-  `geocode -- <id> --accept` marks them reviewed; commit the file. Stops that disappear from the timetable need nothing
+  build leaves those routes out as well) and prints MUST FIX (an agent sets the position by hand) and QUICK CHECK
+  lists; rerun until MUST FIX is empty, then `geocode -- <id> --accept` marks them reviewed; commit the file. Stops that disappear from the timetable need nothing
   (their entries stay unused). A place that can never be located gets `"skip": true` (left out, reviewed).
 - **Follow the index.** When the operator has an index page linking the individual line pages, read the index and
   parse every linked page with the same code (variants as explicit if / else on the layout; an unknown layout fails),
   so that new lines and new timetables need no change in the script. A page that disappears is just gone.
+- **Run logs.** After every weekly build the workflow uploads `logs/latest/{summary.txt,summary.json,build-report.json,
+  build.log.gz}` to the assets bucket (`src/run-summary.ts`); the summary lists what needs geocoding and which
+  generators failed (see .claude/skills/add-virtual-feed/SKILL.md, "Run logs").
 - **Know when a timetable changed.** Pass the normalised content of each timetable page (tables and notes, nothing
   else of the page) to `ctx.observe(key, content)`: the build keeps the hashes between runs in
   `work/generator-state.json` (R2 object `generator-state.json`, build-deploy.yml) and reports

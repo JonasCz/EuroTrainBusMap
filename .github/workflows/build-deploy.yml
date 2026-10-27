@@ -245,7 +245,9 @@ jobs:
           road=$(ls work/assets/road/road-graph-v*.bin 2>/dev/null | sort -V | tail -1 || true)
           if [ -n "$road" ]; then export ETBM_ROAD_GRAPH="$PWD/$road"; else echo "::warning::no road graph asset – coach/bus corridors will not follow roads"; fi
           rm -rf work/out-new
-          pnpm --filter @etbm/etl run build-data -- --out "$WORK/out-new" --work "$WORK" --assets "$WORK/assets" --subset "${{ steps.mode.outputs.subset }}"
+          # the log is kept (work/build.log) and uploaded to R2 by "Upload run logs" below, also when the build fails
+          set -o pipefail
+          pnpm --filter @etbm/etl run build-data -- --out "$WORK/out-new" --work "$WORK" --assets "$WORK/assets" --subset "${{ steps.mode.outputs.subset }}" 2>&1 | tee work/build.log
           rm -rf work/out && mv work/out-new work/out
           echo "${{ steps.stamp.outputs.stamp }}" > work/out/.assets-stamp
           rm -rf work/etl.duckdb work/etl.duckdb.wal work/cache/feeds work/tmp
@@ -267,7 +269,8 @@ jobs:
             console.log(JSON.stringify({ build: r.build, stats: r.stats, stageSeconds: r.stageSeconds, failedFeeds: r.failedFeeds, expiredFeeds: r.expiredFeeds, staleFeeds: r.staleFeeds, generated: r.generated, sanity: r.sanity }, null, 1));
             // feeds generated from operator web pages (packages/etl/generators): a failure skips the feed, so flag it
             for (const g of r.generated ?? []) if (!g.ok) console.log(`::warning::generated feed ${g.feed} skipped (generator ${g.id}): ${g.error}`);
-            for (const g of r.generated ?? []) if (!g.ok && /need geocoding/.test(g.error ?? "")) console.log(`::error title=Stops to geocode (${g.id})::${g.error}`);
+            // stops without reviewed coordinates: the routes calling there are left out, the rest of the feed is built
+            for (const g of r.generated ?? []) if (g.needsGeocoding?.stops?.length) console.log(`::warning title=Stops to geocode (${g.id})::${g.needsGeocoding.stops.length} stop(s) need geocoding (${g.needsGeocoding.stops.slice(0, 8).map((s) => s.name).join(", ")}); ${g.needsGeocoding.dropped.length} route(s) left out. Run: pnpm --filter @etbm/etl run geocode -- ${g.id}`);
             for (const g of r.generated ?? []) for (const p of g.pages ?? []) if (p.changed) console.log(`::notice::generated feed ${g.feed}: timetable page ${p.key} changed since the last build`);
             for (const g of r.generated ?? []) if (g.removedPages?.length) console.log(`::notice::generated feed ${g.feed}: pages no longer offered: ${g.removedPages.join(", ")}`);
             for (const g of r.generated ?? []) if (g.ok && g.stale) console.log(`::warning::generated feed ${g.feed} is out of date (kept, labelled): ${g.stale.reason}`);
@@ -275,6 +278,26 @@ jobs:
             for (const f of r.staleFeeds ?? []) console.log(`::notice::feed ${f.key} out of date since ${f.expired}: kept, labelled (${f.trips} trips)`);
             for (const f of r.expiredFeeds ?? []) console.log(`::warning::feed ${f.key} skipped: ${f.reason}`);
           ' "$PWD/work/build-report.json" || echo "no build report"
+
+      # The latest run's log and a short summary (what needs geocoding, which generators failed, changed timetable
+      # pages) go to R2 under logs/latest/, so that an agent can see what went wrong without GitHub access:
+      #   npx wrangler@4 r2 object get eurotrainbusmap-assets/logs/latest/summary.txt --remote --file /tmp/summary.txt
+      # (.claude/skills/add-virtual-feed/SKILL.md, "Run logs"). Best effort; never fails the build.
+      - name: Upload run logs to R2
+        if: always() && steps.mode.outputs.rebuild == 'true'
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          pnpm --filter @etbm/etl run run-summary -- --report "$PWD/work/build-report.json" --log "$PWD/work/build.log" --out "$PWD/work/run-summary" || true
+          [ -f work/build.log ] && tail -c 8000000 work/build.log | gzip -9 > work/build.log.gz
+          put() { [ -f "$2" ] && npx -y wrangler@4 r2 object put "$ASSETS_BUCKET/logs/latest/$1" --file "$2" --content-type "$3" --remote; }
+          put summary.txt work/run-summary.txt text/plain
+          put summary.json work/run-summary.json application/json
+          put build.log.gz work/build.log.gz application/gzip
+          put build-report.json work/build-report.json application/json
+          true
 
       - name: Save built data
         if: steps.mode.outputs.rebuild == 'true'

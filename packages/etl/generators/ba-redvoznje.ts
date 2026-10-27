@@ -309,6 +309,8 @@ export interface LineStats {
   unknownStops: Map<string, number>;
   calls: number;
   badTimes: number;
+  /** lines left out for a place without reviewed coordinates */
+  unlocated: number;
   badHops: number;
 }
 
@@ -317,7 +319,7 @@ export interface LineStats {
  * files kept once, stops without coordinates left out, lines with times going backwards or impossible hops skipped.
  */
 export function collectLines(pairs: PairFile[], stations: Map<string, Station>, warn: (m: string) => void, geo: GeocodeStore = GeocodeStore.loadSync("ba-redvoznje")): { lines: Line[]; stats: LineStats } {
-  const stats: LineStats = { lineEntries: 0, unique: 0, noOperator: 0, border: 0, unknownStops: new Map(), calls: 0, badTimes: 0, badHops: 0 };
+  const stats: LineStats = { lineEntries: 0, unique: 0, noOperator: 0, border: 0, unknownStops: new Map(), calls: 0, badTimes: 0, unlocated: 0, badHops: 0 };
   const byKey = new Map<string, Line | null>();
   for (const p of pairs)
     for (const l of p.lines) {
@@ -334,7 +336,7 @@ export function collectLines(pairs: PairFile[], stations: Map<string, Station>, 
         continue;
       }
       const calls: Call[] = [];
-      let prevT = -1, bad = false;
+      let prevT = -1, bad = false, unlocated = false;
       for (const s of l.stops) {
         const t = parseHm(s.time)! + 1440 * s.day_offset;
         if (t < prevT) bad = true;
@@ -350,7 +352,10 @@ export function collectLines(pairs: PairFile[], stations: Map<string, Station>, 
           // coordinates of the API's stations.json first, else the reviewed geocode file (by city slug, else by name)
           const key = [s.city, s.name].find((k) => k && geo.lookup(k)) ?? s.city ?? s.name;
           const e = geo.resolve(key, `line ${l.operator} ${l.stops[0]!.name} → ${l.stops[l.stops.length - 1]!.name}`);
-          if (!e) continue; // reported by geo.assertComplete() in buildFeed
+          if (!e) {
+            unlocated = true; // the line is left out below; the place is reported by geo.finish() in generateFrom
+            continue;
+          }
           if (e.skip) {
             stats.unknownStops.set(key, (stats.unknownStops.get(key) ?? 0) + 1);
             continue;
@@ -361,6 +366,11 @@ export function collectLines(pairs: PairFile[], stations: Map<string, Station>, 
         const last = calls[calls.length - 1];
         if (last?.key === ck) continue; // the same place twice in a row (a board and its city stop): one call
         calls.push({ key: ck, name: st?.name ?? s.name, t, coord });
+      }
+      if (unlocated) {
+        stats.unlocated++;
+        byKey.set(key, null);
+        continue;
       }
       if (bad) {
         stats.badTimes++;
@@ -462,7 +472,8 @@ export interface BuildInput {
 export function buildFeed(o: BuildInput): GtfsFeed {
   const geo = o.geo ?? GeocodeStore.loadSync("ba-redvoznje");
   const { lines: raw, stats } = collectLines(o.pairs, o.stations, o.warn, geo);
-  geo.assertComplete(); // a place with neither API coordinates nor an entry in data/geocodes/ba-redvoznje.json
+  // a place with neither API coordinates nor an entry in data/geocodes/ba-redvoznje.json: its lines are left out
+  // (counted in stats.unlocated, named by geo.finish() in generateFrom)
   const unknown = [...stats.unknownStops.values()].reduce((a, b) => a + b, 0);
   if (stats.unknownStops.size)
     o.warn(`${stats.unknownStops.size} places left out on purpose (skip entries in data/geocodes/ba-redvoznje.json, ${unknown} calls): ${[...stats.unknownStops].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ×${n}`).join(", ")}`);
@@ -555,7 +566,7 @@ export function buildFeed(o: BuildInput): GtfsFeed {
     });
   }
   o.log?.(
-    `${stats.lineEntries} line entries → ${stats.unique} lines (${stats.noOperator} without operator, ${stats.badTimes} with times going backwards, ${stats.badHops} with impossible hops skipped), ` +
+    `${stats.lineEntries} line entries → ${stats.unique} lines (${stats.noOperator} without operator, ${stats.badTimes} with times going backwards, ${stats.badHops} with impossible hops skipped, ${stats.unlocated} with a place that needs geocoding left out), ` +
       `${repaired} masks repaired (scrape day), ${merged} duplicates merged, ${feed.trips.length} trips (${idle} without a day in the window), ${feed.agency.length} operators, ${feed.stops.length} places`,
   );
   return feed;
@@ -611,5 +622,8 @@ export async function generateFrom(ctx: GeneratorContext, minLines = MIN_LINES):
   const files = [...new Set(boards.flat())].sort();
   ctx.log(`${files.length} pair files from the boards`);
   const pairs = await pool(files, CONCURRENCY, async (f) => parsePair(await getJson(f), f));
-  return buildFeed({ health, stations, operators, pairs, startDate: ctx.startDate, days: ctx.days, minLines, warn: ctx.warn, log: ctx.log });
+  const geo = await GeocodeStore.load("ba-redvoznje");
+  const feed = buildFeed({ health, stations, operators, pairs, startDate: ctx.startDate, days: ctx.days, minLines, geo, warn: ctx.warn, log: ctx.log });
+  geo.finish(ctx, geo.missing.length ? [`all lines calling at ${geo.missing.map((m) => m.name).join(", ")}`] : [], feed.trips.length);
+  return feed;
 }

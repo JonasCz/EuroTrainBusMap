@@ -116,3 +116,24 @@ describe("mapLimit", () => {
     expect(peak).toBe(2);
   });
 });
+
+describe("run summary", () => {
+  it("lists what needs geocoding, failures and changed pages for an agent", async () => {
+    const { summarize, renderText } = await import("../src/run-summary.ts");
+    const report = {
+      build: "b1",
+      generated: [
+        { id: "es-busbam", feed: "es-busbam", ok: true, counts: { trips: 80 }, needsGeocoding: { stops: [{ name: "VILLA NUEVA", context: "table 7" }], dropped: ["VAC-250 Murcia – Torrevieja"] }, pages: [{ key: "almeria-madrid", changed: true, isNew: false, lastChanged: "2026-10-27" }], removedPages: ["old-line"] },
+        { id: "ba-zfbih", feed: "ba-zfbih", ok: false, error: "footnote *** changed" },
+      ],
+      failedFeeds: [],
+    };
+    const s = summarize(report, [], { GITHUB_RUN_ID: "42", GITHUB_REPOSITORY: "o/r", GITHUB_SHA: "abcdef123456" });
+    expect(s.todo[0]).toMatch(/GEOCODE es-busbam: 1 stop\(s\) \(VILLA NUEVA\).*geocode -- es-busbam/);
+    expect(s.todo[1]).toMatch(/FIX generator ba-zfbih.*footnote \*\*\* changed/);
+    expect(s.generators[0]).toMatchObject({ changedPages: ["almeria-madrid"], removedPages: ["old-line"] });
+    expect(s.run.url).toBe("https://github.com/o/r/actions/runs/42");
+    expect(renderText(s)).toMatch(/needs geocoding: VILLA NUEVA – table 7/);
+    expect(summarize(null, ["boom"], {}).todo[0]).toMatch(/did not finish/i);
+  });
+});

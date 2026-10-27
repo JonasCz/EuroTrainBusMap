@@ -5,10 +5,12 @@
  * a reviewed fact with a diff, like data/stop-names.json). A generator never guesses a position:
  *
  *   - a stop that is in the file (by name, ignoring case, accents and punctuation, or by an alias) is used;
- *   - a stop that is NOT in the file makes the generator fail with `NeedsGeocodingError`, which names every such stop
- *     of the run at once and says what to do (`pnpm --filter @etbm/etl run geocode -- <id>`, src/generators/geocode.ts:
- *     looks them up on OpenStreetMap, writes them as unchecked entries, prints leg-speed checks for the review);
- *   - an entry with `checked: null` (written by that tool, not yet reviewed) fails the build the same way;
+ *   - a stop that is NOT in the file is reported (`ctx.needsGeocoding`, via `finish()`) and the routes / trains that call
+ *     at it are left out of the feed; everything else is built. The build never fails for it. If nothing is left,
+ *     the generator fails with `NeedsGeocodingError`. Either way the build report names every such stop of the run and
+ *     says what to do (`pnpm --filter @etbm/etl run geocode -- <id>`, src/generators/geocode.ts: looks them up on
+ *     OpenStreetMap, writes them as unchecked entries, prints what the reviewing agent must look at);
+ *   - an entry with `checked: null` (written by that tool, not yet reviewed) counts as missing in the same way;
  *   - entries that the timetable no longer mentions are simply unused: removed stops are not an error.
  *
  * File format:
@@ -76,11 +78,11 @@ export class NeedsGeocodingError extends GeneratorError {
     const fresh = missing.filter((m) => !m.unchecked), unchecked = missing.filter((m) => m.unchecked);
     const list = (l: MissingStop[]) => l.slice(0, 25).map((m) => `"${m.name}" (${m.context})`).join("; ") + (l.length > 25 ? `; … ${l.length - 25} more` : "");
     super(
-      `${missing.length} stop(s) need geocoding before this feed can be built` +
+      `${missing.length} stop(s) need geocoding` +
         (fresh.length ? ` – new in the timetable, not in data/geocodes/${generatorId}.json: ${list(fresh)}` : "") +
         (unchecked.length ? ` – looked up but not reviewed yet (checked: null): ${list(unchecked)}` : "") +
-        `. An agent has to geocode and check them: run \`pnpm --filter @etbm/etl run geocode -- ${generatorId}\` (OSM lookup, writes unchecked entries, prints leg-speed checks), ` +
-        `correct wrong positions by hand, run it with --accept, commit the file (see .claude/skills/add-virtual-feed/SKILL.md). The previous build's feed is not used.`,
+        `. Routes calling there are left out of the feed (nothing else is left here). An agent has to geocode and check them: run \`pnpm --filter @etbm/etl run geocode -- ${generatorId}\` (OSM lookup, writes unchecked entries, prints leg-speed checks), ` +
+        `correct wrong positions by hand, run it with --accept, commit the file (see .claude/skills/add-virtual-feed/SKILL.md).`,
     );
     this.name = "NeedsGeocodingError";
   }
@@ -150,6 +152,16 @@ export class GeocodeStore {
 
   assertComplete(): void {
     if (this.seen.size) throw new NeedsGeocodingError(this.id, this.missing);
+  }
+
+  /**
+   * End of a generator run: report the missing stops and what was dropped for them (the build report and the log carry
+   * it); fails with NeedsGeocodingError only when nothing is left to build (`kept` = routes / trips kept).
+   */
+  finish(ctx: { needsGeocoding(m: MissingStop[], dropped: string[]): void }, dropped: string[], kept: number): void {
+    if (!this.seen.size) return;
+    ctx.needsGeocoding(this.missing, dropped);
+    if (!kept) throw new NeedsGeocodingError(this.id, this.missing);
   }
 }
 

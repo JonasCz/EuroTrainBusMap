@@ -16,7 +16,7 @@ import { log as defaultLog, warn as defaultWarn } from "../util/log.ts";
 import { addDays, feedCounts, retrievalTime, validateGtfs, writeGtfsZip, type GtfsFeed } from "./gtfs.ts";
 import { STALE_MAX_DAYS, daysBetween, referenceWindow } from "../gtfs/validity.ts";
 import type { FeedGenerator, GeneratorContext, GeneratorReport } from "./types.ts";
-import { GEOCODES_DIR } from "./geocodes.ts";
+import { GEOCODES_DIR, NeedsGeocodingError, type MissingStop } from "./geocodes.ts";
 import { contentHash, type GeneratorState, type Observation } from "./state.ts";
 
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -113,7 +113,7 @@ export interface RunOptions {
 
 /** Context handed to a generator (also used by tests with a fake fetch). */
 export function generatorContext(
-  o: Pick<RunOptions, "userAgent" | "startDate" | "days" | "state"> & { id: string; warnings: string[]; observed?: Observation[]; log?: (m: string) => void; warn?: (m: string) => void; fetchText?: GeneratorContext["fetchText"] },
+  o: Pick<RunOptions, "userAgent" | "startDate" | "days" | "state"> & { id: string; warnings: string[]; observed?: Observation[]; needs?: { stops: MissingStop[]; dropped: string[] }; log?: (m: string) => void; warn?: (m: string) => void; fetchText?: GeneratorContext["fetchText"] },
 ): GeneratorContext {
   const lg = o.log ?? defaultLog, wn = o.warn ?? defaultWarn;
   return {
@@ -123,6 +123,11 @@ export function generatorContext(
       return ob;
     },
     knownPages: () => o.state?.knownPages(o.id) ?? [],
+    needsGeocoding: (stops, dropped) => {
+      if (o.needs) Object.assign(o.needs, { stops, dropped });
+      if (stops.length)
+        (o.warn ?? defaultWarn)(`generator ${o.id}: ${stops.length} stop(s) need geocoding, ${dropped.length} route(s) left out for it (${dropped.slice(0, 8).join("; ")}${dropped.length > 8 ? "; …" : ""}): ${stops.slice(0, 12).map((m) => m.name).join(", ")}${stops.length > 12 ? ", …" : ""} – run \`pnpm --filter @etbm/etl run geocode -- ${o.id}\``);
+    },
     startDate: o.startDate,
     days: o.days,
     fetchText: o.fetchText ?? ((url, opts) => fetchPage(url, o.userAgent, { ...(opts?.form ? { form: opts.form } : {}), ...(opts?.expect ? { expect: opts.expect } : {}) })),
@@ -155,7 +160,8 @@ export async function runGenerator(g: FeedGenerator, feedKey: string, o: RunOpti
   const t0 = Date.now();
   const warnings: string[] = [];
   const observed: Observation[] = [];
-  const ctx = generatorContext({ ...o, id: g.id, warnings, observed });
+  const needs = { stops: [] as MissingStop[], dropped: [] as string[] };
+  const ctx = generatorContext({ ...o, id: g.id, warnings, observed, needs });
   const retrievedAt = retrievalTime(new Date(t0));
   const report: GeneratorReport = { id: g.id, feed: feedKey, sourceUrl: g.sourceUrl, ok: false, warnings, seconds: 0, retrievedAt };
   try {
@@ -173,6 +179,7 @@ export async function runGenerator(g: FeedGenerator, feedKey: string, o: RunOpti
     validateGtfs(feed, stale ? staleServiceWindow(stale.until) : serviceWindow(o.startDate, o.days));
     await writeGtfsZip(feed, o.dest, o.tmpDir);
     report.ok = true;
+    if (needs.stops.length) report.needsGeocoding = { stops: needs.stops, dropped: needs.dropped };
     if (observed.length) {
       report.pages = observed;
       const gone = o.state?.retain(g.id, observed.map((p) => p.key)) ?? [];
@@ -188,6 +195,8 @@ export async function runGenerator(g: FeedGenerator, feedKey: string, o: RunOpti
     return { report: { ...report, seconds: Math.round((Date.now() - t0) / 100) / 10 }, feed };
   } catch (e) {
     report.error = (e as Error).message ?? String(e);
+    if (needs.stops.length) report.needsGeocoding = { stops: needs.stops, dropped: needs.dropped };
+    else if (e instanceof NeedsGeocodingError) report.needsGeocoding = { stops: e.missing, dropped: ["everything"] };
     (o.warn ?? defaultWarn)(`generator ${g.id} FAILED, feed ${feedKey} skipped: ${report.error}`);
     if (existsSync(o.dest)) await rm(o.dest, { force: true });
     await rm(o.dest + ".meta.json", { force: true });

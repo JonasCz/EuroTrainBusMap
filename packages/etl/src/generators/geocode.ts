@@ -10,9 +10,10 @@
  *   3. runs the generator again with the unchecked entries allowed, and prints what a reviewer needs: every leg of every
  *      trip that touches a new stop with its distance, minutes and km/h (a wrong position shows as 150 km/h or as a
  *      zigzag), and the entries of the file the timetable no longer uses (removed stops: harmless).
- *   4. the reviewer (agent) corrects wrong entries in the JSON by hand (source "manual"), runs the command again until
- *      nothing is reported, then with `--accept`: every unchecked entry becomes checked (today's date, source "osm"),
- *      and the file is committed. Until then the build refuses the feed ("looked up but not reviewed yet").
+ *   4. the output has two lists: MUST FIX (not found, outside the known area, name differs, implausible legs – an agent
+ *      has to look and set the position by hand) and QUICK CHECK (everything else, a glance each). The reviewer corrects
+ *      entries in the JSON (source "manual"), runs the command again until MUST FIX is empty, then with `--accept`: every unchecked entry becomes checked (today's date, source "osm"),
+ *      and the file is committed. Until then the build leaves out the routes that call at those stops.
  */
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -82,6 +83,7 @@ function pick(name: string, hits: Hit[], bounds: Bounds | null): { hit: Hit; not
   return { hit: best.h, note: [...notes, best.h.display_name.split(",").slice(0, 3).join(",")].join("; ") };
 }
 
+const osmLink = (e: GeocodeEntry) => `https://www.openstreetmap.org/?mlat=${e.lat}&mlon=${e.lon}#map=13/${e.lat}/${e.lon}`;
 const titleCase = (s: string) => (s === s.toUpperCase() ? s.toLowerCase().replace(/(^|[\s(-])(\p{L})/gu, (_, a: string, b: string) => a + b.toUpperCase()) : s);
 
 interface Leg {
@@ -105,7 +107,7 @@ function legsOf(feed: GtfsFeed, names: Set<string>): Leg[] {
       if (!names.has(geoKey(a.stop_name)) && !names.has(geoKey(b.stop_name))) continue;
       const km = haversineKm(a.stop_lat, a.stop_lon, b.stop_lat, b.stop_lon), min = l[i]!.arr - l[i - 1]!.dep;
       const kmh = min > 0 ? km / (min / 60) : Infinity;
-      const flag = kmh > 95 && km > 3 ? "too fast" : km < 0.3 && min > 15 ? "same place?" : kmh < 12 && km > 3 ? "too slow" : "";
+      const flag = kmh > 110 && km > 3 ? "too fast" : km < 0.3 && min > 15 ? "same place?" : kmh < 12 && km > 3 ? "too slow" : "";
       const key = `${a.stop_name} → ${b.stop_name}`;
       if (!legs.has(key) || flag) legs.set(key, { from: a.stop_name, to: b.stop_name, km, min, kmh, flag });
     }
@@ -153,23 +155,24 @@ async function main() {
     if (unchecked) process.env.ETBM_GEOCODES_UNCHECKED = "1";
     else delete process.env.ETBM_GEOCODES_UNCHECKED;
     const warnings: string[] = [];
-    const ctx = generatorContext({ id, userAgent: cfg.userAgent, startDate, days: 60, warnings, log: () => {}, warn: () => {} });
+    const needs = { stops: [] as MissingStop[], dropped: [] as string[] };
+    const ctx = generatorContext({ id, userAgent: cfg.userAgent, startDate, days: 60, warnings, needs, log: () => {}, warn: () => {} });
     try {
-      return { feed: await gen.generate(ctx) };
+      return { feed: await gen.generate(ctx), needs };
     } catch (e) {
-      return { error: e as Error };
+      if (e instanceof NeedsGeocodingError) needs.stops = e.missing;
+      return { error: e as Error, needs };
     }
   };
 
   const first = await run(false);
-  let missing: MissingStop[] = [];
-  if (first.error instanceof NeedsGeocodingError) missing = first.error.missing;
-  else if (first.error) {
+  const missing: MissingStop[] = first.needs.stops;
+  if (first.error && !(first.error instanceof NeedsGeocodingError)) {
     console.error(`the generator fails for another reason, fix that first: ${first.error.message}`);
     process.exit(1);
   }
   const fresh = missing.filter((m) => !m.unchecked);
-  console.log(first.error ? `${missing.length} stops need geocoding (${fresh.length} new, ${missing.length - fresh.length} looked up earlier, not reviewed yet)` : "all stops have reviewed coordinates");
+  console.log(missing.length ? `${missing.length} stops need geocoding (${fresh.length} new, ${missing.length - fresh.length} looked up earlier, not reviewed yet)` : "all stops have reviewed coordinates");
 
   const bounds = boundsOf(file);
   const notFound: string[] = [];
@@ -250,11 +253,17 @@ async function main() {
   if (pending.length) {
     const names = new Set(pending.map(([, e]) => geoKey(e.name)));
     const legs = legsOf(second.feed, names);
-    const odd = legs.filter((l) => l.flag || l.kmh > 90 || (l.kmh < 20 && l.km > 3));
-    console.log(`\n${pending.length} unchecked entries; ${legs.length} legs touch them, ${odd.length} look unusual (>90 or <20 km/h, or flagged):`);
+    const odd = legs.filter((l) => l.flag || l.kmh > 100 || (l.kmh < 20 && l.km > 3));
+    const oddNames = new Set(odd.flatMap((l) => [geoKey(l.from), geoKey(l.to)]));
+    const unsure = (e: GeocodeEntry) => oddNames.has(geoKey(e.name)) || /OUTSIDE|name differs|similar hits|probably wrong|re-searched/.test(e.note ?? "");
+    const must = pending.filter(([, e]) => unsure(e)), quick = pending.filter(([, e]) => !unsure(e));
+    console.log(`\n=== MUST FIX (${must.length + notFound.length}): an agent has to look at these and set the right position by hand (source "manual") ===`);
+    for (const n of notFound) console.log(`  ! ${n}: not found on OSM – find it (road order, neighbours, other maps) or use "skip": true`);
+    for (const [, e] of must) console.log(`  ! ${e.name} ${e.lat},${e.lon} ${osmLink(e)}\n      ${e.note}`);
     for (const l of odd.sort((a, b) => a.from.localeCompare(b.from))) console.log(legText(l));
-    for (const [, e] of pending) if (/OUTSIDE|name differs|similar hits|probably wrong/.test(e.note ?? "")) console.log(`  ? ${e.name}: ${e.note}`);
-    console.log(`\nEdit data/geocodes/${id}.json where a position is wrong (source "manual"), rerun this command to see the legs again, then \`geocode -- ${id} --accept\` and commit.`);
+    console.log(`\n=== QUICK CHECK (${quick.length}): looks right; glance at each (right place? right province? bus station for a city?), less effort ===`);
+    for (const [, e] of quick) console.log(`  - ${e.name} ${e.lat},${e.lon}  ${(e.note ?? "").replace(/ \(first seen:.*$/, "")}  ${osmLink(e)}`);
+    console.log(`\nEdit data/geocodes/${id}.json for wrong positions, rerun this command until MUST FIX is empty, then \`geocode -- ${id} --accept\` and commit.`);
   } else console.log("\nno unchecked entries");
   const usedNames = new Set(second.feed.stops.map((s) => geoKey(s.stop_name)));
   const unused = Object.values(file.entries).filter((e) => !usedNames.has(geoKey(e.name))).map((e) => e.name);

@@ -71,7 +71,7 @@
  *     text and rule in FOOTNOTES together (and the copy in this header); after the December timetable change expect a
  *     new heading, new train numbers and new footnotes – re-check every rule, and the Ploče trains against hr-hz. Until
  *     the page changes, the build report's `generated` entry shows `stale` and the app labels the trains out of date.
- *   - A new station: the source fails with NeedsGeocodingError naming it; `pnpm --filter @etbm/etl run geocode -- ba-zfbih`
+ *   - A new station: the trains calling there are left out and the build report names the station (needsGeocoding); `pnpm --filter @etbm/etl run geocode -- ba-zfbih`
  *     looks it up and writes an unchecked entry into data/geocodes/ba-zfbih.json, an agent checks it against the rail
  *     graph (leg speeds are printed) and runs it again with --accept.
  *   - Tests: test/generators.test.ts with the page copies in test/fixtures/zfbih/ (refresh them with the live page).
@@ -456,6 +456,8 @@ export interface BuildInput {
   anchors: string[];
   startDate: string;
   days: number;
+  /** trains left out because a station they call at has no reviewed coordinates (data/geocodes/ba-zfbih.json) */
+  dropped?: string[];
   warn(m: string): void;
   log?(m: string): void;
 }
@@ -493,7 +495,12 @@ export function buildFeed(o: BuildInput): GtfsFeed {
   const services = new Map<string, string>(); // date list → service id
   let endsOnly = 0, idle = 0;
   for (const r of o.page.rows) {
-    for (const s of [r.from, r.to]) if (!STATIONS[s]) fail(`unknown station "${s}" in the relation of train ${r.number} (add its coordinates to STATIONS)`);
+    // a train that calls at a station without coordinates is left out as a whole (its stops come from the station form)
+    const nowhere = [...new Set([r.from, r.to, ...o.pairs.filter((p) => p.number === r.number).flatMap((p) => [p.from, p.to])])].filter((s) => !STATIONS[s]);
+    if (nowhere.length) {
+      o.dropped?.push(`train ${r.number} ${r.from} – ${r.to} (no coordinates: ${nowhere.join(", ")})`);
+      continue;
+    }
     const rule = rules.get(r.number);
     const dates = rule ? days.filter(rule) : days;
     if (!dates.length) {
@@ -552,11 +559,10 @@ export default defineGenerator({
     // fail early on footnotes / stations, before the slow station queries
     trainRules(page);
     pageValidity(page, ctx.startDate);
-    // every station of the table and of the form, all unknown ones at once (NeedsGeocodingError)
+    // every station of the table and of the form: the unknown ones are reported at the end (trains calling there are left out)
     const geo = await GeocodeStore.load("ba-zfbih");
     for (const r of page.rows) for (const s of [r.from, r.to]) geo.resolve(s, `relation of train ${r.number}`);
     for (const s of page.stations) geo.resolve(s, "station form");
-    geo.assertComplete();
     const anchors = chooseAnchors(page.rows, page.stations);
     const queries = anchors.flatMap((a) => page.stations.filter((s) => s !== a).map((s) => [a, s] as const));
     ctx.log(`station form: ${queries.length} queries (anchors ${anchors.join(", ")})`);
@@ -566,6 +572,9 @@ export default defineGenerator({
     const inTable = new Set(page.rows.map((r) => r.number));
     const extra = [...new Set(pairs.map((p) => p.number).filter((n) => !inTable.has(n)))];
     if (extra.length) ctx.log(`station form lists trains not in the table (ignored): ${extra.join(", ")}`);
-    return buildFeed({ page, pairs, anchors, startDate: ctx.startDate, days: ctx.days, warn: ctx.warn, log: ctx.log });
+    const dropped: string[] = [];
+    const feed = buildFeed({ page, pairs, anchors, startDate: ctx.startDate, days: ctx.days, dropped, warn: ctx.warn, log: ctx.log });
+    geo.finish(ctx, dropped, feed.trips.length);
+    return feed;
   },
 });
