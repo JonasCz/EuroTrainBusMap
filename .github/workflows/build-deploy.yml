@@ -1,9 +1,9 @@
 name: Build data & deploy
 
-# push:      web-only rebuild + redeploy with the cached data (rebuilds data only if the
-#            ETL/schema code changed since the cached data was built, or the assets were refreshed)
-# schedule:  weekly full data refresh (Mondays 03:17 UTC)
-# dispatch:  choose subset (full/core), whether to rebuild data and whether to refresh the assets
+# schedule: weekly full data refresh (Sundays 03:43 UTC, off the usual GitHub load peaks)
+# dispatch:  choose subset (full/core), whether to rebuild data and whether to refresh the assets;
+#            a run without rebuild reuses the cached data (rebuilding it only if the ETL/schema code changed since it
+#            was built, or the assets were refreshed)
 #
 # Self-healing assets: job `assets` compares the R2 bucket's version.json (written by refresh-assets as its last step)
 # with the stamp of this commit's code (packages/etl/src/assets-version.ts: ASSETS_VERSION, coverage, asset keys).
@@ -14,16 +14,8 @@ name: Build data & deploy
 # again). No loops: this workflow only *calls* refresh-assets, and refresh-assets dispatches this workflow only when
 # run by hand with `build` (with refresh_assets=never).
 on:
-  push:
-    branches: [main]
-    paths:
-      - "packages/**"
-      - "pnpm-lock.yaml"
-      - "wrangler.jsonc"
-      - ".github/workflows/build-deploy.yml"
-      - ".github/workflows/refresh-assets.yml"
   schedule:
-    - cron: "17 3 * * 1"
+    - cron: "43 3 * * 0"
   workflow_dispatch:
     inputs:
       subset:

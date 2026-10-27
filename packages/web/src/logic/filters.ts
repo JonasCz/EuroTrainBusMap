@@ -9,6 +9,9 @@ export interface Filters {
 
 export const localOn = (f: Filters): boolean => f.local !== false;
 
+/** Letter in the URL `modes` parameter for local transport (metro / tram / local bus). */
+export const LOCAL_LETTER = "t";
+
 export const ALL_CATS = Cat.LongDistance | Cat.Regional | Cat.Coach | Cat.Bus;
 export const DEFAULT_FILTERS: Filters = { cats: ALL_CATS };
 

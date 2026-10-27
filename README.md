@@ -441,7 +441,7 @@ Pipeline in short:
    - **Web** (`map/urban.ts`, `ui/urbanpopup.ts`): drawn *below* the intercity network (land-coloured halo,
      thin, buses grey and thinner), fading in over 0.6 zoom levels after their own first zoom; labels (stop names from z12.4, line
      names along the line) sit below the intercity labels so those win collisions. A click / tap on a stop or line opens a small popup (line chips, modes,
-     operator, frequency band); hover shows the name. The chip "Local transport" (on by default; `#local=0` in the URL when off)
+     operator, frequency band); hover shows the name. The chip "Local transport" (on by default; the letter `t` in the URL `modes` parameter, e.g. `#modes=lrcb` when off)
      hides all of it. Nothing of this loads below zoom 10.
    Rebuild just this stage for an existing build: `node --import tsx packages/etl/src/urban/index.ts <out>/<build>`
    (repacks the tiles too; a few minutes with warm caches, ~25 min when the zips of all feeds must be re-read), or skip it with `--no-urban`.
