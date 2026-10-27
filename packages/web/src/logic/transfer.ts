@@ -639,10 +639,12 @@ export class TransferSearch {
       const hf = hopFrom.get(ref);
       if (hf === undefined || first < hf) hopFrom.set(ref, first);
       let oi = 0, cur = -1, curVal = -Infinity;
+      const atArrival = (b: number) => b >= 0 && bPrev.a[b]! >= 0 && ev.station.a[bPrev.a[b]!] === c.stStation[k0 + bStop.a[b]!];
       for (let j = first + 1; j < n; j++) {
         while (oi < order.length && bStop.a[order[oi]!]! < j) {
           const b = order[oi++]!;
-          if (bVal.a[b]! > curVal) {
+          // equal origin departures: boarding at the station of the arrival (no change) beats walking to another
+          if (bVal.a[b]! > curVal || (bVal.a[b]! === curVal && !atArrival(cur) && atArrival(b))) {
             curVal = bVal.a[b]!;
             cur = b;
           }
@@ -984,6 +986,7 @@ export class TransferSearch {
         const ref = iRef.a[k]!, t = iTrip.a[k]!, dd = iDd.a[k]!;
         const c = chunks[rc[ref]!]!, p = rp[ref]!;
         const k0 = c.pStop[p]!;
+        const atArrival = (b: number) => bPrev.a[b]! >= 0 && ev.station.a[bPrev.a[b]!] === c.stStation[k0 + bStop.a[b]!];
         const base = this.baseOf(c.pTz[p]!, dd) + c.trStart[t]!;
         const end = lastOf(r, ref);
         aKey.length = aVal.length = aB.length = 0;
@@ -994,7 +997,8 @@ export class TransferSearch {
             const a = aKey.indexOf(key);
             if (a < 0) {
               aKey.push(key); aVal.push(bVal.a[b]!); aB.push(b);
-            } else if (bVal.a[b]! > aVal[a]!) {
+            } else if (bVal.a[b]! > aVal[a]! || (bVal.a[b]! === aVal[a]! && !atArrival(aB[a]!) && atArrival(b))) {
+              // equal origin departures: boarding at the station of the arrival (no change) beats walking to another
               aVal[a] = bVal.a[b]!;
               aB[a] = b;
             }
