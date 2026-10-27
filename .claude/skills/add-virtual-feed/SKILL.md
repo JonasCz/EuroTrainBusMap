@@ -48,6 +48,27 @@ Do this first. A duplicate feed wastes build time and shows lines twice.
 4. Write the outcome (what was checked, date) into the header and `docs/data-sources.md`. If it is all covered, stop
    and tell the user.
 
+## 1b. Before any code: is the source usable at all?
+
+Region sweeps (2026-10) showed most "empty" areas were not missing a scraper but a line in `feeds.json`: Menorca, Ibiza,
+Corsica, Aragón and La Mancha all had GTFS in Transitous that no regex matched. So per region: list the Transitous index
+for the country prefix (`curl https://api.transitous.org/gtfs/ | grep -o 'es_[^"<]*gtfs.zip'`) and compare with the
+`transitousMatch` regexes before looking for web timetables. Add GTFS first (several files of one country go into one
+`transitousMatch` feed; a `url` source cannot be mixed into a feed that has `transitousMatch`, make it its own feed).
+
+Only if no GTFS exists, check the site itself, and stop (documenting the outcome in `docs/data-sources.md`) if:
+
+- **Terms forbid it.** Fetch `/terms`, `/robots.txt` (and the locale-prefixed one, `/el/robots.txt`; a redirect to a 404
+  page means no rules), grep for copy / reproduce / scrape clauses in the local language. ktelherlas.gr (Crete) forbids
+  any copying without written permission: not built.
+- **The data is too thin.** A generator needs the times the source publishes at every stop (or arrival and a published
+  duration). Origin-only departure lists need guessed arrivals: not buildable, `GtfsStopTime` has no estimate mode.
+- **The host is unreachable from the sandbox.** A proxy 502 / connection reset is indistinguishable from the origin being
+  down (ktelbus.com, e-ktel.com); say so in the report rather than assuming the site is gone.
+
+Next.js sites: the data is often already in the first HTML response (or the `self.__next_f.push` payload); try plain `curl`
+before a browser. Playwright from the scratchpad: `NODE_PATH=/opt/node-tools/node_modules node script.js`.
+
 ## 2. Read the source by hand
 
 `curl -A "Mozilla/5.0" <url>`; save pages in a scratch dir; linearise the tables and read every one. Find the index

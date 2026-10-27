@@ -163,7 +163,7 @@ Found by researching per region which operators exist and whether GTFS is alread
 | Aragón (Teruel, S Zaragoza) | Transitous `es_Autobuses-del-Gobierno-de-Aragón` (NAP 2554, calendar to 2026-11-26) | `es-regional-bus` (regex) |
 | La Mancha, Alcarria | Transitous `es_Autobuses-Samar` (NAP 1165; overlaps `La-Veloz-SA`, dedup handles it) | `es-regional-bus` (regex) |
 
-Not added: Extremadura Junta feed (stale since 2025-12, licence unknown), Spanish VAC concession files (stale 2023/24), Rías Baixas coaches (Galicia, not checked against the Xunta file). NAP itself needs an API key. Castilla y León and Cuenca / Soria interurban concessions have no GTFS; they remain thin.
+Not added: Extremadura Junta feed (stale since 2025-12, licence unknown), Spanish VAC concession files (stale 2023/24), Rías Baixas coaches (Galicia, not checked against the Xunta file). NAP itself needs an API key. Crete (and Greek KTEL coaches in general): no GTFS; the 2023 NAP XLSX (data.nap.gov.gr, ODbL) has terminus-only trips; ktelherlas.gr (Heraklion–Lasithi) is server-rendered but its terms forbid copying and it lists only origin departure times; Chania–Rethymno KTEL sites unreachable from the build sandbox. Castilla y León and Cuenca / Soria interurban concessions have no GTFS; they remain thin.
 
 ## 7. Feed audit (19 Oct 2026) and stale feeds
 
