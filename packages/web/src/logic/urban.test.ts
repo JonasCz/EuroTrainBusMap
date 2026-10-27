@@ -27,12 +27,15 @@ describe("stopModes", () => {
 
 describe("local transport toggle", () => {
   const net = { cities: [], slug: [], bySlug: new Map(), file: { stations: [], timezones: [] } } as unknown as Net;
-  it("is on by default, off with local=0, and round-trips through the hash", () => {
+  it("is on by default, off without t in modes, and round-trips through the hash", () => {
     expect(localOn(parseHash(net, "").filters)).toBe(true);
-    const off = parseHash(net, "#local=0");
+    const off = parseHash(net, "#modes=lrcb");
     expect(localOn(off.filters)).toBe(false);
-    expect(toHash(net, off)).toBe("#local=0");
-    expect(toHash(net, parseHash(net, "#modes=lr&local=0"))).toBe("#modes=lr&local=0");
+    expect(toHash(net, off)).toBe("#modes=lrcb");
+    expect(toHash(net, parseHash(net, "#modes=lrt"))).toBe("#modes=lrt");
+    expect(toHash(net, parseHash(net, "#modes=r"))).toBe("#modes=r");
+    expect(toHash(net, parseHash(net, "#modes=none"))).toBe("#modes=none");
+    expect(toHash(net, parseHash(net, "#modes=lrcbt"))).toBe("");
     expect(toHash(net, parseHash(net, ""))).toBe("");
   });
   it("counts as a filter change", () => {

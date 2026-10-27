@@ -2,7 +2,7 @@
 import type { Net } from "../data/net.ts";
 import { cityByRef } from "../data/net.ts";
 import { isValidDate } from "../logic/calendar.ts";
-import { ALL_CATS, decodeCats, encodeCats, type Filters } from "../logic/filters.ts";
+import { ALL_CATS, decodeCats, encodeCats, LOCAL_LETTER, localOn, type Filters } from "../logic/filters.ts";
 import { decodeLegs, encodeLegs, type Leg } from "../logic/journey.ts";
 import { DEFAULT_SETTINGS, MAX_TRANSFERS, type TransferSettings } from "../logic/transfer.ts";
 
@@ -280,7 +280,6 @@ export function parseHash(net: Net, hash: string): AppState {
   const station = city !== undefined ? q.get("station") : null;
   const date = q.get("date");
   const f = q.get("modes");
-  const local = q.get("local") !== "0";
   const legs = city !== undefined && dest !== undefined ? decodeLegs(q.get("legs"), city) : [];
   const extend = legs.length ? cityByRef(net, q.get("next")) : undefined;
   const parts = legs.length ? parseParts(q.get("parts"), legs.length) : [];
@@ -290,7 +289,7 @@ export function parseHash(net: Net, hash: string): AppState {
     ...(station && /^[a-z0-9-]{1,80}$/.test(station) ? { station } : {}),
     ...(dest !== undefined && dest !== city ? { dest } : {}),
     ...(isValidDate(date) ? { date } : {}),
-    filters: { cats: f === null ? ALL_CATS : decodeCats(f), ...(local ? {} : { local: false }) },
+    filters: { cats: f === null ? ALL_CATS : decodeCats(f), ...(f === null || f.includes(LOCAL_LETTER) ? {} : { local: false }) },
     legs,
     ...(legs.length && (trip === "1" || trip === "all" || trip === "sofar") ? { schedule: true } : {}),
     ...(legs.length && trip === "all" ? { journey: true } : {}),
@@ -315,8 +314,7 @@ export function toHash(net: Net, s: AppState): string {
     if (s.parts?.length) q.push(`parts=${s.parts.join(",")}`);
     if (s.extend !== undefined) q.push(`next=${net.slug[s.extend]}`);
   }
-  if (s.filters.cats !== ALL_CATS) q.push(`modes=${encodeCats(s.filters.cats) || "none"}`);
-  if (s.filters.local === false) q.push("local=0");
+  if (s.filters.cats !== ALL_CATS || !localOn(s.filters)) q.push(`modes=${encodeCats(s.filters.cats) + (localOn(s.filters) ? LOCAL_LETTER : "") || "none"}`);
   const x = s.xfer ?? DEFAULT_SETTINGS;
   if (x.transfers > 0) {
     q.push(`changes=${x.transfers}`);
