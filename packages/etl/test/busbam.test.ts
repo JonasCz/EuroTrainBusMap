@@ -3,9 +3,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { validateGtfs, type GtfsFeed } from "../src/generators/gtfs.ts";
 import { generatorContext, loadGeneratorFiles, serviceWindow } from "../src/generators/registry.ts";
+import { GeocodeStore, NeedsGeocodingError, geoKey, type GeocodeFile } from "../src/generators/geocodes.ts";
+import { GeneratorState } from "../src/generators/state.ts";
 import { GeneratorError, type GeneratorContext } from "../src/generators/types.ts";
 import { GENERATORS_DIR, loadFeedsConfig } from "../src/feeds.ts";
-import busbam, { CALENDARS, PAGES, STOPS, isHoliday, pageUrl, parseIndex, parsePage } from "../generators/es-busbam.ts";
+import busbam, { CALENDARS, buildFeed, contentOf, isHoliday, pageUrl, parseIndex, parsePage, routeTypeOf } from "../generators/es-busbam.ts";
 
 const here = import.meta.dirname;
 const FIX = join(here, "fixtures", "busbam");
@@ -13,21 +15,31 @@ const START = "2026-10-26";
 const DAYS = 60;
 
 const read = (name: string) => readFile(join(FIX, `${name}.html`), "utf8");
+const SLUGS = ["almeria-cartagena-alicante", "almeria-jaen", "almeria-madrid", "murcia-torrevieja"];
+const STORE_FILE = join(here, "..", "data", "geocodes", "es-busbam.json");
+const realStore = async (edit: (f: GeocodeFile) => void = () => {}) => {
+  const file = JSON.parse(await readFile(STORE_FILE, "utf8")) as GeocodeFile;
+  edit(file);
+  return new GeocodeStore("es-busbam", file);
+};
 
-/** A fake site: the index and the four pages of the fixtures, optionally edited per page. */
-async function fakeSite(edit: (slug: string, html: string) => string = (_, h) => h) {
-  const pages = new Map<string, string>([["index", await read("index")]]);
-  for (const p of PAGES) pages.set(pageUrl(p.slug), await read(p.slug));
+/** A fake site: the index and the line pages of the fixtures (plus `extra` pages), optionally edited per page. */
+async function fakeSite(edit: (slug: string, html: string) => string = (_, h) => h, extra: Record<string, string> = {}) {
+  const pages = new Map<string, string>();
+  for (const slug of SLUGS) pages.set(slug, await read(slug));
+  for (const [slug, html] of Object.entries(extra)) pages.set(slug, html);
+  let index = await read("index");
+  for (const slug of Object.keys(extra)) index = index.replace("</main>", `<a href="https://www.busbam.com/horarios/${slug}/">x</a></main>`);
   const fetchText: GeneratorContext["fetchText"] = async (url) => {
-    if (url === "https://www.busbam.com/horarios/") return edit("index", pages.get("index")!);
-    const slug = PAGES.find((p) => pageUrl(p.slug) === url)?.slug;
+    if (url === "https://www.busbam.com/horarios/") return edit("index", index);
+    const slug = [...pages.keys()].find((k) => pageUrl(k) === url);
     if (!slug) throw new Error(`unexpected request ${url}`);
-    return edit(slug, pages.get(url)!);
+    return edit(slug, pages.get(slug)!);
   };
   return { fetchText };
 }
-function ctxWith(fetchText: GeneratorContext["fetchText"], startDate = START, warnings: string[] = []): GeneratorContext {
-  return generatorContext({ id: "test", userAgent: "t", startDate, days: DAYS, warnings, fetchText, log: () => {}, warn: () => {} });
+function ctxWith(fetchText: GeneratorContext["fetchText"], startDate = START, warnings: string[] = [], state?: GeneratorState): GeneratorContext {
+  return generatorContext({ id: "es-busbam", userAgent: "t", startDate, days: DAYS, warnings, fetchText, log: () => {}, warn: (m) => warnings.push(m), ...(state ? { state } : {}) });
 }
 const stopsOf = (feed: GtfsFeed, trip: string) => {
   const name = new Map(feed.stops.map((s) => [s.stop_id, s.stop_name]));
@@ -40,13 +52,9 @@ const tripFrom = (feed: GtfsFeed, route: string, first: string, dep: number) =>
 
 describe("es-busbam (BusBam timetable pages)", () => {
   it("reads the index and the tables of the line pages", async () => {
-    expect(parseIndex(await read("index"))).toEqual(PAGES.map((p) => p.slug).sort());
+    expect(parseIndex(await read("index"))).toEqual([...SLUGS].sort());
     const counts: Record<string, number> = {};
-    for (const p of PAGES) {
-      const page = parsePage(await read(p.slug), pageUrl(p.slug));
-      counts[p.slug] = page.tables.length;
-      expect(page.tables.length).toBeGreaterThanOrEqual(p.tables);
-    }
+    for (const slug of SLUGS) counts[slug] = parsePage(await read(slug), pageUrl(slug)).tables.length;
     expect(counts).toEqual({ "almeria-cartagena-alicante": 4, "almeria-jaen": 13, "almeria-madrid": 2, "murcia-torrevieja": 2 });
     const page = parsePage(await read("almeria-cartagena-alicante"), "x");
     expect(page.line).toBe("VAC-228/250");
@@ -57,15 +65,19 @@ describe("es-busbam (BusBam timetable pages)", () => {
     expect(() => parsePage("<main><h2>x</h2></main>", "https://x")).toThrow(/no "LÍNEA/);
   });
 
-  it("every stop of the pages has coordinates in Spain", async () => {
-    for (const s of STOPS.values()) {
-      expect(s.lat, s.name).toBeGreaterThan(36.5);
-      expect(s.lat, s.name).toBeLessThan(40.6);
-      expect(s.lon, s.name).toBeGreaterThan(-4);
-      expect(s.lon, s.name).toBeLessThan(-0.4);
+  it("the geocode file: every entry is reviewed, in Spain, and covers the pages", async () => {
+    const store = await realStore();
+    for (const [k, e] of Object.entries(store.file.entries)) {
+      expect(e.checked, k).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(e.lat, k).toBeGreaterThan(36.5);
+      expect(e.lat, k).toBeLessThan(40.6);
+      expect(e.lon, k).toBeGreaterThan(-4);
+      expect(e.lon, k).toBeLessThan(-0.4);
     }
-    expect(STOPS.get("RIODEBAZA")).toBe(STOPS.get("RIODEBAZA"));
-    expect(STOPS.get("PUERTODEMAZARRON")!.id).toBe(STOPS.get("PUERTOMAZARRON")!.id);
+    expect(store.lookup("Río de Baza")).toBe(store.lookup("RIO DE BAZA"));
+    expect(store.lookup("PUERTO DE MAZARRÓN")).toBe(store.lookup("PUERTO MAZARRÓN"));
+    expect(routeTypeOf("VAC-216")).toBe(200);
+    expect(routeTypeOf("VJA-157 / VJA-158")).toBe(3);
   });
 
   it("calendar labels: exact rules, holidays are the national ones", () => {
@@ -131,12 +143,11 @@ describe("es-busbam (BusBam timetable pages)", () => {
   it("a page that no longer fits fails the source", async () => {
     const run = async (edit: (slug: string, html: string) => string) => busbam.generate(ctxWith((await fakeSite(edit)).fetchText));
     const onPage = (slug: string, f: (h: string) => string) => (s: string, h: string) => (s === slug ? f(h) : h);
-    await expect(run(onPage("index", (h) => h.replace(/<a href="https:\/\/www\.busbam\.com\/horarios\/murcia-torrevieja\/">.*<\/a>/, "")))).rejects.toThrow(/no longer links \/horarios\/murcia-torrevieja\//);
-    await expect(run(onPage("murcia-torrevieja", (h) => h.replace("SANTOMERA", "SANTOMERÍA")))).rejects.toThrow(/unknown stop "SANTOMERÍA"/);
+    await expect(run(onPage("index", (h) => h.replace(/<a [^>]*>[^<]*<\/a>/g, "")))).rejects.toThrow(/links no line pages any more/);
     await expect(run(onPage("murcia-torrevieja", (h) => h.replace(/>DIARIO</g, ">TODOS LOS DÍAS<")))).rejects.toThrow(/unknown calendar label "TODOS LOS DÍAS"/);
     await expect(run(onPage("murcia-torrevieja", (h) => h.replace(">9:30<", ">9.30<")))).rejects.toThrow(/unreadable time "9.30"/);
     await expect(run(onPage("murcia-torrevieja", (h) => h.replace(">ITINERARIO<", ">RUTA<")))).rejects.toThrow(/unknown table layout/);
-    await expect(run(onPage("almeria-madrid", (h) => h.replace(/<table\b[^>]*tablepress-4[\s\S]*?<\/table>/, "")))).rejects.toThrow(/1 tables, expected at least 2/);
+    await expect(run(onPage("almeria-madrid", (h) => h.replace(/<table\b[\s\S]*?<\/table>/g, "<table></table>")))).rejects.toThrow(/no timetable tables|expected/);
     await expect(run(onPage("almeria-madrid", (h) => h.replace(/Válido del [^.<]*\./g, "")))).rejects.toThrow(/without its "Válido del … al …" note/);
     await expect(run(onPage("almeria-madrid", (h) => h.replace(/\*Excepción:[^<]*/, "")))).rejects.toThrow(/unexplained "\*" at ROQUETAS DE MAR/);
     await expect(run(onPage("almeria-jaen", (h) => h.replace(">**<", ">***<")))).rejects.toThrow(/unknown marker "\*\*\*"/);
@@ -154,11 +165,61 @@ describe("es-busbam (BusBam timetable pages)", () => {
     await expect(busbam.generate(ctxWith(site.fetchText))).rejects.toThrow(/trips have times that go backwards/);
   });
 
-  it("a new page on the index is only a warning", async () => {
+  it("a new stop is an error that asks for geocoding, naming all new stops at once", async () => {
+    const site = await fakeSite((slug, h) => (slug === "murcia-torrevieja" ? h.replace("SANTOMERA", "SANTOMERÍA").replace(">BIGASTRO<", ">NUEVA VILLA<") : h));
+    const err = await busbam.generate(ctxWith(site.fetchText)).catch((e) => e);
+    expect(err).toBeInstanceOf(NeedsGeocodingError);
+    expect(err.missing.map((m: { name: string }) => m.name).sort()).toEqual(["NUEVA VILLA", "SANTOMERÍA"].sort());
+    expect(err.message).toMatch(/2 stop\(s\) need geocoding.*"SANTOMERÍA" \(table .*"NUEVA VILLA".*run geocode -- es-busbam|run `pnpm --filter @etbm\/etl run geocode -- es-busbam`/s);
+  });
+
+  it("a stop looked up automatically but not reviewed yet fails the same way; removed stops do not matter", async () => {
+    const site = await fakeSite();
+    const pages = await Promise.all(SLUGS.map(async (slug) => ({ slug, page: parsePage(await read(slug), pageUrl(slug)) })));
+    const unreviewed = await realStore((f) => {
+      f.entries[geoKey("Baza")]!.checked = null;
+      f.entries[geoKey("Baza")]!.source = "osm-auto";
+    });
+    expect(() => buildFeed(pages, START, DAYS, () => {}, unreviewed)).toThrow(/looked up but not reviewed yet.*"BAZA"/s);
+    // an entry for a stop that is not in the timetable (any more) is unused, not an error
+    const extra = await realStore((f) => {
+      f.entries.GONEVILLAGE = { name: "Gone Village", lat: 37.5, lon: -2.5, source: "osm", checked: "2026-10-26" };
+    });
+    expect(buildFeed(pages, START, DAYS, () => {}, extra).trips.length).toBeGreaterThan(80);
+    void site;
+  });
+
+  it("a new line page linked from the index is parsed like the others", async () => {
     const warnings: string[] = [];
-    const site = await fakeSite((slug, h) => (slug === "index" ? h.replace("</main>", '<a href="https://www.busbam.com/horarios/nueva-linea/">x</a></main>') : h));
-    await busbam.generate(ctxWith(site.fetchText, START, warnings));
-    expect(warnings.join()).toMatch(/new page \/horarios\/nueva-linea\//);
+    const copy = (await read("murcia-torrevieja")).replace("LÍNEA VAC 250", "LÍNEA VAC 999");
+    const site = await fakeSite(undefined, { "nueva-linea": copy });
+    const feed = await busbam.generate(ctxWith(site.fetchText, START, warnings));
+    expect(feed.routes.filter((r) => r.route_url === pageUrl("nueva-linea")).map((r) => r.route_short_name)).toEqual(["VAC-999", "VAC-999"]);
+    // …and if it has a stop nobody geocoded, the source fails asking for it
+    const odd = await fakeSite(undefined, { "otra-linea": copy.replace("LA APARECIDA", "VILLA NUEVA") });
+    await expect(busbam.generate(ctxWith(odd.fetchText))).rejects.toThrow(/1 stop\(s\) need geocoding.*"VILLA NUEVA"/s);
+  });
+
+  it("keeps the hash of every page's timetable between builds and notices changes and removed pages", async () => {
+    const state = new GeneratorState();
+    const warnings: string[] = [];
+    const site = await fakeSite();
+    await busbam.generate(ctxWith(site.fetchText, START, warnings, state));
+    expect(state.knownPages("es-busbam").sort()).toEqual([...SLUGS].sort());
+    const again = generatorContext({ id: "es-busbam", userAgent: "t", startDate: START, days: DAYS, warnings, fetchText: site.fetchText, log: () => {}, warn: () => {}, state, observed: [] });
+    expect(again.observe("almeria-madrid", contentOf(parsePage(await read("almeria-madrid"), "x"))).changed).toBe(false);
+    // a changed time: same page, new hash
+    const changed = await fakeSite((slug, h) => (slug === "murcia-torrevieja" ? h.replace(">9:30<", ">9:35<") : h));
+    const seen: string[] = [];
+    const ctx = generatorContext({ id: "es-busbam", userAgent: "t", startDate: START, days: DAYS, warnings, fetchText: changed.fetchText, log: (m) => seen.push(m), warn: () => {}, state, observed: [] });
+    await busbam.generate(ctx);
+    expect(seen.join("\n")).toMatch(/murcia-torrevieja: .*timetable changed/);
+    // a page that disappears from the index: its lines are gone, with a warning, the rest is built
+    warnings.length = 0;
+    const fewer = await fakeSite((slug, h) => (slug === "index" ? h.replace(/<a [^>]*murcia-torrevieja[^>]*>[^<]*<\/a>/, "") : h));
+    const feed = await busbam.generate(ctxWith(fewer.fetchText, START, warnings, state));
+    expect(warnings.join()).toMatch(/page \/horarios\/murcia-torrevieja\/ is not linked any more/);
+    expect(feed.routes.some((r) => r.route_id.startsWith("murcia-torrevieja"))).toBe(false);
   });
 
   it("is registered: the generator loads and feeds.json uses it", async () => {

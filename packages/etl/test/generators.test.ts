@@ -183,7 +183,7 @@ describe("ba-zfbih (ŽFBiH timetable page)", () => {
     site = await fakeSite((h) => h.replace("<td>720</td><td>Fast train</td>", "<td>720</td><td>Night train</td>"));
     await expect(zfbih.generate(ctxWith(site.fetchText))).rejects.toThrow(/unknown train type/);
     site = await fakeSite((h) => h.replace("<td>Čapljina - Sarajevo</td>", "<td>Neum - Sarajevo</td>"));
-    await expect(zfbih.generate(ctxWith(site.fetchText))).rejects.toThrow(/unknown station "Neum"/);
+    await expect(zfbih.generate(ctxWith(site.fetchText))).rejects.toThrow(/1 stop\(s\) need geocoding.*"Neum"/s);
   });
 
   it("an outdated page (an earlier timetable year) gives a stale feed on the last weeks of its timetable", async () => {
@@ -427,9 +427,9 @@ describe("ba-redvoznje (redvoznje.ba API)", () => {
     await expect(run((p, j) => (p.startsWith("/stations/") ? { ...j, departures: j.departures.map((d: any) => ({ ...d, url: "/bus/x/" })) } : j))).rejects.toThrow(/unexpected url/);
   });
 
-  it("too many places without coordinates fail the source", async () => {
+  it("places without coordinates fail the source and are named for geocoding", async () => {
     const unknown = (n: number) => (p: string, j: any) =>
       p === "/stations.json" ? { ...j, stations: j.stations.map((s: any, i: number) => (i < n ? { ...s, slug: `${s.slug}-moved` } : s)) } : j;
-    await expect(run(unknown(20))).rejects.toThrow(/have no coordinates \(more than 5 %\)/);
+    await expect(run(unknown(20))).rejects.toThrow(/stop\(s\) need geocoding.*geocode -- ba-redvoznje/s);
   });
 });

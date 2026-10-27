@@ -145,8 +145,9 @@ line pages (Almería – Cartagena – Alicante `VAC-228/250`, Almería – Jaé
 `VJA-157/158/174`, Madrid – Almería `VAC-216`, Murcia – Torrevieja `VAC-250`), 21 TablePress tables in total. The feed
 `es-busbam` is **generated** from them (`packages/etl/generators/es-busbam.ts`, ~90 trips, 119 stops). Not stated on the
 pages: validity (only the new direct Madrid ↔ Almería service has dates, 02/11/2026 – 31/03/2027), what "laborables" /
-"festivos" mean (assumed Mon–Fri / Sundays and national holidays) and coordinates (a table in the script, 11 villages
-estimated). The pages' last edit is 2025 (`article:modified_time`), so the timetable is not known to be current.
+"festivos" mean (assumed Mon–Fri / Sundays and national holidays) and coordinates (reviewed file
+`packages/etl/data/geocodes/es-busbam.json`, 11 villages estimated; new stops fail the build until geocoded, see the
+`add-virtual-feed` skill). The generator follows every line page the index links, so new lines need no code change. The pages' last edit is 2025 (`article:modified_time`), so the timetable is not known to be current.
 
 ## 7. Feed audit (19 Oct 2026) and stale feeds
 

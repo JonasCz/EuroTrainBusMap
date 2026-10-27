@@ -17,7 +17,9 @@ through the normal pipeline (load, stations, dedup, patterns, …) like a downlo
   tier, kept modes, options, licence and attribution are set there as usual. The config loader
   (`src/feeds.ts` → `src/generators/registry.ts`) checks that every `generated` source names a generator file and that
   every generator is used by exactly one feed, and sets the feed's `timetableUrl` to the generator's `sourceUrl`.
-- `build-data` starts every generator right at the beginning of the download stage, beside the downloads
+- `build-data` starts every generator right at the beginning of the download stage, in parallel with each other and
+  beside the downloads (`pnpm run generate` without an id runs all of them at once as well; each generator limits its
+  own requests to the site, 2 at a time)
   (`src/cli.ts`). The result is validated (`validateGtfs` in `src/generators/gtfs.ts`: ids and references, times never
   going backwards, coordinates, at least one trip in the build window) and written as a zip to
   `work/cache/feeds/<feed>.zip`, where the loader and the later stages (local transport, transit transfers) pick it up.
@@ -40,7 +42,7 @@ through the normal pipeline (load, stations, dedup, patterns, …) like a downlo
   "Timetable: zfbh.ba · retrieved 19 Oct 2026" in the trip schedule and the journey legs, and the data sources dialog
   links the feed's name to the page with "· retrieved 19 Oct 2026" (`retrieved` in `attribution.json`). With
   `--reuse-db` the time is read back from the cached zip.
-- The generators' source text is part of the `--reuse-db` key (`gens` in `work/db-state.json`); with `--reuse-db` the
+- The generators' source text and the geocode files are part of the `--reuse-db` key (`gens` in `work/db-state.json`); with `--reuse-db` the
   load stage, and so the generators, do not run at all.
 
 ## The header comment (required)
@@ -96,8 +98,21 @@ Rules that keep generated data honest:
   flag the feed stale (`info.stale`, see "How it runs") with the last day its timetable is valid for, and generate the
   weeks before that day (`staleServiceWindow(until)`); the build repeats and labels them. Throw only when the page no
   longer parses or makes no sense (a later timetable year than the build's, unknown footnotes).
-- **Coordinates** come from a hard-coded table in the script (OSM / GeoNames / an earlier feed, checked against the rail
-  graph: every point should lie on the track); a station not in the table fails the source.
+- **Coordinates** come from the reviewed geocode file `data/geocodes/<id>.json` (`src/generators/geocodes.ts`), never
+  from a table in the script and never guessed. A stop that is not in the file fails the source with a
+  `NeedsGeocodingError` that lists *all* new stops of the run at once; `pnpm --filter @etbm/etl run geocode -- <id>`
+  looks them up on OSM (restricted to the country and to the area of the stops already known, re-searched near the
+  neighbouring stops when the leg speeds are implausible), writes them as unchecked entries (`checked: null`; the
+  build refuses these as well) and prints the legs that look wrong; an agent corrects entries by hand, reruns, and
+  `geocode -- <id> --accept` marks them reviewed; commit the file. Stops that disappear from the timetable need nothing
+  (their entries stay unused). A place that can never be located gets `"skip": true` (left out, reviewed).
+- **Follow the index.** When the operator has an index page linking the individual line pages, read the index and
+  parse every linked page with the same code (variants as explicit if / else on the layout; an unknown layout fails),
+  so that new lines and new timetables need no change in the script. A page that disappears is just gone.
+- **Know when a timetable changed.** Pass the normalised content of each timetable page (tables and notes, nothing
+  else of the page) to `ctx.observe(key, content)`: the build keeps the hashes between runs in
+  `work/generator-state.json` (R2 object `generator-state.json`, build-deploy.yml) and reports
+  `changed` / `removedPages` in the build report.
 - **Prefer accuracy.** Use only stops and times the source publishes. Where a detail (intermediate stops) comes from a
   second, less certain part of the source, check it against the main table and fall back to what is certain (ŽFBiH:
   a train whose stops disagree keeps only its end stations, with a warning).

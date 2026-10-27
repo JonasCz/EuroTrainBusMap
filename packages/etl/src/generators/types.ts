@@ -7,6 +7,7 @@
  * but is out of date gives a feed flagged stale (GtfsFeed.info.stale), kept and labelled like an expired GTFS feed.
  */
 import type { GtfsFeed } from "./gtfs.ts";
+import type { Observation } from "./state.ts";
 
 export type { GtfsFeed } from "./gtfs.ts";
 
@@ -21,6 +22,14 @@ export interface GeneratorContext {
    * Responses other than 2xx are errors, and so are answers that do not match `expect` (a page cut off half-way).
    */
   fetchText(url: string, opts?: { form?: Record<string, string>; expect?: RegExp }): Promise<string>;
+  /**
+   * Record the normalised content of one timetable page (its tables and notes, not the rest of the page) under a
+   * stable key. The build keeps the hash between runs (state.ts) and says whether the content changed since the last
+   * build; this never affects whether the feed is built.
+   */
+  observe(key: string, content: string): Observation;
+  /** Keys of the pages the last saved build observed for this generator (empty without state): pages that went away. */
+  knownPages(): string[];
   log(msg: string): void;
   warn(msg: string): void;
 }
@@ -69,5 +78,9 @@ export interface GeneratorReport {
   retrievedAt?: string;
   /** The source parsed but is out of date (GtfsFeed.info.stale): kept, projected and labelled by the build. */
   stale?: { until: string; reason: string };
+  /** Pages observed with ctx.observe: content hash, whether it changed since the last build and when it last did. */
+  pages?: Observation[];
+  /** Pages of the last build that this run did not see any more. */
+  removedPages?: string[];
   counts?: { stops: number; routes: number; trips: number; stopTimes: number; serviceDays: number; firstDate?: string; lastDate?: string };
 }

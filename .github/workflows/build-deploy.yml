@@ -223,6 +223,19 @@ jobs:
           done
           ls -laR work/assets
 
+      # Content hashes of the pages the feed generators parse (packages/etl/src/generators/state.ts): one small JSON
+      # object kept in R2 between builds, so a build can tell which timetable pages changed. Best effort: without it
+      # every page counts as new, nothing else changes.
+      - name: Download generator state from R2
+        if: steps.mode.outputs.rebuild == 'true'
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          rm -f work/generator-state.json
+          npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/generator-state.json" --file work/generator-state.json --remote || { rm -f work/generator-state.json; echo "::notice::no generator state in R2 yet"; }
+
       - name: Build data
         if: steps.mode.outputs.rebuild == 'true'
         run: |
@@ -238,6 +251,14 @@ jobs:
           rm -rf work/etl.duckdb work/etl.duckdb.wal work/cache/feeds work/tmp
           du -sh work/out; find work/out -type f | wc -l; df -h /
 
+      - name: Save generator state to R2
+        if: steps.mode.outputs.rebuild == 'true' && hashFiles('work/generator-state.json') != ''
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx -y wrangler@4 r2 object put "$ASSETS_BUCKET/generator-state.json" --file work/generator-state.json --content-type application/json --remote
+
       - name: Build report
         if: always() && steps.mode.outputs.rebuild == 'true'
         run: |
@@ -246,6 +267,9 @@ jobs:
             console.log(JSON.stringify({ build: r.build, stats: r.stats, stageSeconds: r.stageSeconds, failedFeeds: r.failedFeeds, expiredFeeds: r.expiredFeeds, staleFeeds: r.staleFeeds, generated: r.generated, sanity: r.sanity }, null, 1));
             // feeds generated from operator web pages (packages/etl/generators): a failure skips the feed, so flag it
             for (const g of r.generated ?? []) if (!g.ok) console.log(`::warning::generated feed ${g.feed} skipped (generator ${g.id}): ${g.error}`);
+            for (const g of r.generated ?? []) if (!g.ok && /need geocoding/.test(g.error ?? "")) console.log(`::error title=Stops to geocode (${g.id})::${g.error}`);
+            for (const g of r.generated ?? []) for (const p of g.pages ?? []) if (p.changed) console.log(`::notice::generated feed ${g.feed}: timetable page ${p.key} changed since the last build`);
+            for (const g of r.generated ?? []) if (g.removedPages?.length) console.log(`::notice::generated feed ${g.feed}: pages no longer offered: ${g.removedPages.join(", ")}`);
             for (const g of r.generated ?? []) if (g.ok && g.stale) console.log(`::warning::generated feed ${g.feed} is out of date (kept, labelled): ${g.stale.reason}`);
             // out-of-date feeds (packages/etl/src/gtfs/validity.ts): kept and labelled within the cap, skipped beyond it
             for (const f of r.staleFeeds ?? []) console.log(`::notice::feed ${f.key} out of date since ${f.expired}: kept, labelled (${f.trips} trips)`);

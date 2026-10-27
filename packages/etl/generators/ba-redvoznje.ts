@@ -43,9 +43,10 @@
  *      files are read (about 650 requests instead of 2,816; 4 short lines of 262 are missed that way – Sarajevo – Pale,
  *      also in the Centrotrans GTFS). Four requests at a time, each URL once per run.
  *   3. Bus lines only (the `train` files are ŽFBiH / ŽRS: ba-zfbih covers them). Border pseudo-stops are dropped, a
- *      line repeated across pair files is kept once, coordinates come from stations.json, else from CITY_COORDS (by
- *      city slug) or NAME_COORDS (by stop name) below (GeoNames, checked by hand). A stop without coordinates is left
- *      out (warning); a line whose hops are impossible (> MAX_KMH straight line) or whose times go backwards is
+ *      line repeated across pair files is kept once, coordinates come from stations.json, else from
+ *      data/geocodes/ba-redvoznje.json (src/generators/geocodes.ts; by city slug, else by stop name; GeoNames, checked
+ *      by hand). A place in neither fails the source (NeedsGeocodingError lists every new place at once); a place the
+ *      file marks `skip` (no certain position) is left out of the lines (warning); a line whose hops are impossible (> MAX_KMH straight line) or whose times go backwards is
  *      skipped (warning). Joint operations keep the operator text ("Centrotrans Sarajevo/Transturist Tuzla").
  *   4. Duplicates inside the source (the same bus from two boards, or two masks of one bus): two lines sharing at least
  *      two (city, time) calls with overlapping days are one; the one with more stops stays and takes the other's days.
@@ -87,22 +88,23 @@
  *   - (not a failure: old data) a source whose lines are used not re-confirmed for MAX_SOURCE_AGE_DAYS (60) days makes
  *     the feed stale (step 6), not an error; a stale source without lines (buskarta-intl, 64 days old today) only
  *     warns; stale for longer than the build's cap (feeds.json staleMaxDays) fails in the registry;
- *   - fewer than MIN_LINES lines remain, or more than MAX_UNKNOWN_SHARE of the stops have no coordinates (new cities:
- *     extend CITY_COORDS / NAME_COORDS).
+ *   - fewer than MIN_LINES lines remain, or a city / stop has coordinates neither in stations.json nor in the geocode
+ *     file (a new city: `pnpm --filter @etbm/etl run geocode -- ba-redvoznje`, review, --accept).
  *
  * HOW TO RE-CHECK / UPDATE
  *   - `pnpm --filter @etbm/etl run generate -- ba-redvoznje` runs it against the live API and prints the trips.
  *   - `curl -s https://redvoznje.ba/api/v1/health.json` shows the freshness (a "stale" entry in the build report's
  *     `generated` means the feed is kept but labelled out of date); compare one pair file with the shape
  *     above (`curl -s https://redvoznje.ba/api/v1/routes/bus/kakanj-sarajevo.json | head -c 2000`).
- *   - "no coordinates for …" warnings: add the slug to CITY_COORDS (GeoNames: work/assets/geonames/places-europe.tsv.gz,
- *     by name, checked against the neighbouring stops' times) or the name to NAME_COORDS.
+ *   - A new place: the geocode tool (above) looks it up and prints the leg speeds against the neighbouring stops' times;
+ *     for places that exist in no source with a certain position add an entry with `"skip": true` instead.
  *   - When the scrape-day artefact disappears (masks "0111111" become rare), REPAIRABLE can go.
  *   - Tests: test/generators.test.ts with the trimmed API copy in test/fixtures/redvoznje/.
  */
 import { defineGenerator, GeneratorError, type GeneratorContext } from "../src/generators/types.ts";
 import { addDays, dateRange, haversineKm, isoWeekday, parseHm, type GtfsFeed } from "../src/generators/gtfs.ts";
 import { serviceWindow, staleServiceWindow } from "../src/generators/registry.ts";
+import { GeocodeStore } from "../src/generators/geocodes.ts";
 
 export const SITE_URL = "https://redvoznje.ba/";
 export const API = "https://redvoznje.ba/api/v1";
@@ -114,8 +116,6 @@ export const API = "https://redvoznje.ba/api/v1";
 export const MAX_SOURCE_AGE_DAYS = 60;
 /** Fewer lines than this: the API answered with much less than usual (262 lines in Oct 2026). */
 export const MIN_LINES = 100;
-/** Share of calls (after border stops) without coordinates above which the source fails. */
-export const MAX_UNKNOWN_SHARE = 0.05;
 /**
  * Straight-line speed between two calls above which a line is skipped (wrong coordinates or times); the minutes get
  * one added for the rounding of the times (3 km "in 1 min" between Olovske Luke and Olovo is fine).
@@ -126,235 +126,7 @@ const CONCURRENCY = 4;
 /** Masks that a scrape-day artefact may have cut by one day (see KNOWN QUIRKS). */
 export const REPAIRABLE = new Set(["1111111", "1111100", "1111110"]);
 
-/**
- * Cities by slug that stations.json has no coordinates for: GeoNames (places-europe of the build's assets), the most
- * populous place of that name in the country, checked by hand against the neighbouring calls. Comment = GeoNames name
- * where it differs.
- */
-export const CITY_COORDS: Record<string, [number, number]> = {
-  // not listed: "ormanica", "bjelimici" (no GeoNames point), "spionica" (GeoNames' only Špionica, 44.761 18.672, is
-  // 10 km off the times between Mionica and Srebrenik)
-  "aachen": [50.77664, 6.08342],
-  "aalborg": [57.048, 9.9187],
-  "amsterdam": [52.37403, 4.88969],
-  "antwerpen": [51.22047, 4.40026], // Antwerp
-  "augsburg": [48.37154, 10.89851],
-  "bar": [42.0937, 19.09841],
-  "bare": [43.8745, 18.408], // Sarajevo, Bare neighbourhood (approximate, ±500 m)
-  "basel": [47.55839, 7.57327],
-  "bec": [48.20849, 16.37208], // Vienna
-  "berlin": [52.52437, 13.41053],
-  "bonn": [50.73438, 7.09549],
-  "bosanska-gradiska": [45.14484, 17.25453], // Gradiška
-  "bosanski-brod": [45.13747, 17.98722], // Brod
-  "bosanski-samac": [45.05987, 18.46756], // Šamac
-  "bregenz": [47.50311, 9.7471],
-  "bremen": [53.07582, 8.80717],
-  "budva": [42.28721, 18.83922],
-  "busovaca": [44.09769, 17.8783],
-  "cajnice": [43.55712, 19.07186], // Čajniče
-  "celic": [44.72524, 18.81474],
-  "cerik": [44.80766, 18.5384],
-  "derventa": [44.97839, 17.90779],
-  "doboj-jug": [44.68776, 18.04885], // Matuzići
-  "dortmund": [51.51494, 7.466],
-  "dubrovnik": [42.64125, 18.10909],
-  "duisburg": [51.43247, 6.76516],
-  "dusseldorf": [51.22319, 6.77927], // Düsseldorf
-  "emden": [53.36592, 7.20846],
-  "essen": [51.45657, 7.01228],
-  "foca": [43.50646, 18.77854],
-  "frankfurt": [50.11552, 8.68417], // Frankfurt am Main
-  "freilassing": [47.84085, 12.98114],
-  "gornji-rahic": [44.78329, 18.6942],
-  "gornji-vakuf": [43.93806, 17.58833],
-  "gornji-vakuf-uskoplje": [43.93806, 17.58833], // Gornji Vakuf
-  "gostivar": [41.79627, 20.90799],
-  "gottingen": [51.53443, 9.93228], // Göttingen
-  "gracanica": [44.70307, 18.3101],
-  "gradacac": [44.87851, 18.42764],
-  "graz": [47.06733, 15.44197],
-  "hamburg": [53.55073, 9.99302],
-  "hannover": [52.37052, 9.73322],
-  "heidelberg": [49.40768, 8.69079],
-  "heilbronn": [49.13995, 9.22054],
-  "herceg-novi": [42.45306, 18.5375],
-  "hildesheim": [52.15077, 9.95112],
-  "ingolstadt": [48.76508, 11.42372],
-  "innsbruck": [47.26266, 11.39454],
-  "jajce": [44.34203, 17.27059],
-  "karlovac": [45.49167, 15.55],
-  "karlsruhe": [49.00937, 8.40444],
-  "karuse": [44.69691, 18.04911],
-  "kassel": [51.31667, 9.5],
-  "kiseljak": [43.94295, 18.08132],
-  "klokotnica": [44.7329, 18.18884],
-  "koblenz": [50.35357, 7.57883],
-  "koln": [50.93333, 6.95], // Köln
-  "kopenhagen": [55.67594, 12.56553], // Copenhagen
-  "koper": [45.5482, 13.72963],
-  "kotor": [42.42067, 18.76825],
-  "kotor-varos": [44.61831, 17.37204],
-  "krupa-n-v": [44.61875, 17.14351], // Krupa na Vrbasu
-  "kupres": [43.99273, 17.27639],
-  "laktasi": [44.90857, 17.30135],
-  "linz": [48.30639, 14.28611],
-  "livno": [43.82695, 17.00746],
-  "ljubljana": [46.05108, 14.50513],
-  "luzern": [47.05048, 8.30635],
-  "makarska": [43.29694, 17.01778],
-  "malmo": [55.60587, 13.00073], // Malmö
-  "mannheim": [49.4891, 8.46694],
-  "maribor": [46.55583, 15.64593],
-  "matuzici": [44.68776, 18.04885],
-  "metkovic": [43.05417, 17.64833],
-  "milici": [44.17016, 19.09195],
-  "minhen": [48.13743, 11.57549], // Munich
-  "mionica": [44.86646, 18.46603],
-  "modrica": [44.95781, 18.30202],
-  "mrkonjic-grad": [44.41729, 17.08288],
-  "neum": [42.92333, 17.61556],
-  "nevesinje": [43.25861, 18.11333],
-  "nova-bila": [44.19431, 17.73735],
-  "nova-topola": [45.05267, 17.30915],
-  "novi-pazar": [43.13667, 20.51222],
-  "novi-travnik": [44.17133, 17.65816],
-  "novo-mesto": [45.80397, 15.16886],
-  "nurnberg": [49.45421, 11.07752], // Nuremberg
-  "odzak": [45.02461, 18.32107],
-  "olovske-luke": [44.12895, 18.61756],
-  "omis": [43.44472, 16.68861],
-  "orasje": [45.03366, 18.69334],
-  "pale": [43.81664, 18.56949],
-  "parsovici": [43.7715, 17.81175],
-  "passau": [48.5665, 13.43122],
-  "pforzheim": [48.88436, 8.69892],
-  "piacenza": [45.05242, 9.69342],
-  "pljevlja": [43.3567, 19.35843],
-  "ploce": [43.05611, 17.43278],
-  "pula": [44.86833, 13.84806],
-  "regensburg": [49.01513, 12.10161],
-  "rijeka": [45.32673, 14.44241],
-  "ripac": [44.76652, 15.95567],
-  "rosenheim": [47.85637, 12.12247],
-  "rotterdam": [51.9225, 4.47917],
-  "rudo": [43.61781, 19.36719],
-  "samac": [45.05987, 18.46756],
-  "sicki-brod": [44.52299, 18.59468],
-  "sije": [44.65115, 18.06547],
-  "skoplje": [41.99646, 21.43141], // Skopje
-  "slavonski-brod": [45.16158, 18.0163],
-  "split": [43.50891, 16.43915],
-  "stockholm": [59.32938, 18.06871],
-  "stolac": [43.084, 17.95995],
-  "stupari": [44.31382, 18.68416],
-  "stuttgart": [48.78232, 9.17702],
-  "teslic": [44.60639, 17.85972],
-  "ulcinj": [41.92936, 19.22436],
-  "ulm": [48.39841, 9.99155],
-  "utrecht": [52.09083, 5.12222],
-  "velika-kladusa": [45.18497, 15.80579],
-  "villach": [46.61028, 13.85583],
-  "visegrad": [43.7826, 19.29256],
-  "wiesbaden": [50.08601, 8.24435],
-  "wurzburg": [49.79391, 9.95121], // Würzburg
-  "zagreb": [45.81444, 15.97798],
-  "zurich": [47.36667, 8.55], // Zürich
-};
 
-/** Stops without a city slug (`"city": null`, not a border crossing), by name; same origin as CITY_COORDS. */
-export const NAME_COORDS: Record<string, [number, number]> = {
-  // not listed: "Duba" (several on the Makarska riviera road, none certain), "Ruskamen", "Pećingrad" (no GeoNames point)
-  "Andrijevica": [42.73389, 19.79194],
-  "Arnhem": [51.98, 5.91111],
-  "Baške Vode": [43.35694, 16.95028], // Baška Voda
-  "Berane": [42.84333, 19.87281],
-  "Bijelo Polje": [43.03834, 19.74758],
-  "Bischofshofen": [47.41667, 13.21667],
-  "Bludenz": [47.15476, 9.82255],
-  "Boario Terme": [45.8915, 10.18879], // Darfo Boario Terme
-  "Bochum": [51.48165, 7.21648],
-  "Bratislava": [48.14816, 17.10674],
-  "Breda": [51.58656, 4.77596],
-  "Brescia": [45.53558, 10.21472],
-  "Brist": [43.11806, 17.32472],
-  "Brno": [49.19522, 16.60796],
-  "Bruck An Der Mur": [47.406, 15.258], // Bruck an der Mur
-  "Brussel": [50.85045, 4.34878], // Brussels
-  "Deggendorf": [48.84085, 12.96068],
-  "Den Hag": [52.07667, 4.29861], // The Hague
-  "Deventer": [52.255, 6.16389],
-  "Donja Brela": [43.36889, 16.93417], // Brela
-  "Dornbirn": [47.41427, 9.74195],
-  "Drezden": [51.05089, 13.73832], // Dresden
-  "Drvenik": [43.15573, 17.24854],
-  "Dugi Rat": [43.44611, 16.63972],
-  "Eben In Pangau/Bahnhof": [47.4, 13.4], // Eben im Pongau
-  "Enschede": [52.21833, 6.89583],
-  "Esbjerg": [55.47028, 8.45187],
-  "Feistritz An Der Drau": [46.70157, 13.66479], // Feistritz an der Drau
-  "Feldkirch": [47.23645, 9.59734],
-  "Froslev": [54.82137, 9.34148], // Frøslev (DK), at the Padborg border crossing
-  "Gradac": [43.10583, 17.34167],
-  "Groningen": [53.21917, 6.56667],
-  "Gusinje": [42.56194, 19.83389],
-  "Helsingborg": [56.04673, 12.69437],
-  "Herning": [56.13615, 8.97662],
-  "Igrane": [43.19528, 17.13889],
-  "Ikast": [56.13883, 9.15768],
-  "Imst/Bahnhof": [47.24504, 10.73974], // Imst
-  "Jenbach/Bahnhof": [47.39173, 11.77245], // Jenbach
-  "Jonkoping": [57.78145, 14.15618], // Jönköping
-  "Kircheim/Teck": [48.64683, 9.45378], // Kirchheim unter Teck
-  "Kolding": [55.4904, 9.47216],
-  "Kopači": [43.67833, 19.02845],
-  "Leoben": [47.379, 15.094],
-  "Liege": [50.63373, 5.56749], // Liège
-  "Liezen": [47.56667, 14.23333],
-  "Linkoping": [58.41086, 15.62157], // Linköping
-  "Lofer-Kreuzfield": [47.58475, 12.69333], // Lofer
-  "Lončari": [44.94247, 18.68431],
-  "Maastricht": [50.84833, 5.68889],
-  "Mala Kladuša": [45.13443, 15.85217],
-  "Mimice": [43.40492, 16.81166],
-  "Mjolbj": [58.32595, 15.12365], // Mjölby
-  "Norrkoping": [58.59419, 16.1826], // Norrköping
-  "Nova Varoš": [43.46056, 19.81139],
-  "Oberhausen": [51.47805, 6.8625],
-  "Odense": [55.39594, 10.38831],
-  "Opuzen": [43.01528, 17.56556],
-  "Petrovac": [42.20556, 18.9425], // Petrovac na Moru
-  "Plav": [42.5969, 19.94415],
-  "Podgora": [43.24333, 17.07722],
-  "Prag": [50.08804, 14.42076], // Prague
-  "Priboj": [43.58306, 19.52519],
-  "Promajna": [43.33611, 16.97556],
-  "Randers": [56.4607, 10.03639],
-  "Ringkobing": [56.09006, 8.24402], // Ringkøbing
-  "Ringsted": [55.4426, 11.79011],
-  "Saalfelden Bahnhof": [47.42681, 12.848], // Saalfelden am Steinernen Meer
-  "Sankt Michael Im Lungau": [47.1, 13.63333], // Sankt Michael im Lungau
-  "Siegburg": [50.80019, 7.20769],
-  "Silkeborg": [56.1697, 9.54508],
-  "Sjenica": [43.27306, 19.99944],
-  "St Johann Im Pongau Bahnhof": [47.35, 13.2], // Sankt Johann im Pongau
-  "St.Johan I.T": [47.5233, 12.4232], // Sankt Johann in Tirol
-  "Stayr": [48.04274, 14.42127], // Steyr
-  "Straubing": [48.88126, 12.57385],
-  "Sutomore": [42.14278, 19.04667],
-  "Tetovo": [42.00989, 20.97138],
-  "Tivat": [42.43623, 18.69361],
-  "Tučepi": [43.27222, 17.05444],
-  "Ustiprača": [43.69109, 19.08922],
-  "Varde": [55.62112, 8.48069],
-  "Varnamo": [57.18604, 14.04001], // Värnamo
-  "Verona": [45.43854, 10.9938],
-  "Wiener Neustadt": [47.80485, 16.23196],
-  "Worgl Hauptbahnhof": [47.48906, 12.06174], // Wörgl
-  "Zaostrog": [43.1425, 17.28222],
-  "Zell Am See-Kurcenter": [47.32306, 12.79839], // Zell am See
-  "Živogošće": [43.18798, 17.16091],
-};
 
 // ---------------------------------------------------------------- reading the API (strict)
 
@@ -544,7 +316,7 @@ export interface LineStats {
  * Turn the pair files' lines into unique lines with coordinates: border stops dropped, the same line of several pair
  * files kept once, stops without coordinates left out, lines with times going backwards or impossible hops skipped.
  */
-export function collectLines(pairs: PairFile[], stations: Map<string, Station>, warn: (m: string) => void): { lines: Line[]; stats: LineStats } {
+export function collectLines(pairs: PairFile[], stations: Map<string, Station>, warn: (m: string) => void, geo: GeocodeStore = GeocodeStore.loadSync("ba-redvoznje")): { lines: Line[]; stats: LineStats } {
   const stats: LineStats = { lineEntries: 0, unique: 0, noOperator: 0, border: 0, unknownStops: new Map(), calls: 0, badTimes: 0, badHops: 0 };
   const byKey = new Map<string, Line | null>();
   for (const p of pairs)
@@ -573,11 +345,17 @@ export function collectLines(pairs: PairFile[], stations: Map<string, Station>, 
         }
         stats.calls++;
         const st = s.city ? stations.get(s.city) : undefined;
-        const coord = st?.coord ?? (s.city ? CITY_COORDS[s.city] : undefined) ?? NAME_COORDS[s.name];
+        let coord = st?.coord;
         if (!coord) {
-          const k = s.city ?? s.name;
-          stats.unknownStops.set(k, (stats.unknownStops.get(k) ?? 0) + 1);
-          continue;
+          // coordinates of the API's stations.json first, else the reviewed geocode file (by city slug, else by name)
+          const key = [s.city, s.name].find((k) => k && geo.lookup(k)) ?? s.city ?? s.name;
+          const e = geo.resolve(key, `line ${l.operator} ${l.stops[0]!.name} → ${l.stops[l.stops.length - 1]!.name}`);
+          if (!e) continue; // reported by geo.assertComplete() in buildFeed
+          if (e.skip) {
+            stats.unknownStops.set(key, (stats.unknownStops.get(key) ?? 0) + 1);
+            continue;
+          }
+          coord = [e.lat, e.lon];
         }
         const ck = s.city ?? `x-${slugOf(s.name)}`;
         const last = calls[calls.length - 1];
@@ -674,18 +452,20 @@ export interface BuildInput {
   days: number;
   /** MIN_LINES unless given (tests with a few pair files) */
   minLines?: number;
+  /** Geocode store (default: data/geocodes/ba-redvoznje.json) */
+  geo?: GeocodeStore;
   warn(m: string): void;
   log?(m: string): void;
 }
 
 /** The GTFS feed from the API's answers. */
 export function buildFeed(o: BuildInput): GtfsFeed {
-  const { lines: raw, stats } = collectLines(o.pairs, o.stations, o.warn);
+  const geo = o.geo ?? GeocodeStore.loadSync("ba-redvoznje");
+  const { lines: raw, stats } = collectLines(o.pairs, o.stations, o.warn, geo);
+  geo.assertComplete(); // a place with neither API coordinates nor an entry in data/geocodes/ba-redvoznje.json
   const unknown = [...stats.unknownStops.values()].reduce((a, b) => a + b, 0);
   if (stats.unknownStops.size)
-    o.warn(`no coordinates for ${stats.unknownStops.size} places (${unknown} calls left out): ${[...stats.unknownStops].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ×${n}`).join(", ")}`);
-  if (stats.calls && unknown / stats.calls > MAX_UNKNOWN_SHARE)
-    fail(`${unknown} of ${stats.calls} calls have no coordinates (more than ${MAX_UNKNOWN_SHARE * 100} %): add the places to CITY_COORDS / NAME_COORDS`);
+    o.warn(`${stats.unknownStops.size} places left out on purpose (skip entries in data/geocodes/ba-redvoznje.json, ${unknown} calls): ${[...stats.unknownStops].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ×${n}`).join(", ")}`);
   // How long the line sources stay valid: MAX_SOURCE_AGE_DAYS after their last re-confirmation. When the earliest of
   // them ends before the build window, the feed is out of date: flagged stale (the build repeats its last weeks and
   // labels it); a stale source without lines only warns.

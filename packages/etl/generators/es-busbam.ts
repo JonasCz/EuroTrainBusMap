@@ -1,6 +1,8 @@
 import { defineGenerator, GeneratorError } from "../src/generators/types.ts";
 import { dateRange, isoWeekday, parseHm, type GtfsFeed, type GtfsRoute, type GtfsStop, type GtfsStopTime, type GtfsTrip } from "../src/generators/gtfs.ts";
 import { serviceWindow } from "../src/generators/registry.ts";
+import { GeocodeStore, geoKey, type GeocodeEntry } from "../src/generators/geocodes.ts";
+import { mapLimit } from "../src/generators/pool.ts";
 
 const INDEX_URL = "https://www.busbam.com/horarios/";
 
@@ -13,6 +15,7 @@ const INDEX_URL = "https://www.busbam.com/horarios/";
  *   https://www.busbam.com/horarios/ – the index linking one page per line group, published by the operator for
  *   travellers (tickets via movelia.es); no licence stated. `robots.txt` answered 403 to curl on 2026-10-26 (no rules
  *   readable); the pages answer 200 to the build's User-Agent; the script makes 5 requests per build. Pages:
+ *   (pages seen on the index today – the script follows whatever the index links:)
  *     /horarios/almeria-cartagena-alicante/  line VAC-228/250   (4 tables)
  *     /horarios/almeria-jaen/                lines VJA-157/158/174 (13 tables: Almería–Fiñana, Almería–Jaén, Mojácar–
  *                                            Granada, Baza–Guadix–Granada, Guadix–Granada, Úbeda–Granada, Castril–Baza,
@@ -51,11 +54,13 @@ const INDEX_URL = "https://www.busbam.com/horarios/";
  *       (all of them also in the NOTES / EXCEPTION / REQUEST_STOP constants below; texts are compared normalised)
  *
  * WHAT THIS SCRIPT DOES
- *   1. Fetches the index and checks that it still links the four pages above (a page that disappeared fails the
- *      source; a new, unknown page is only warned about and skipped), then fetches the pages one after the other.
+ *   1. Fetches the index and follows EVERY `/horarios/<line>/` link on it (the four pages above today; two requests at a
+ *      time) – a new line page is parsed like the others, a page that disappeared is just gone (warning if the
+ *      last build had it, from the content state). Each page's tables + notes are handed to `ctx.observe`, which keeps
+ *      their hash between builds (src/generators/state.ts), so the build knows which timetables changed.
  *   2. Reads every table (A, B or C), maps each trip column's calendar label to an exact rule (CALENDARS), each stop
- *      name to a coordinate (STOPS) and builds one trip per column / row with explicit service dates in the build
- *      window. Stops named `(Solo Lunes|Viernes)` are called on that weekday only: the trip splits in two variants.
+ *      name to a reviewed coordinate in data/geocodes/es-busbam.json (src/generators/geocodes.ts) and builds one trip
+ *      per column / row with explicit service dates in the build window. Stops named `(Solo Lunes|Viernes)` are called on that weekday only: the trip splits in two variants.
  *   3. One GTFS route per table and direction, route_short_name = the line code, route_url = the page; vans of the
  *      VAC lines are coaches (route_type 200), those of the VJA lines (rural Granada / Jaén / Almería) buses (3).
  *
@@ -81,193 +86,49 @@ const INDEX_URL = "https://www.busbam.com/horarios/";
  *   - Cartagena → Alicante, the second "DE LUNES A SÁBADOS" 13:30 column only lists Cartagena, La Palma and
  *     Torrepacheco (all other cells `---`): a 3-stop trip as printed.
  *   - Stop spellings differ between tables (RÍO / RIO DE BAZA, TORRE CARDELA / TORRECARDELA, PUERTO DE MAZARRÓN /
- *     PUERTO MAZARRÓN, ALMERÍA PUERTO / PUERTO ALMERÍA): keys ignore accents, case and punctuation, ALIASES in STOPS.
- *   - Coordinates: town centres from OSM (Nominatim), bus stations where one exists; villages marked `~` in STOPS are
- *     estimates (±3 km) from the road order of the timetable. Estaciones (E. DARRO …) are the old railway stations.
+ *     PUERTO MAZARRÓN, ALMERÍA PUERTO / PUERTO ALMERÍA): the geocode file's keys ignore accents, case and punctuation,
+ *     other spellings are `aliases` of an entry.
+ *   - Coordinates: town centres from OSM (Nominatim), bus stations where one exists; entries with `approx` (source
+ *     "estimate") are villages placed from the road order of the timetable (±3 km). Estaciones (E. DARRO …) are the
+ *     old railway stations.
+ *   - Timetable changes (times, added / removed trips and stops, whole new lines) need no change in this script; a
+ *     removed stop just stays unused in the geocode file.
  *   - The pages carry no timetable year. Freshness is not checked beyond the validity dates of NUEVO · DIRECTO; the
  *     pages' `article:modified_time` is logged (2025-04-30 for almeria-jaen).
  *
  * FAILS ON PURPOSE (the build skips the feed) when
- *   - the index no longer links one of the four pages, or a page has fewer tables than listed above or no line code;
- *   - a table has an unknown layout / header, an unknown calendar label, an unknown stop name (with a time), a cell
+ *   - the index links no line page at all, or a linked page has no tables or no line code;
+ *   - a stop in the timetable has no reviewed entry in data/geocodes/es-busbam.json (NeedsGeocodingError: all such
+ *     stops of the run are listed, with the command to geocode them; an entry looked up automatically but not yet
+ *     reviewed counts as missing) – new stops are never guessed;
+ *   - a table has an unknown layout / header, an unknown calendar label, a cell
  *     that is neither a time nor `---`, many trips with times that go backwards (other than past midnight), a `*` /
  *     marker without its known note, or `NUEVO · DIRECTO` without its validity note;
  *   - no trip runs in the build window (checked by the registry).
  *
  * HOW TO RE-CHECK / UPDATE
- *   - `pnpm --filter @etbm/etl run generate -- es-busbam` runs it against the live pages (one trip per line).
+ *   - `pnpm --filter @etbm/etl run generate -- es-busbam` runs it against the live pages (one line per trip).
  *   - By hand: `curl -A Mozilla/5.0 https://www.busbam.com/horarios/almeria-madrid/`; diff the tables against the
- *     samples above. New stop → add it to STOPS (coordinates from OSM); new calendar label → CALENDARS; new note → NOTES.
+ *     samples above. New stop → `pnpm --filter @etbm/etl run geocode -- es-busbam`, check, `--accept`; new calendar
+ *     label → CALENDARS; new note → NOTES / EXCEPTION.
  *   - tests: test/busbam.test.ts with copies of the pages (their `<main>` part) in test/fixtures/busbam/.
  */
 
-interface PageDef {
-  slug: string;
-  /** Minimum number of tables (fewer = the page changed). */
-  tables: number;
-  routeType: number;
-}
-export const PAGES: PageDef[] = [
-  { slug: "almeria-cartagena-alicante", tables: 4, routeType: 200 },
-  { slug: "almeria-jaen", tables: 13, routeType: 3 },
-  { slug: "almeria-madrid", tables: 2, routeType: 200 },
-  { slug: "murcia-torrevieja", tables: 2, routeType: 200 },
-];
+/** Line codes of the state concessions (VAC-…) are coach lines, the rest (VJA-… rural lines of Granada / Jaén) buses. */
+export const routeTypeOf = (line: string) => (/^VAC\b/.test(line) ? 200 : 3);
 export const pageUrl = (slug: string) => `${INDEX_URL}${slug}/`;
 
 // ---------------------------------------------------------------------------------------------------- stops
-
-/** [source name, display name, lat, lon, aliases…]; a `~` before the display name marks an estimated position. */
-const STOP_ROWS: [string, string, number, number, ...string[]][] = [
-  ["ABLA", "Abla", 37.1417, -2.7792],
-  ["ABRUCENA", "Abrucena", 37.1332, -2.7975],
-  ["ALBOX", "Albox", 37.388, -2.1456],
-  ["ALCUDIA", "Alcudia de Guadix", 37.2625, -3.1004],
-  ["ALICANTE", "Alicante", 38.3373, -0.4914],
-  ["ALMERÍA", "Almería", 36.8352, -2.4555],
-  ["PUERTO ALMERÍA", "Almería Puerto", 36.8315, -2.4766, "ALMERÍA PUERTO"],
-  ["ALMONTARAS", "Almontaras", 37.767, -2.7568],
-  ["ALQUERIA", "La Alquería", 37.7145, -2.5441],
-  ["ARBOLEAS", "Arboleas", 37.3511, -2.0743],
-  ["ARMUÑA", "Armuña de Almanzora", 37.3497, -2.4116],
-  ["BACOR", "Bácor", 37.5232, -2.9402],
-  ["BAICO", "Baico", 37.5276, -2.7469],
-  ["BAZA", "Baza", 37.4905, -2.7709],
-  ["BENAHADUX", "Benahadux", 36.9252, -2.4602],
-  ["BENAMAUREL", "Benamaurel", 37.6371, -2.6825],
-  ["BIGASTRO", "Bigastro", 38.0628, -0.8997],
-  ["BÉLMEZ", "Bélmez de la Moraleda", 37.7238, -3.3824],
-  ["CABRA", "Cabra del Santo Cristo", 37.7036, -3.2867],
-  ["CAMBIL", "Cambil", 37.6768, -3.5649],
-  ["CAMPO CAMARA", "Campo Cámara", 37.7343, -2.864],
-  ["CARRIONES", "~Carriones", 37.6174, -2.6267],
-  ["CARTAGENA", "Cartagena", 37.6029, -0.9766],
-  ["CASTILLEJAR", "Castilléjar", 37.7172, -2.6425],
-  ["CASTRIL", "Castril", 37.7969, -2.7814],
-  ["CAÑADA MORTERO", "Cañada Morteros", 37.6447, -2.9354],
-  ["CORTES DE BAZA", "Cortes de Baza", 37.654, -2.7696],
-  ["CRUCE FREILA", "Cruce de Freila", 37.5108, -2.911],
-  ["CUEVAS", "Cuevas del Almanzora", 37.2961, -1.8807],
-  ["CUEVAS DEL CAMPO", "Cuevas del Campo", 37.618, -2.9184],
-  ["CULLAR", "Cúllar", 37.5835, -2.5766],
-  ["DEHESA DE CAMPOAMOR", "Dehesa de Campoamor", 37.9005, -0.7576],
-  ["DEIFONTES", "Deifontes", 37.3263, -3.5947],
-  ["DIEZMA", "Diezma", 37.3198, -3.3327],
-  ["DOÑA MARÍA", "Doña María Ocaña", 37.1437, -2.6911],
-  ["E. CALAHORRA", "La Calahorra (estación)", 37.1941, -3.0684],
-  ["E. DARRO", "~Darro (estación)", 37.365, -3.265],
-  ["E. DOLAR", "Dólar (estación)", 37.2688, -2.9481],
-  ["E. HUELMA", "Huelma (estación)", 37.6201, -3.2955],
-  ["E. MOREDA", "Moreda (estación)", 37.4316, -3.3102],
-  ["E. NACIMIENTO", "Nacimiento (estación)", 37.1273, -2.6364],
-  ["EL ALGAR", "El Algar", 37.6549, -0.8635],
-  ["EL ALTET", "El Altet", 38.2742, -0.5421],
-  ["EL EJIDO", "El Ejido", 36.7744, -2.8125],
-  ["EL MARGEN", "El Margen", 37.6429, -2.5665],
-  ["EL PRADO", "~El Prado", 37.782, -2.768],
-  ["ESCÚLLAR", "Escúllar", 37.1775, -2.7348],
-  ["FINES", "Fines", 37.36, -2.2633],
-  ["FIÑANA", "Fiñana", 37.171, -2.8397],
-  ["GALERA", "Galera", 37.7426, -2.5508],
-  ["GOBERNADOR", "Gobernador", 37.4773, -3.3201],
-  ["GRANADA", "Granada", 37.1997, -3.614],
-  ["GUADAHORTUNA", "Guadahortuna", 37.5241, -3.3845],
-  ["GUADIX", "Guadix", 37.2991, -3.1373],
-  ["GUARDAMAR DEL SEGURA", "Guardamar del Segura", 38.09, -0.6538],
-  ["GÉRGAL", "Gérgal", 37.1186, -2.5396],
-  ["HIJATE", "El Hijate", 37.3957, -2.5929],
-  ["HOSPITAL BAZA", "Hospital de Baza", 37.5003, -2.7521],
-  ["HUELMA", "Huelma", 37.6473, -3.4552],
-  ["HUERCAL OVERA", "Huércal-Overa", 37.3896, -1.9451],
-  ["HUESCAR", "Huéscar", 37.8071, -2.5429],
-  ["HUÉNEJA", "Huéneja", 37.1769, -2.9486],
-  ["IZNALLOZ", "Iznalloz", 37.3928, -3.5277],
-  ["JAÉN", "Jaén", 37.7729, -3.7883],
-  ["JÓDAR", "Jódar", 37.8407, -3.3549],
-  ["LA ALFOQUIA", "La Alfoquia", 37.3542, -2.0401],
-  ["LA APARECIDA", "La Aparecida", 38.0808, -1.0093],
-  ["LA MARINA", "~La Marina", 38.125, -0.65],
-  ["LA MATA", "La Mata", 38.0266, -0.6545],
-  ["LA PALMA", "La Palma", 37.6921, -0.9558],
-  ["LA UNIÓN", "La Unión", 37.6096, -0.8736],
-  ["LOS ALCAZARES", "Los Alcázares", 37.748, -0.8649],
-  ["LOS LOBOS", "Los Lobos", 37.308, -1.7643],
-  ["LOS NAREJOS", "Los Narejos", 37.7654, -0.8392],
-  ["MADRID Estación Autobuses SUR", "Madrid Estación Sur", 40.3943, -3.6777],
-  ["AEROPUERTO MADRID (Adolfo Suárez - Barajas T4)", "Madrid-Barajas Airport T4", 40.4912, -3.5934],
-  ["MANZANARES", "Manzanares", 38.9962, -3.3722],
-  ["MAZARRÓN", "Mazarrón", 37.5984, -1.3152],
-  ["MOJÁCAR", "Mojácar", 37.1402, -1.851],
-  ["MOLINILLO", "~El Molinillo", 37.3042, -3.4304],
-  ["MURCIA", "Murcia", 37.9893, -1.1318],
-  ["NACIMIENTO", "Nacimiento", 37.1059, -2.6484],
-  ["OCAÑA", "~Ocaña", 37.144, -2.725],
-  ["OLULA", "Olula del Río", 37.356, -2.2966],
-  ["ORCE", "Orce", 37.7213, -2.4794],
-  ["ORIHUELA", "Orihuela", 38.0848, -0.9441],
-  ["PANTANO NEGRATIN", "~Pantano del Negratín", 37.575, -2.93],
-  ["PICO GRAJO", "~Pico del Grajo", 37.4, -3.03],
-  ["POZO ALCÓN", "Pozo Alcón", 37.7027, -2.9351],
-  ["PILAR DE LA HORADADA", "Pilar de la Horadada", 37.8995, -0.8258],
-  ["PIÑAR", "Píñar", 37.4425, -3.4404],
-  ["PUEBLA DE DON FADRIQUE", "Puebla de Don Fadrique", 37.9578, -2.4349],
-  ["PUERTO MAZARRÓN", "Puerto de Mazarrón", 37.566, -1.2663, "PUERTO DE MAZARRÓN"],
-  ["PURCHENA", "Purchena", 37.3477, -2.3608],
-  ["PURULLENA", "Purullena", 37.3148, -3.1892],
-  ["PURUNELLA", "~Purunella", 37.32, -3.24],
-  ["RÍO DE BAZA", "Río de Baza", 37.5214, -2.7068],
-  ["RIOJA", "Rioja", 36.9451, -2.4627],
-  ["ROQUETAS DE MAR", "Roquetas de Mar", 36.763, -2.6116],
-  ["S. CATALINA", "Santa Catalina", 37.7333, -2.6797],
-  ["SAN JAVIER", "San Javier", 37.806, -0.8346],
-  ["SAN MARCOS", "San Marcos", 37.6171, -2.7016],
-  ["SAN MIGUEL DE SALINAS", "San Miguel de Salinas", 37.9769, -0.7891],
-  ["SAN PEDRO DEL PINATAR", "San Pedro del Pinatar", 37.8315, -0.7855],
-  ["SANTA POLA", "Santa Pola", 38.1924, -0.5555],
-  ["SANTIAGO DE LA RIBERA", "Santiago de la Ribera", 37.7929, -0.8139],
-  ["SANTOMERA", "Santomera", 38.0817, -1.0589],
-  ["SERON", "Serón", 37.3437, -2.5084],
-  ["TERREROS", "San Juan de los Terreros", 37.3608, -1.6637],
-  ["TIJOLA", "Tíjola", 37.4015, -2.4983],
-  ["TORRECARDELA", "Torre-Cardela", 37.499, -3.3616, "TORRE CARDELA"],
-  ["TORREPACHECO", "Torre-Pacheco", 37.7433, -0.9556],
-  ["TORREVIEJA", "Torrevieja", 37.9775, -0.6828],
-  ["V. ALMIREZ", "~Venta de Almirez", 37.118, -2.59],
-  ["VALDEPEÑAS", "Valdepeñas", 38.7595, -3.3847],
-  ["VENTA BAUL", "~Venta del Baúl", 37.4094, -2.9272],
-  ["VENTA EL PERAL", "Venta del Peral", 37.5559, -2.6076],
-  ["VENTA OVERA", "~Venta Overa", 37.38, -1.99],
-  ["VERA", "Vera", 37.2476, -1.8682],
-  ["ZUJAR", "Zújar", 37.5916, -2.8201],
-  ["ÁGUILAS", "Águilas", 37.41, -1.5805],
-  ["ÚBEDA", "Úbeda", 38.0111, -3.3719],
-];
-
-/** Key of a stop name: no accents, case or punctuation ("Río de Baza" = "RIO DE BAZA"). */
-const keyOf = (s: string) =>
-  s
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
 
 export interface BusbamStop {
   id: string;
   name: string;
   lat: number;
   lon: number;
-  approx: boolean;
 }
-export const STOPS = new Map<string, BusbamStop>();
-for (const [src, display, lat, lon, ...aliases] of STOP_ROWS) {
-  const approx = display.startsWith("~");
-  const name = approx ? display.slice(1) : display;
-  const stop: BusbamStop = { id: `bb-${keyOf(name).toLowerCase()}`, name, lat, lon, approx };
-  for (const k of [src, name, ...aliases].map(keyOf)) {
-    if (STOPS.has(k) && STOPS.get(k)!.id !== stop.id) throw new Error(`es-busbam: duplicate stop key ${k}`);
-    STOPS.set(k, stop);
-  }
-}
+const stopOfEntry = (e: GeocodeEntry): BusbamStop => ({ id: `bb-${geoKey(e.name).toLowerCase()}`, name: e.name, lat: e.lat, lon: e.lon });
+/** Stands in for a stop without reviewed coordinates until the run ends (assertComplete then fails the source). */
+const NO_STOP: BusbamStop = { id: "bb-unknown", name: "?", lat: 0, lon: 0 };
 
 // ---------------------------------------------------------------------------------------------------- calendar
 
@@ -440,6 +301,7 @@ type Dir = { name: string; trips: RawTrip[] };
 /** One trip whose own times do not add up (a typo in the source): that trip is left out with a warning. */
 class BadTrip extends GeneratorError {}
 interface Sink {
+  geo: GeocodeStore;
   warn(m: string): void;
   /** trips left out so far; too many means the layout was misread, not a typo (buildFeed fails) */
   dropped: string[];
@@ -455,11 +317,10 @@ function addTrip(list: RawTrip[], entries: { stop: BusbamStop; day?: number; t: 
   }
 }
 
-function stopOf(cell: string, where: string): { stop: BusbamStop; day?: number } {
+function stopOf(cell: string, where: string, sink: Sink): { stop: BusbamStop; day?: number } {
   const solo = /^(.*?)\s*\(Solo (Lunes|Viernes)\)$/i.exec(cell);
-  const stop = STOPS.get(keyOf(solo ? solo[1]! : cell));
-  if (!stop) throw new GeneratorError(`${where}: unknown stop "${cell}" (add it with coordinates to STOPS in es-busbam.ts)`);
-  return { stop, day: solo ? (/^lunes$/i.test(solo[2]!) ? 0 : 4) : undefined };
+  const e = sink.geo.resolve(solo ? solo[1]! : cell, where);
+  return { stop: e ? stopOfEntry(e) : NO_STOP, day: solo ? (/^lunes$/i.test(solo[2]!) ? 0 : 4) : undefined };
 }
 
 /** "6:15" → minutes, "---" / "--" / "" → null; anything else fails. A leading `*` is reported. */
@@ -516,7 +377,7 @@ function readStopsDown(t: RawTable, sink: Sink): Dir[] {
       if (row.length !== head.length) throw new GeneratorError(`${where0}: a row has ${row.length} cells, the header ${head.length}`);
       const tm = timeOf(row[c]!, where);
       if (!tm) continue;
-      const { stop, day } = stopOf(row[0]!, where);
+      const { stop, day } = stopOf(row[0]!, where, sink);
       if (tm.star) {
         if (!norm(t.after).includes(EXCEPTION) || stop.id !== "bb-roquetasdemar" || cal.label !== "DIARIO 4") throw new GeneratorError(`${where}: unexplained "*" at ${row[0]}`);
         sink.warn(`${where0}: ${stop.name} ${row[c]} of "${head[c]}" runs only on Easter Sunday and summer Sundays (no dates published): call left out`);
@@ -556,7 +417,7 @@ function readSideBySide(t: RawTable, k: number, sink: Sink): Dir[] {
     { name: "", trips: [] },
   ];
   const itin = stopRows.map((r) => r[k]!);
-  const nameOf = (i: number) => stopOf(itin[i]!, where0).stop.name;
+  const nameOf = (i: number) => stopOf(itin[i]!, where0, sink).stop.name;
   dirs[0]!.name = `${nameOf(0)} – ${nameOf(itin.length - 1)}`;
   dirs[1]!.name = `${nameOf(itin.length - 1)} – ${nameOf(0)}`;
   let requestWarned = false;
@@ -573,7 +434,7 @@ function readSideBySide(t: RawTable, k: number, sink: Sink): Dir[] {
         const tm = timeOf(row[c]!, where);
         if (!tm) continue;
         if (tm.star) throw new GeneratorError(`${where}: unexplained "*" at ${row[k]}`);
-        const { stop, day } = stopOf(row[k]!, where);
+        const { stop, day } = stopOf(row[k]!, where, sink);
         if (stop.id === REQUEST_STOP.id && norm(t.after).includes(REQUEST_STOP.text)) {
           if (!requestWarned) sink.warn(`${where0}: ${stop.name} is a request stop ("sólo si lleva gente") with times that contradict its neighbours: left out`);
           requestWarned = true;
@@ -602,7 +463,7 @@ function readTripRows(t: RawTable, sink: Sink): Dir[] {
       const tm = timeOf(row[i + 1]!, where);
       if (!tm) return;
       if (tm.star) throw new GeneratorError(`${where}: unexplained "*"`);
-      entries.push({ ...stopOf(s, where), t: tm.t });
+      entries.push({ ...stopOf(s, where, sink), t: tm.t });
     });
     addTrip(trips, entries, cal, where, sink);
   }
@@ -623,10 +484,13 @@ export function readTable(t: RawTable, sink: Sink): Dir[] {
 
 // ---------------------------------------------------------------------------------------------------- feed
 
-const slug = (s: string) => keyOf(s).toLowerCase();
+export interface FetchedPage {
+  slug: string;
+  page: Page;
+}
 
-export function buildFeed(pages: { def: PageDef; page: Page }[], startDate: string, days: number, warn: (m: string) => void): GtfsFeed {
-  const sink: Sink = { warn, dropped: [] };
+export function buildFeed(pages: FetchedPage[], startDate: string, days: number, warn: (m: string) => void, geo: GeocodeStore): GtfsFeed {
+  const sink: Sink = { geo, warn, dropped: [] };
   const { from, to } = serviceWindow(startDate, days);
   const window = dateRange(from, to);
   const stops = new Map<string, GtfsStop>();
@@ -636,13 +500,13 @@ export function buildFeed(pages: { def: PageDef; page: Page }[], startDate: stri
   const services = new Map<string, string[]>();
   const usedRoutes = new Set<string>();
 
-  for (const { def, page } of pages) {
-    if (page.tables.length < def.tables) throw new GeneratorError(`${pageUrl(def.slug)}: ${page.tables.length} tables, expected at least ${def.tables}`);
+  for (const { slug, page } of pages) {
+    if (!page.tables.length) throw new GeneratorError(`${pageUrl(slug)}: no timetable tables on a page the index links`);
     for (const table of page.tables) {
       const dirs = readTable(table, sink);
       dirs.forEach((dir, di) => {
         if (!dir.trips.length) return;
-        const baseId = `${def.slug}-${table.id}${dirs.length > 1 ? (di ? "-v" : "-i") : ""}`;
+        const baseId = `${slug}-${table.id}${dirs.length > 1 ? (di ? "-v" : "-i") : ""}`;
         let routeId = baseId;
         for (let n = 2; usedRoutes.has(routeId); n++) routeId = `${baseId}-${n}`;
         usedRoutes.add(routeId);
@@ -651,8 +515,8 @@ export function buildFeed(pages: { def: PageDef; page: Page }[], startDate: stri
           agency_id: "busbam",
           route_short_name: page.line,
           route_long_name: dir.name.replace(/\s+-\s+/g, " – "),
-          route_type: def.routeType,
-          route_url: pageUrl(def.slug),
+          route_type: routeTypeOf(page.line),
+          route_url: pageUrl(slug),
         });
         dir.trips.forEach((trip, ti) => {
           const dates = window.filter((d) => trip.cal.test(d) && (!trip.cal.from || d >= trip.cal.from) && (!trip.cal.to || d <= trip.cal.to));
@@ -682,6 +546,7 @@ export function buildFeed(pages: { def: PageDef; page: Page }[], startDate: stri
       });
     }
   }
+  geo.assertComplete();
   if (sink.dropped.length > Math.max(2, trips.length / 10)) throw new GeneratorError(`${sink.dropped.length} of ${trips.length + sink.dropped.length} trips have times that go backwards – the tables were misread: ${sink.dropped[0]}`);
   return {
     agency: [{ agency_id: "busbam", agency_name: "BusBam", agency_url: "https://www.busbam.com/", agency_timezone: "Europe/Madrid", agency_lang: "es" }],
@@ -694,24 +559,28 @@ export function buildFeed(pages: { def: PageDef; page: Page }[], startDate: stri
   };
 }
 
+/** What identifies a page's timetable: its tables and the notes below them, nothing else of the page. */
+export const contentOf = (page: Page) => page.tables.map((t) => [t.title, ...t.head.map((r) => r.join("|")), ...t.body.map((r) => r.join("|")), t.after].join("\n")).join("\n\n");
+
 export default defineGenerator({
   id: "es-busbam",
-  description: "BusBam (Almería) coach and bus lines (Almería – Cartagena – Alicante, Madrid, Murcia – Torrevieja, Granada / Jaén / Baza area): the TablePress timetables of its line pages become trips with explicit dates.",
+  description: "BusBam (Almería) coach and bus lines: the index of busbam.com/horarios links one page per line group; every linked page is parsed the same way (TablePress timetables become trips with explicit dates), stops are located from data/geocodes/es-busbam.json.",
   sourceUrl: INDEX_URL,
   async generate(ctx) {
-    const index = await ctx.fetchText(INDEX_URL, { expect: /horarios/ });
-    const linked = parseIndex(index);
-    for (const p of PAGES) if (!linked.includes(p.slug)) throw new GeneratorError(`the index ${INDEX_URL} no longer links /horarios/${p.slug}/`);
-    for (const s of linked) if (!PAGES.some((p) => p.slug === s)) ctx.warn(`index links a new page /horarios/${s}/ that this script does not read`);
-    const pages: { def: PageDef; page: Page }[] = [];
-    for (const def of PAGES) {
-      const url = pageUrl(def.slug);
+    const geo = await GeocodeStore.load("es-busbam");
+    const slugs = parseIndex(await ctx.fetchText(INDEX_URL, { expect: /horarios/ }));
+    if (!slugs.length) throw new GeneratorError(`the index ${INDEX_URL} links no line pages any more (the link pattern /horarios/<line>/ changed)`);
+    // two at a time: polite, and the site answers in ~1 s
+    const pages = await mapLimit(slugs, 2, async (slug): Promise<FetchedPage> => {
+      const url = pageUrl(slug);
       const page = parsePage(await ctx.fetchText(url, { expect: /<\/table>/ }), url);
-      ctx.log(`${def.slug}: line ${page.line}, ${page.tables.length} tables${page.modified ? `, page modified ${page.modified.slice(0, 10)}` : ""}`);
-      pages.push({ def, page });
-    }
-    const feed = buildFeed(pages, ctx.startDate, ctx.days, ctx.warn);
-    const approx = feed.stops.filter((s) => [...STOPS.values()].find((x) => x.id === s.stop_id)?.approx);
+      const ob = ctx.observe(slug, contentOf(page));
+      ctx.log(`${slug}: line ${page.line}, ${page.tables.length} tables${ob.isNew ? " (new page)" : ob.changed ? ` (timetable changed, previous version since ${ob.lastChanged})` : ""}${page.modified ? `, page modified ${page.modified.slice(0, 10)}` : ""}`);
+      return { slug, page };
+    });
+    for (const gone of ctx.knownPages().filter((k) => !slugs.includes(k))) ctx.warn(`page /horarios/${gone}/ is not linked any more: its lines are no longer offered`);
+    const feed = buildFeed(pages, ctx.startDate, ctx.days, ctx.warn, geo);
+    const approx = feed.stops.filter((s) => geo.lookup(s.stop_name)?.approx);
     if (approx.length) ctx.log(`${approx.length} stops with estimated coordinates: ${approx.map((s) => s.stop_name).join(", ")}`);
     return feed;
   },

@@ -9,6 +9,7 @@ import { LOAD_VERSION, initSchema, loadFeed, type FeedLoadStats } from "./gtfs/l
 import { STALE_MAX_DAYS, zipState, type FeedState } from "./gtfs/validity.ts";
 import { runBuild } from "./build.ts";
 import { runGenerator } from "./generators/registry.ts";
+import { GeneratorState } from "./generators/state.ts";
 import type { GeneratorReport } from "./generators/types.ts";
 import { todayIn } from "./core/time.ts";
 import { StageTimer, log, warn } from "./util/log.ts";
@@ -140,6 +141,8 @@ async function main() {
   const db = await Db.open(dbPath, { threads: 4, memoryLimit: process.env.ETL_DUCKDB_MEMORY ?? "4GB", tempDir: join(tmpDir, "duckdb") });
 
   const generated: GeneratorReport[] = [];
+  const genStateFile = join(args.work, "generator-state.json");
+  let genState: GeneratorState | undefined;
   if (!reuse) {
     timer.start("download+load");
     await initSchema(db);
@@ -149,13 +152,15 @@ async function main() {
     // the operators' pages (some take minutes) and write a zip into the cache; a failed one is skipped like a failed
     // download.
     const genRuns = new Map<string, Promise<string | null>>();
+    // content hashes of the generated pages, kept between builds (generators/state.ts; build-deploy keeps the file in R2)
+    genState = await GeneratorState.load(genStateFile);
     for (const rf of feeds) {
       const g = rf.generator ? cfg.generators?.generators.get(rf.generator) : undefined;
       if (!g) continue;
       const dest = join(cacheDir, "feeds", rf.key + ".zip");
       genRuns.set(
         rf.key,
-        runGenerator(g, rf.key, { userAgent: cfg.userAgent, startDate: args.startDate, days: args.days, dest, tmpDir, staleMaxDays: maxStale }).then(({ report }) => {
+        runGenerator(g, rf.key, { userAgent: cfg.userAgent, startDate: args.startDate, days: args.days, dest, tmpDir, state: genState, staleMaxDays: maxStale }).then(({ report }) => {
           generated.push(report);
           return report.ok ? dest : null;
         }),
@@ -254,6 +259,7 @@ async function main() {
     await writeFile(stateFile, JSON.stringify({ key: stateKey, feedStats, expired }));
   }
 
+  if (genState && generated.length) await genState.save(genStateFile);
   if (generated.length) log(`feed generators: ${generated.map((g) => `${g.id} ${g.ok ? "ok" : "FAILED"}`).join(", ")}`);
   if (expired.length) log(`out-of-date feeds skipped (older than ${maxStale} days): ${expired.map((e) => `${e.key} (${e.reason})`).join(", ")}`);
   const staleLoaded = feedStats.filter((f) => f.expired && f.trips > 0);

@@ -71,12 +71,15 @@
  *     text and rule in FOOTNOTES together (and the copy in this header); after the December timetable change expect a
  *     new heading, new train numbers and new footnotes – re-check every rule, and the Ploče trains against hr-hz. Until
  *     the page changes, the build report's `generated` entry shows `stale` and the app labels the trains out of date.
- *   - A new station: add it to STATIONS (OSM / GeoNames, checked against the rail graph).
+ *   - A new station: the source fails with NeedsGeocodingError naming it; `pnpm --filter @etbm/etl run geocode -- ba-zfbih`
+ *     looks it up and writes an unchecked entry into data/geocodes/ba-zfbih.json, an agent checks it against the rail
+ *     graph (leg speeds are printed) and runs it again with --accept.
  *   - Tests: test/generators.test.ts with the page copies in test/fixtures/zfbih/ (refresh them with the live page).
  */
 import { defineGenerator, GeneratorError, type GeneratorContext } from "../src/generators/types.ts";
 import { addDays, dateRange, haversineKm, isoWeekday, parseHm, timetableChange, timetablePeriod, type GtfsFeed, type GtfsStopTime } from "../src/generators/gtfs.ts";
 import { serviceWindow, staleServiceWindow } from "../src/generators/registry.ts";
+import { GeocodeStore } from "../src/generators/geocodes.ts";
 
 export const SOURCE_URL = "https://www.zfbh.ba/en/time-table/";
 export const MAIN_HEADER = ["Train number", "Train type", "Relation", "Departure", "Arrival"];
@@ -90,70 +93,15 @@ export const TRAIN_TYPES: Record<string, { name: string; routeType: number }> = 
 };
 
 /**
- * Stations (names as the site writes them) → [lat, lon]. From the stops of the earlier community GTFS feed (ba_ZFBiH,
+ * Stations (names as the site writes them) → [lat, lon], read from data/geocodes/ba-zfbih.json (src/generators/
+ * geocodes.ts: a new station fails the source with the list of stations to geocode). From the stops of the earlier community GTFS feed (ba_ZFBiH,
  * 2025), checked against GeoNames railway stations (≤ 1.5 km, mostly ≤ 0.3 km: GeoNames rounds) and the rail graph
  * of the build (every point ≤ 25 m from the track); Ploče as in the HŽPP feed (Croatia), so the two
  * feeds' stations merge. Briješće (a halt in Sarajevo, Novi Grad, between Alipašin Most and Rajlovac) has no point in
  * either source: placed on the track by its running times (3 min after Alipašin Most, 2 min before Rajlovac) at the
  * Briješće neighbourhood, ±500 m.
  */
-export const STATIONS: Record<string, [number, number]> = {
-  "Alići": [44.46778, 18.167068],
-  "Alipašin Most": [43.85142, 18.346546],
-  "Begov Han": [44.354626, 17.995022],
-  "Binježevo": [43.844437, 18.22217],
-  "Bistričak": [44.34684, 17.921623],
-  "Blažuj": [43.838463, 18.2587],
-  "Bradići": [44.518475, 18.16545],
-  "Briješće": [43.85302, 18.33073],
-  "Buča Potok": [43.853905, 18.36656],
-  "Buzići": [44.040356, 18.133495],
-  "Čapljina": [43.109848, 17.6978],
-  "Ćatići": [44.0968, 18.111866],
-  "Dobrinje": [44.05196, 18.109575],
-  "Dolina": [44.473923, 18.151958],
-  "Drežnica Stara": [43.520557, 17.73838],
-  "Drivuša": [44.170414, 17.969341],
-  "Fojnica": [44.5098, 18.13102],
-  "Globarica": [44.489136, 18.154583],
-  "Gora": [44.132755, 17.993217],
-  "Hadžići": [43.820793, 18.200556],
-  "Ilidža": [43.836174, 18.300598],
-  "Ilijaš": [43.947056, 18.264523],
-  "Ilijaš Grad": [43.956524, 18.264095],
-  "Jablanica Grad": [43.65278, 17.763765],
-  "Janjići": [44.154842, 17.962831],
-  "Jelina": [44.266514, 17.879307],
-  "Kakanj": [44.120625, 18.10575],
-  "Konjic": [43.65715, 17.961355],
-  "Lašva": [44.128765, 17.94226],
-  "Lješevo": [43.989983, 18.229057],
-  "Maglaj": [44.546635, 18.093096],
-  "Modrinje": [44.131588, 18.019814],
-  "Mostar": [43.348995, 17.813885],
-  "Mračaj": [44.359657, 18.004604],
-  "Natron": [44.529697, 18.093517],
-  "Nemila": [44.32577, 17.908302],
-  "Pazarić": [43.7897, 18.151978],
-  "Ploče": [43.04859, 17.433409],
-  "Podlugovi": [43.969913, 18.254982],
-  "Porječani": [44.026733, 18.14979],
-  "Rajlovac": [43.858585, 18.316427],
-  "Reljevo": [43.888752, 18.32878],
-  "Roščevina": [44.133904, 18.072638],
-  "Sarajevo": [43.86046, 18.39895],
-  "Semizovac": [43.916164, 18.318779],
-  "Tomići": [44.51294, 18.144222],
-  "Vinište": [44.42484, 18.105402],
-  "Visoko": [43.996506, 18.183006],
-  "Vogošća": [43.933483, 18.301575],
-  "Zavidovići": [44.445137, 18.145735],
-  "Želeće": [44.397484, 17.994123],
-  "Zenica": [44.210186, 17.912622],
-  "Zenica Teretna": [44.220573, 17.911793],
-  "Žepče": [44.426224, 18.02951],
-  "Žitomislići": [43.20409, 17.784626],
-};
+export const STATIONS: Record<string, [number, number]> = GeocodeStore.loadSync("ba-zfbih").positions();
 /** Stations outside Bosnia and Herzegovina (stop_timezone). */
 const STATION_TZ: Record<string, string> = { "Ploče": "Europe/Zagreb" };
 
@@ -604,7 +552,11 @@ export default defineGenerator({
     // fail early on footnotes / stations, before the slow station queries
     trainRules(page);
     pageValidity(page, ctx.startDate);
-    for (const r of page.rows) for (const s of [r.from, r.to]) if (!STATIONS[s]) fail(`unknown station "${s}" in the relation of train ${r.number} (add its coordinates to STATIONS)`);
+    // every station of the table and of the form, all unknown ones at once (NeedsGeocodingError)
+    const geo = await GeocodeStore.load("ba-zfbih");
+    for (const r of page.rows) for (const s of [r.from, r.to]) geo.resolve(s, `relation of train ${r.number}`);
+    for (const s of page.stations) geo.resolve(s, "station form");
+    geo.assertComplete();
     const anchors = chooseAnchors(page.rows, page.stations);
     const queries = anchors.flatMap((a) => page.stations.filter((s) => s !== a).map((s) => [a, s] as const));
     ctx.log(`station form: ${queries.length} queries (anchors ${anchors.join(", ")})`);

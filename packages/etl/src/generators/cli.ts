@@ -4,13 +4,16 @@
  *   pnpm --filter @etbm/etl run generate -- ba-zfbih [--out feed.zip] [--start YYYY-MM-DD] [--days 60]
  *
  * Fetches the live source, validates the feed, writes the zip (default: work/generated/<id>.zip, never the build's
- * feed cache) and prints a summary of the trips. Without an id, every generator runs. Exit code 1 when one fails.
+ * feed cache) and prints a summary of the trips. Without an id, every generator runs (all at once, like in the build;
+ * output is printed in order afterwards). Content hashes of the parsed pages are kept in work/generator-state.json
+ * (--state <file>). Exit code 1 when one fails.
  */
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { todayIn } from "../core/time.ts";
 import { loadFeedsConfig } from "../feeds.ts";
 import { runGenerator } from "./registry.ts";
+import { GeneratorState } from "./state.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../../..");
@@ -26,16 +29,29 @@ const days = Number(get("--days") ?? 60);
 const cfg = await loadFeedsConfig(join(here, "../../feeds.json"));
 const gens = cfg.generators!.generators;
 const todo = ids.length ? ids : [...gens.keys()];
-let failed = 0;
 for (const id of todo) {
-  const g = gens.get(id);
-  if (!g) {
+  if (!gens.has(id)) {
     console.error(`no generator "${id}" (have: ${[...gens.keys()].join(", ")})`);
     process.exit(2);
   }
-  const feedKey = cfg.feeds.find((f) => f.sources.some((s) => "generated" in s && s.generated === id))?.id ?? id;
-  const out = resolve(get("--out") && todo.length === 1 ? get("--out")! : join(repoRoot, "work", "generated", `${id}.zip`));
-  const { report, feed } = await runGenerator(g, feedKey, { userAgent: cfg.userAgent, startDate, days, dest: out, tmpDir: join(dirname(out), "tmp"), ...(cfg.staleMaxDays ? { staleMaxDays: cfg.staleMaxDays } : {}) });
+}
+const stateFile = resolve(get("--state") ?? join(repoRoot, "work", "generator-state.json"));
+const state = await GeneratorState.load(stateFile);
+const hm = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+
+// all generators at once (as in the build); each one limits its own requests
+const results = await Promise.all(
+  todo.map(async (id) => {
+    const g = gens.get(id)!;
+    const feedKey = cfg.feeds.find((f) => f.sources.some((s) => "generated" in s && s.generated === id))?.id ?? id;
+    const out = resolve(get("--out") && todo.length === 1 ? get("--out")! : join(repoRoot, "work", "generated", `${id}.zip`));
+    return { id, out, ...(await runGenerator(g, feedKey, { userAgent: cfg.userAgent, startDate, days, dest: out, tmpDir: join(dirname(out), "tmp"), state, ...(cfg.staleMaxDays ? { staleMaxDays: cfg.staleMaxDays } : {}) })) };
+  }),
+);
+await state.save(stateFile);
+
+let failed = 0;
+for (const { id, out, report, feed } of results) {
   console.log(JSON.stringify(report, null, 1));
   if (!feed) {
     failed++;
@@ -44,7 +60,6 @@ for (const id of todo) {
   console.log(`\n${id}: ${out}`);
   const stopName = new Map(feed.stops.map((s) => [s.stop_id, s.stop_name]));
   const route = new Map(feed.routes.map((r) => [r.route_id, r]));
-  const hm = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
   for (const t of feed.trips) {
     const st = feed.stopTimes.filter((s) => s.trip_id === t.trip_id).sort((a, b) => a.stop_sequence - b.stop_sequence);
     const dates = feed.services.get(t.service_id)!;

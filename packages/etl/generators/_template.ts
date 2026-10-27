@@ -4,6 +4,8 @@
 import { defineGenerator, GeneratorError } from "../src/generators/types.ts";
 import type { GtfsFeed } from "../src/generators/gtfs.ts";
 import { serviceWindow } from "../src/generators/registry.ts";
+import { GeocodeStore } from "../src/generators/geocodes.ts";
+import { mapLimit } from "../src/generators/pool.ts";
 
 const SOURCE_URL = "https://operator.example/timetable";
 
@@ -39,6 +41,10 @@ export default defineGenerator({
   description: "One sentence for the build log and the README table.",
   sourceUrl: SOURCE_URL,
   async generate(ctx) {
+    const geo = await GeocodeStore.load("template"); // data/geocodes/<id>.json; geo.resolve(name, where) per stop, geo.assertComplete() before returning
+    // With an index page: fetch it, follow every linked line page (mapLimit(links, 2, …)), parse them all the same way and
+    // hand each page's tables + notes to ctx.observe(key, content). New pages / timetables then need no code change.
+    void mapLimit;
     const html = await ctx.fetchText(SOURCE_URL, { expect: /<\/html>/i });
     // 1. parse strictly: expected headers / columns, known categories and footnote texts, else
     if (!html.includes("<table")) throw new GeneratorError("no timetable table on the page");

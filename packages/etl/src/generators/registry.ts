@@ -16,6 +16,8 @@ import { log as defaultLog, warn as defaultWarn } from "../util/log.ts";
 import { addDays, feedCounts, retrievalTime, validateGtfs, writeGtfsZip, type GtfsFeed } from "./gtfs.ts";
 import { STALE_MAX_DAYS, daysBetween, referenceWindow } from "../gtfs/validity.ts";
 import type { FeedGenerator, GeneratorContext, GeneratorReport } from "./types.ts";
+import { GEOCODES_DIR } from "./geocodes.ts";
+import { contentHash, type GeneratorState, type Observation } from "./state.ts";
 
 const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 /** Generator files: lower-case names; files starting with "_" (the template) and tests are not generators. */
@@ -59,6 +61,12 @@ export async function loadGeneratorFiles(dir: string): Promise<GeneratorSet> {
     generators.set(g.id, g);
     texts.push(n, await readFile(path, "utf8"));
   }
+  // the geocode files are inputs of the generators too (--reuse-db key)
+  try {
+    for (const n of (await readdir(GEOCODES_DIR)).filter((n) => n.endsWith(".json")).sort()) texts.push(n, await readFile(join(GEOCODES_DIR, n), "utf8"));
+  } catch {
+    // no geocode directory
+  }
   return { generators, fingerprint: texts.length ? hash(texts.join("\u0001")) : 0 };
 }
 
@@ -95,6 +103,8 @@ export interface RunOptions {
   /** Where the zip goes (the feed cache: work/cache/feeds/<key>.zip). */
   dest: string;
   tmpDir: string;
+  /** Content state shared by all generators of a build (state.ts); the caller saves it after the last one. */
+  state?: GeneratorState;
   /** Cap on stale data (feeds.json staleMaxDays): a stale source older than this fails like a broken one. */
   staleMaxDays?: number;
   log?: (m: string) => void;
@@ -102,9 +112,17 @@ export interface RunOptions {
 }
 
 /** Context handed to a generator (also used by tests with a fake fetch). */
-export function generatorContext(o: Pick<RunOptions, "userAgent" | "startDate" | "days"> & { id: string; warnings: string[]; log?: (m: string) => void; warn?: (m: string) => void; fetchText?: GeneratorContext["fetchText"] }): GeneratorContext {
+export function generatorContext(
+  o: Pick<RunOptions, "userAgent" | "startDate" | "days" | "state"> & { id: string; warnings: string[]; observed?: Observation[]; log?: (m: string) => void; warn?: (m: string) => void; fetchText?: GeneratorContext["fetchText"] },
+): GeneratorContext {
   const lg = o.log ?? defaultLog, wn = o.warn ?? defaultWarn;
   return {
+    observe: (key, content) => {
+      const ob = o.state ? o.state.observe(o.id, key, content) : { key, hash: contentHash(content), isNew: true, changed: false, firstSeen: "", lastChanged: "" };
+      o.observed?.push(ob);
+      return ob;
+    },
+    knownPages: () => o.state?.knownPages(o.id) ?? [],
     startDate: o.startDate,
     days: o.days,
     fetchText: o.fetchText ?? ((url, opts) => fetchPage(url, o.userAgent, { ...(opts?.form ? { form: opts.form } : {}), ...(opts?.expect ? { expect: opts.expect } : {}) })),
@@ -136,7 +154,8 @@ export function staleServiceWindow(until: string): { from: string; to: string } 
 export async function runGenerator(g: FeedGenerator, feedKey: string, o: RunOptions): Promise<{ report: GeneratorReport; feed?: GtfsFeed }> {
   const t0 = Date.now();
   const warnings: string[] = [];
-  const ctx = generatorContext({ ...o, id: g.id, warnings });
+  const observed: Observation[] = [];
+  const ctx = generatorContext({ ...o, id: g.id, warnings, observed });
   const retrievedAt = retrievalTime(new Date(t0));
   const report: GeneratorReport = { id: g.id, feed: feedKey, sourceUrl: g.sourceUrl, ok: false, warnings, seconds: 0, retrievedAt };
   try {
@@ -154,6 +173,13 @@ export async function runGenerator(g: FeedGenerator, feedKey: string, o: RunOpti
     validateGtfs(feed, stale ? staleServiceWindow(stale.until) : serviceWindow(o.startDate, o.days));
     await writeGtfsZip(feed, o.dest, o.tmpDir);
     report.ok = true;
+    if (observed.length) {
+      report.pages = observed;
+      const gone = o.state?.retain(g.id, observed.map((p) => p.key)) ?? [];
+      if (gone.length) report.removedPages = gone;
+      const changed = observed.filter((p) => p.changed).map((p) => p.key);
+      if (changed.length) ctx.log(`timetable content changed since the last build: ${changed.join(", ")}`);
+    }
     if (stale) report.stale = stale;
     report.counts = feedCounts(feed);
     const c = report.counts;
