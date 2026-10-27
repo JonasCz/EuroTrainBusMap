@@ -151,6 +151,19 @@ pages: validity (only the new direct Madrid ↔ Almería service has dates, 02/1
 `packages/etl/data/geocodes/es-busbam.json`, 11 villages estimated; new stops fail the build until geocoded, see the
 `add-virtual-feed` skill). The generator follows every line page the index links, so new lines need no code change. The pages' last edit is 2025 (`article:modified_time`), so the timetable is not known to be current.
 
+## 6c. Gap-filling round: Corsica, Balearics, inland Spain (checked 27 Oct 2026)
+
+Found by researching per region which operators exist and whether GTFS is already published (none needed a generator).
+
+| Region | Source | Feed |
+| --- | --- | --- |
+| Corsica | Transitous `fr_via-bastia-1`, `fr_gtfs-transport-via-strada-les-cars-corse-du-sud` (Collectivité de Corse interurban network), `fr_gtfs-transport-horaires-chemins-de-fer-corse-1` (CFC rail, short snapshots, usually stale), A Balanina / A Berlina / A Citadina (Balagne, Porto-Vecchio), `fr_u-vagabondu` (etalab-2.0) | `fr-corse` (regex) |
+| Corsica, Ajaccio | Muvitarra, transport.data.gouv.fr resource 83836 (not in Transitous) | `fr-corse-muvitarra` |
+| Aragón (Teruel, S Zaragoza) | Transitous `es_Autobuses-del-Gobierno-de-Aragón` (NAP 2554, calendar to 2026-11-26) | `es-regional-bus` (regex) |
+| La Mancha, Alcarria | Transitous `es_Autobuses-Samar` (NAP 1165; overlaps `La-Veloz-SA`, dedup handles it) | `es-regional-bus` (regex) |
+
+Not added: Extremadura Junta feed (stale since 2025-12, licence unknown), Spanish VAC concession files (stale 2023/24), Rías Baixas coaches (Galicia, not checked against the Xunta file). NAP itself needs an API key. Castilla y León and Cuenca / Soria interurban concessions have no GTFS; they remain thin.
+
 ## 7. Feed audit (19 Oct 2026) and stale feeds
 
 Every feed of `feeds.json` and `urban-feeds.json` was checked against its downloaded zip (last service day from

@@ -455,6 +455,44 @@
    "licenseUrl": "https://transport.data.gouv.fr/datasets/horaires-sncf"
   },
   {
+   "id": "fr-corse",
+   "country": "FR",
+   "name": "Corsica buses and railway (Via Strada / Collectivité de Corse interurban, Via Bastia, Muvitarra Ajaccio, Balagne, Porto-Vecchio, CFC)",
+   "tier": "bus",
+   "keep": [
+    "rail",
+    "coach",
+    "bus"
+   ],
+   "sources": [
+    {
+     "transitousMatch": "^fr_(via-bastia-1|gtfs-transport-via-strada-les-cars-corse-du-sud|gtfs-transport-horaires-chemins-de-fer-corse-1|gtfs-transport-horaires-des-lignes-de-la-communaute-.*(berlina|balanina)|reseau-a-citadina-porto-vecchio.*|u-vagabondu)\\.gtfs\\.zip$"
+    }
+   ],
+   "notes": "Several Transitous files (checked 2026-10-27). CFC publishes short snapshots, so it is often stale.",
+   "approxMB": 10,
+   "license": "etalab-2.0",
+   "licenseUrl": "https://transport.data.gouv.fr/"
+  },
+  {
+   "id": "fr-corse-muvitarra",
+   "country": "FR",
+   "name": "Muvitarra (Ajaccio urban buses, CAPA)",
+   "tier": "bus",
+   "keep": [
+    "bus"
+   ],
+   "sources": [
+    {
+     "url": "https://transport.data.gouv.fr/resources/83836/download"
+    }
+   ],
+   "notes": "transport.data.gouv.fr dataset 'Réseau urbain Muvistrada' (information-sur-les-transports-en-commun); not in Transitous as of 2026-10-27. 13 routes.",
+   "approxMB": 1,
+   "license": "lov2",
+   "licenseUrl": "https://transport.data.gouv.fr/datasets/information-sur-les-transports-en-commun"
+  },
+  {
    "id": "fr-transilien",
    "country": "FR",
    "name": "SNCF Transilien / RER (IdF suburban rail)",
@@ -1219,7 +1257,7 @@
   {
    "id": "es-regional-bus",
    "country": "ES",
-   "name": "Spanish regional bus (Xunta Galicia, Catalunya interurbà, C. Valenciana, Madrid CRTM interurbanos, Andalucía, Asturias, Balearic islands...)",
+   "name": "Spanish regional bus (Xunta Galicia, Catalunya interurbà, C. Valenciana, Madrid CRTM interurbanos, Andalucía, Asturias, Balearic islands, Aragón, La Mancha...)",
    "tier": "bus",
    "keep": [
     "coach",
@@ -1227,7 +1265,7 @@
    ],
    "sources": [
     {
-     "transitousMatch": "^es_(Autobuses-Xunta-de-Galicia|Autobús-interurbano-de-Cataluña|Autobús-interurbano-Comunidad-Valenciana|Generalitat-Valenciana-\\(Intercity-bus\\)|Autobús-interurbano-de-Navarra|Autobús-Principado-de-Asturias|Transporte-metropolitano-Andalucía|Sarfa-autobuses|Bizkaibus|Lurraldebus-.*|La-Veloz-SA|Autobuses-Sarbus|Autobús-en-Cantabria|Consorcio-Regional-de-Transportes-de-Madrid-CRTM-I|Transporte-público-de-la-Isla-de-Mallorca|Autobús-de-la-isla-de-Menorca|Autobús-de-la-isla-de-Ibiza|Trasnportes-Insular-de-La-Palma-\\(TILP\\)|Unauto|Alavabus)\\.gtfs\\.zip$"
+     "transitousMatch": "^es_(Autobuses-Xunta-de-Galicia|Autobús-interurbano-de-Cataluña|Autobús-interurbano-Comunidad-Valenciana|Generalitat-Valenciana-\\(Intercity-bus\\)|Autobús-interurbano-de-Navarra|Autobús-Principado-de-Asturias|Transporte-metropolitano-Andalucía|Sarfa-autobuses|Bizkaibus|Lurraldebus-.*|La-Veloz-SA|Autobuses-Sarbus|Autobús-en-Cantabria|Consorcio-Regional-de-Transportes-de-Madrid-CRTM-I|Transporte-público-de-la-Isla-de-Mallorca|Autobús-de-la-isla-de-Menorca|Autobús-de-la-isla-de-Ibiza|Autobuses-del-Gobierno-de-Aragón|Autobuses-Samar|Trasnportes-Insular-de-La-Palma-\\(TILP\\)|Unauto|Alavabus)\\.gtfs\\.zip$"
     }
    ],
    "notes": "Several files; no national aggregate (NAP has a bus-concessions dataset VAC-*).",
