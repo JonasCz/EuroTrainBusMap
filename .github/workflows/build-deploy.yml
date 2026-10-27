@@ -1,6 +1,7 @@
 name: Build data & deploy
 
-# dispatch (the only trigger): choose subset (full/core), whether to rebuild data and whether to refresh the assets;
+# schedule: weekly full data refresh (Sundays 03:43 UTC, off the usual GitHub load peaks)
+# dispatch:  choose subset (full/core), whether to rebuild data and whether to refresh the assets;
 #            a run without rebuild reuses the cached data (rebuilding it only if the ETL/schema code changed since it
 #            was built, or the assets were refreshed)
 #
@@ -13,6 +14,8 @@ name: Build data & deploy
 # again). No loops: this workflow only *calls* refresh-assets, and refresh-assets dispatches this workflow only when
 # run by hand with `build` (with refresh_assets=never).
 on:
+  schedule:
+    - cron: "43 3 * * 0"
   workflow_dispatch:
     inputs:
       subset:
