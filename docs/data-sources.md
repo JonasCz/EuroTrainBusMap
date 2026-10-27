@@ -77,6 +77,8 @@ Sahara. Feeds checked (downloaded, calendars read):
 | Metrotenerife (tram) | Transitous `es_Metrotenerife` = operator URL | ended 2025-07-15 | local layer, **stale** (lines from its last weeks, labelled out of date) |
 | Casablanca tramway T1–T4, busway BW1/BW2 | MDB `mdb-3462` (unofficial) | feed_info 2026-05-31 – 06-30, only Sunday / holiday dates after that | local layer `u-ma-casatramway`, **stale** |
 | TILP (La Palma buses) | Transitous `es_Trasnportes-Insular-de-La-Palma-(TILP)` | ended 2025-12-25 | `es-regional-bus` (regex), **stale** (last weeks repeated, labelled) |
+| Autobús de la isla de Menorca (CIME / TIB, CC-BY-4.0) | Transitous `es_Autobús-de-la-isla-de-Menorca` (NAP 1363); checked 2026-10-27, valid to 2026-12-05 | `es-regional-bus` (regex) |
+| Autobús de la isla de Ibiza (Consell d'Eivissa, CC-BY-4.0) | Transitous `es_Autobús-de-la-isla-de-Ibiza` (NAP 1273); checked 2026-10-27 | `es-regional-bus` (regex) |
 | ONCF (other unofficial feed) | MDB `mdb-3049` | ended 2025-12-31, 60 trips | no (stale and superseded by `ma-oncf`) |
 | Casabus (Casablanca city bus) | MDB `mdb-3463` | ended 2026-06-29 | local layer `u-ma-casabus`, **stale** |
 | Vitalis Tétouan city bus | MDB `mdb-1816` | ended 2021-11-30 | no (older than the 2-year cap on stale data) |

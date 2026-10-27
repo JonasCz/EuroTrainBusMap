@@ -1219,7 +1219,7 @@
   {
    "id": "es-regional-bus",
    "country": "ES",
-   "name": "Spanish regional bus (Xunta Galicia, Catalunya interurbà, C. Valenciana, Madrid CRTM interurbanos, Andalucía, Asturias...)",
+   "name": "Spanish regional bus (Xunta Galicia, Catalunya interurbà, C. Valenciana, Madrid CRTM interurbanos, Andalucía, Asturias, Balearic islands...)",
    "tier": "bus",
    "keep": [
     "coach",
@@ -1227,7 +1227,7 @@
    ],
    "sources": [
     {
-     "transitousMatch": "^es_(Autobuses-Xunta-de-Galicia|Autobús-interurbano-de-Cataluña|Autobús-interurbano-Comunidad-Valenciana|Generalitat-Valenciana-\\(Intercity-bus\\)|Autobús-interurbano-de-Navarra|Autobús-Principado-de-Asturias|Transporte-metropolitano-Andalucía|Sarfa-autobuses|Bizkaibus|Lurraldebus-.*|La-Veloz-SA|Autobuses-Sarbus|Autobús-en-Cantabria|Consorcio-Regional-de-Transportes-de-Madrid-CRTM-I|Transporte-público-de-la-Isla-de-Mallorca|Trasnportes-Insular-de-La-Palma-\\(TILP\\)|Unauto|Alavabus)\\.gtfs\\.zip$"
+     "transitousMatch": "^es_(Autobuses-Xunta-de-Galicia|Autobús-interurbano-de-Cataluña|Autobús-interurbano-Comunidad-Valenciana|Generalitat-Valenciana-\\(Intercity-bus\\)|Autobús-interurbano-de-Navarra|Autobús-Principado-de-Asturias|Transporte-metropolitano-Andalucía|Sarfa-autobuses|Bizkaibus|Lurraldebus-.*|La-Veloz-SA|Autobuses-Sarbus|Autobús-en-Cantabria|Consorcio-Regional-de-Transportes-de-Madrid-CRTM-I|Transporte-público-de-la-Isla-de-Mallorca|Autobús-de-la-isla-de-Menorca|Autobús-de-la-isla-de-Ibiza|Trasnportes-Insular-de-La-Palma-\\(TILP\\)|Unauto|Alavabus)\\.gtfs\\.zip$"
     }
    ],
    "notes": "Several files; no national aggregate (NAP has a bus-concessions dataset VAC-*).",
