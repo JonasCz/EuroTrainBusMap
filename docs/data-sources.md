@@ -158,6 +158,7 @@ Found by researching per region which operators exist and whether GTFS is alread
 | Region | Source | Feed |
 | --- | --- | --- |
 | Corsica | Transitous `fr_via-bastia-1`, `fr_gtfs-transport-via-strada-les-cars-corse-du-sud` (Collectivité de Corse interurban network), `fr_gtfs-transport-horaires-chemins-de-fer-corse-1` (CFC rail, short snapshots, usually stale), A Balanina / A Berlina / A Citadina (Balagne, Porto-Vecchio), `fr_u-vagabondu` (etalab-2.0) | `fr-corse` (regex) |
+| Thessaloniki (urban) | Transitous `gr_Thessaloniki-OSETH` (data.gov.gr, CC-BY-4.0, 385 routes) | `u-gr-thessaloniki` (urban-feeds.json) |
 | Corsica, Ajaccio | Muvitarra, transport.data.gouv.fr resource 83836 (not in Transitous) | `fr-corse-muvitarra` |
 | Aragón (Teruel, S Zaragoza) | Transitous `es_Autobuses-del-Gobierno-de-Aragón` (NAP 2554, calendar to 2026-11-26) | `es-regional-bus` (regex) |
 | La Mancha, Alcarria | Transitous `es_Autobuses-Samar` (NAP 1165; overlaps `La-Veloz-SA`, dedup handles it) | `es-regional-bus` (regex) |

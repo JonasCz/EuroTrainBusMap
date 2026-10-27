@@ -491,6 +491,16 @@
    ]
   },
   {
+   "id": "u-gr-thessaloniki",
+   "country": "GR",
+   "name": "Thessaloniki-OSETH",
+   "sources": [
+    {
+     "transitous": "gr_Thessaloniki-OSETH.gtfs.zip"
+    }
+   ]
+  },
+  {
    "id": "u-gr-athens-bus",
    "country": "GR",
    "name": "Athens-Bus",
