@@ -29,7 +29,7 @@ missing, the corridors become unsnapped curves and the log shows a `WARNING`.
 
 You normally do **not** run anything by hand. The R2 bucket carries `version.json`, the stamp of the code that built
 its assets (`packages/etl/src/assets-version.ts`: `ASSETS_VERSION`, `COVERAGE_ID` + boxes, the asset keys incl. their
-format versions). Every **build-deploy** run (push to main, weekly, dispatch) first compares it with the code
+format versions). Every **build-deploy** run (weekly, dispatch) first compares it with the code
 (job `assets`); when it is missing or different, job `refresh` runs `refresh-assets.yml` as a reusable workflow with
 all parts, and job `build-deploy` then rebuilds the data with the new assets and deploys.
 
@@ -39,7 +39,8 @@ So, after changing graph costs, road classes, the extract or the binary layout:
 2. update `ASSETS_SOURCE_HASH` there (`pnpm --filter @etbm/etl run assets-version -- --hash`): `test/assets-version.test.ts`
    fails whenever a file of `ASSET_SOURCES` (geometry graph / overture / railbin / refresh-rail, basemap, geonames,
    coverage, assets.ts) changes, to make you decide whether the assets change;
-3. push to main: the next build-deploy refreshes R2 (~2 h from scratch, less with cached Overture extracts) and rebuilds.
+3. push to main: the next build-deploy run (Sundays, or Actions → "Build data & deploy" → Run workflow) refreshes R2
+   (~2 h from scratch, less with cached Overture extracts) and rebuilds.
 
 By hand (still possible): Actions → "Refresh build assets (R2)" → Run workflow; it also runs monthly on the 4th.
 - `only` takes a comma-separated subset of `geonames,basemap,tiles,rail,urbanrail,road`. Use `rail,road` to rebuild only the graphs.

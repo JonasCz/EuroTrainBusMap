@@ -8,8 +8,8 @@ name: Build data & deploy
 # Self-healing assets: job `assets` compares the R2 bucket's version.json (written by refresh-assets as its last step)
 # with the stamp of this commit's code (packages/etl/src/assets-version.ts: ASSETS_VERSION, coverage, asset keys).
 # When it is missing or different, job `refresh` runs refresh-assets.yml as a reusable workflow (all parts, ~2 h from
-# scratch, less with cached Overture extracts) before job `build-deploy`, which then rebuilds the data. So pushing a
-# change that bumps ASSETS_VERSION or the coverage – or the first run after this check landed – refreshes R2 by itself;
+# scratch, less with cached Overture extracts) before job `build-deploy`, which then rebuilds the data. So the first
+# run after a change that bumps ASSETS_VERSION or the coverage – or after this check landed – refreshes R2 by itself;
 # nobody needs to run refresh-assets by hand. A failed refresh stops the run (nothing deployed; the next run tries
 # again). No loops: this workflow only *calls* refresh-assets, and refresh-assets dispatches this workflow only when
 # run by hand with `build` (with refresh_assets=never).
@@ -144,6 +144,9 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # one wrangler for the R2 calls and the deploy below (npx would resolve and set up the package on every call)
+      - name: Install wrangler
+        run: npm install -g --no-fund --no-audit wrangler@4 && wrangler --version
 
       - name: Restore built data
         uses: actions/cache/restore@v4
@@ -167,7 +170,7 @@ jobs:
             mkdir -p work/r2
             stamp=""
             for i in 1 2 3; do
-              if npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/version.json" --file work/r2/version.json --remote > /dev/null 2>&1; then stamp=$(sha256sum work/r2/version.json | cut -c1-16); break; fi
+              if wrangler r2 object get "$ASSETS_BUCKET/version.json" --file work/r2/version.json --remote > /dev/null 2>&1; then stamp=$(sha256sum work/r2/version.json | cut -c1-16); break; fi
               sleep $((i * 10))
             done
           fi
@@ -195,11 +198,16 @@ jobs:
           echo "cached data: $have, rebuild: $rebuild, subset: $subset"
           [ "$have" = true ] && cat work/out/manifest.json && echo || true
 
+      # work/ peaks at 14.5 GB, the site and the data cache's archive add a few GB. The hosted runners have a 145 GB disk
+      # (102 GB free after this step's deletion, Oct 2026); the deletion takes ~2 min, so it runs only when space is short.
       - name: Free disk space
         if: steps.mode.outputs.rebuild == 'true'
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
           df -h /
+          if [ "$(df --output=avail -BG / | tail -1 | tr -dc 0-9)" -lt 40 ]; then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+            df -h /
+          fi
 
       # Slow-changing inputs from R2 (built by refresh-assets.yml), exactly the keys of the bucket's manifest.json:
       # GeoNames places + villages, basemap borders / labels / tiles, rail, urban rail and road graphs. Missing GeoNames
@@ -213,14 +221,16 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           mkdir -p work/assets
-          get() { for i in 1 2 3; do npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/$1" --file "$2" --remote && return 0; rm -f "$2"; sleep $((i * 10)); done; return 1; }
+          get() { for i in 1 2 3; do wrangler r2 object get "$ASSETS_BUCKET/$1" --file "$2" --remote && return 0; rm -f "$2"; sleep $((i * 10)); done; return 1; }
           if ! get manifest.json work/assets/manifest.json; then
             echo "::warning::no asset manifest in R2 – the ETL will fetch inputs from source"; exit 0
           fi
+          # all at once (a handful of files, the graphs and the tiles tar take a few seconds each)
           for key in $(node -e 'console.log(require(process.argv[1]).files.join("\n"))' "$PWD/work/assets/manifest.json"); do
             mkdir -p "work/assets/$(dirname "$key")"
-            get "$key" "work/assets/$key" || echo "::warning::asset $key missing"
+            { get "$key" "work/assets/$key" || echo "::warning::asset $key missing"; } &
           done
+          wait
           ls -laR work/assets
 
       # Content hashes of the pages the feed generators parse (packages/etl/src/generators/state.ts): one small JSON
@@ -234,7 +244,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           rm -f work/generator-state.json
-          npx -y wrangler@4 r2 object get "$ASSETS_BUCKET/generator-state.json" --file work/generator-state.json --remote || { rm -f work/generator-state.json; echo "::notice::no generator state in R2 yet"; }
+          wrangler r2 object get "$ASSETS_BUCKET/generator-state.json" --file work/generator-state.json --remote || { rm -f work/generator-state.json; echo "::notice::no generator state in R2 yet"; }
 
       - name: Build data
         if: steps.mode.outputs.rebuild == 'true'
@@ -259,7 +269,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx -y wrangler@4 r2 object put "$ASSETS_BUCKET/generator-state.json" --file work/generator-state.json --content-type application/json --remote
+        run: wrangler r2 object put "$ASSETS_BUCKET/generator-state.json" --file work/generator-state.json --content-type application/json --remote
 
       - name: Build report
         if: always() && steps.mode.outputs.rebuild == 'true'
@@ -292,7 +302,7 @@ jobs:
         run: |
           pnpm --filter @etbm/etl run run-summary -- --report "$PWD/work/build-report.json" --log "$PWD/work/build.log" --out "$PWD/work/run-summary" || true
           [ -f work/build.log ] && tail -c 8000000 work/build.log | gzip -9 > work/build.log.gz
-          put() { [ -f "$2" ] && npx -y wrangler@4 r2 object put "$ASSETS_BUCKET/logs/latest/$1" --file "$2" --content-type "$3" --remote; }
+          put() { [ -f "$2" ] && wrangler r2 object put "$ASSETS_BUCKET/logs/latest/$1" --file "$2" --content-type "$3" --remote; }
           put summary.txt work/run-summary.txt text/plain
           put summary.json work/run-summary.json application/json
           put build.log.gz work/build.log.gz application/gzip
@@ -332,4 +342,4 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx -y wrangler@4 deploy
+        run: wrangler deploy

@@ -38,7 +38,7 @@ Are the R2 assets the ones this code expects? `npx -y wrangler@4 r2 object get "
 then `pnpm --filter @etbm/etl run assets-version -- --check $PWD/work/assets/version.json` ("current" / "STALE: reason"). CI does
 this check in every build-deploy run and refreshes R2 by itself when it fails (job `assets` → reusable refresh-assets → build;
 README "Weekly refresh & deployment"), so a local build only sees stale assets between a push that bumps `ASSETS_VERSION`
-(`packages/etl/src/assets-version.ts`) and the end of that run. Never upload assets to R2 by hand from a local build: a
+(`packages/etl/src/assets-version.ts`) and the end of the next build-deploy run (weekly or by hand). Never upload assets to R2 by hand from a local build: a
 `version.json` that claims a stamp the bucket's files do not have would stop CI from healing it.
 
 ## 2. Full data build (~22 min wall clock on 4 cores)
@@ -132,7 +132,7 @@ npx -y wrangler@4 deploy                       # REAL deploy to the live site; o
 `trains.jonas.bike`; the workers.dev address is disabled (`workers_dev: false`).
 Live URL: **https://trains.jonas.bike** (`https://trains.jonas.bike/data/manifest.json` shows
 which build is live). A deploy replaces the live site for everybody, and the weekly workflow will
-overwrite it again on its next run (Mondays 03:17 UTC) or on the next push to main.
+overwrite it again on its next run (Sundays 03:43 UTC, or when someone runs it by hand).
 
 ## 5. Preview locally
 

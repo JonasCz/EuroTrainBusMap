@@ -509,20 +509,20 @@ Tests: `pnpm test`, types: `pnpm typecheck`.
      format versions). Missing or different → refresh needed. R2 unreadable → warning, no refresh.
   2. `refresh` – only then: runs `refresh-assets.yml` as a reusable workflow with all parts (see below; ~2 h from
      scratch, less with cached Overture extracts). If it fails, the run stops and nothing is deployed.
-  3. `build-deploy` – *schedule* (Mondays 03:17 UTC) and *manual dispatch*: download assets from R2, run the full
+  3. `build-deploy` – *schedule* (Sundays 03:43 UTC) and *manual dispatch*: download assets from R2, run the full
      ETL, cache the output (`actions/cache`, keyed by a hash of the ETL/schema sources), build the web app, assemble
      `dist/site` (web + `data/` under `BASE_PATH`, repo variable, default `/`) and `wrangler deploy` (static-assets
      Worker without a script, `wrangler.jsonc`, live at https://trains.jonas.bike; the workers.dev address is
-     disabled). *push*: reuses the cached data (web-only rebuild + redeploy, a few minutes); data is
-     rebuilt only when no compatible cached data exists (ETL/schema code changed), when the assets were just refreshed,
+     disabled). Pushes do not run it. A dispatch with `rebuild` off reuses the cached data (web-only rebuild + redeploy,
+     a few minutes); data is rebuilt only when no compatible cached data exists (ETL/schema code changed), when the assets were just refreshed,
      or when the cached data was built with other assets (`.assets-stamp` in the cached output vs the hash of
      `version.json`).
   - Dispatch inputs: `subset` (full/core), `rebuild`, `refresh_assets` (auto / always / never).
   - A keepalive step re-enables the workflow, since GitHub disables schedules in repositories
     without activity for 60 days.
-  - So the assets heal themselves: a push that bumps `ASSETS_VERSION`, changes the coverage or an asset format – or the
-    first run after the version check landed (no `version.json` yet) – refreshes R2 and rebuilds the data in the same
-    run. Nobody has to run refresh-assets by hand. Bump `ASSETS_VERSION` whenever what an asset contains changes;
+  - So the assets heal themselves: the first run after a push that bumps `ASSETS_VERSION`, changes the coverage or an
+    asset format – or the first run after the version check landed (no `version.json` yet) – refreshes R2 and rebuilds
+    the data in the same run. Nobody has to run refresh-assets by hand. Bump `ASSETS_VERSION` whenever what an asset contains changes;
     `test/assets-version.test.ts` fails when a file that defines the assets (`ASSET_SOURCES`) changes until
     `ASSETS_SOURCE_HASH` is updated, so that is never forgotten silently.
 - **`.github/workflows/refresh-assets.yml`** (called by build-deploy when needed, monthly, manual with inputs `only`
@@ -592,7 +592,7 @@ Secrets: `CLOUDFLARE_API_TOKEN` (Workers deploy + R2) and `CLOUDFLARE_ACCOUNT_ID
 
 Designed to run for free:
 
-- **GitHub Actions** – free for public repositories (weekly ~75 min job, monthly asset refresh, plus a refresh when the
+- **GitHub Actions** – free for public repositories (weekly ~50 min job, monthly asset refresh, plus a refresh when the
   asset code changes).
 - **Cloudflare Workers static assets** – requests to static assets are free; ~2.7k files ≈ 2 GB per
   build (limits: 25 MiB per file, 20k files per deployment on the free plan).
