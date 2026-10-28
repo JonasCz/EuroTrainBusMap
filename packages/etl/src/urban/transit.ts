@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { Cat, TRANSIT_BANDS, TRANSIT_DAYS, TRANSIT_MAX_M, TRANSIT_MAX_MIN, TRANSIT_VALUES, transitUseful, walkMinutes, type TransitPair } from "@etbm/shared";
 import { Db } from "../db.ts";
-import { downloadWithFallback } from "../download.ts";
+import { downloadWithFallback, mapLimit } from "../download.ts";
 import { STALE_MAX_DAYS, zipState } from "../gtfs/validity.ts";
 import { resolveFeeds, type FeedDef, type FeedsConfig, type ResolvedFeed } from "../feeds.ts";
 import { loadPlaces } from "../geonames.ts";
@@ -521,46 +521,58 @@ export async function gatherTransitFeeds(o: GatherTransitOptions): Promise<Trans
   const out: TransitFeed[] = [];
   const todo: { rf: ResolvedFeed; local: boolean }[] = [...base.map((rf) => ({ rf, local: false })), ...extra.map((rf) => ({ rf, local: true }))];
   let extracted = 0;
-  for (const { rf, local } of todo) {
-    const zip = join(cacheDir, "feeds", rf.key + ".zip");
-    if (!existsSync(zip)) {
-      if (!local || !o.download) continue;
-      try {
-        await downloadWithFallback(rf.urls, zip, o.cfg.userAgent);
-      } catch (e) {
-        warn(`transit feed ${rf.key}: download failed: ${(e as Error).message}`);
-        continue;
-      }
+  // Local feeds not on disk yet (every CI build) are downloaded 4 at a time from the start, while the intercity feeds
+  // (downloaded by the main stage) are extracted, instead of one by one when the loop reaches them.
+  const missing = o.download ? extra.filter((rf) => !existsSync(join(cacheDir, "feeds", rf.key + ".zip"))) : [];
+  const settle = new Map<string, (ok: boolean) => void>();
+  const downloaded = new Map(missing.map((rf) => [rf.key, new Promise<boolean>((r) => settle.set(rf.key, r))]));
+  const pool = mapLimit(missing, 4, async (rf) => {
+    try {
+      await downloadWithFallback(rf.urls, join(cacheDir, "feeds", rf.key + ".zip"), o.cfg.userAgent);
+      settle.get(rf.key)!(true);
+    } catch (e) {
+      warn(`transit feed ${rf.key}: download failed: ${(e as Error).message}`);
+      settle.get(rf.key)!(false);
     }
-    // a feed whose service ended more than staleMaxDays ago is left out (gtfs/validity.ts; warned by the main stage and
-    // the local layer); a stale one within the cap is read for its last whole week (extractTransitFeed)
-    if ((await zipState(zip, o.startDate, o.staleMaxDays ?? STALE_MAX_DAYS)).kind === "too-old") continue;
-    const st = await stat(zip);
-    const cacheFile = join(outDir, `${rf.key}.json.gz`);
-    const stamp = `${st.size}:${TRANSIT_EXTRACT_VERSION}:${monday}:${TRANSIT_CITY_MIN_POP}`;
-    let feed: TransitFeed | null = null;
-    let cached = false;
-    if (existsSync(cacheFile)) {
-      try {
-        const j = JSON.parse(gunzipSync(await readFile(cacheFile)).toString("utf8")) as { stamp?: string; feed: TransitFeed | null };
-        if (j.stamp === stamp) {
-          feed = j.feed;
-          cached = true;
+  });
+  try {
+    for (const { rf, local } of todo) {
+      const zip = join(cacheDir, "feeds", rf.key + ".zip");
+      if (downloaded.has(rf.key) && !(await downloaded.get(rf.key))) continue;
+      if (!existsSync(zip)) continue;
+      // a feed whose service ended more than staleMaxDays ago is left out (gtfs/validity.ts; warned by the main stage and
+      // the local layer); a stale one within the cap is read for its last whole week (extractTransitFeed)
+      if ((await zipState(zip, o.startDate, o.staleMaxDays ?? STALE_MAX_DAYS)).kind === "too-old") continue;
+      const st = await stat(zip);
+      const cacheFile = join(outDir, `${rf.key}.json.gz`);
+      const stamp = `${st.size}:${TRANSIT_EXTRACT_VERSION}:${monday}:${TRANSIT_CITY_MIN_POP}`;
+      let feed: TransitFeed | null = null;
+      let cached = false;
+      if (existsSync(cacheFile)) {
+        try {
+          const j = JSON.parse(gunzipSync(await readFile(cacheFile)).toString("utf8")) as { stamp?: string; feed: TransitFeed | null };
+          if (j.stamp === stamp) {
+            feed = j.feed;
+            cached = true;
+          }
+        } catch {
+          /* re-extract */
         }
-      } catch {
-        /* re-extract */
       }
+      if (!cached) {
+        db ??= await Db.open(":memory:", { threads: 4, memoryLimit: process.env.ETL_DUCKDB_MEMORY ?? "4GB", tempDir: join(tmpDir, "duckdb-transit") });
+        const t0 = Date.now();
+        feed = await extractTransitFeed(db, rf.key, zip, { monday, local, cityIdx, tmpDir });
+        await writeFile(cacheFile, gzipSync(JSON.stringify({ stamp, feed })));
+        extracted++;
+        if (feed)
+          log(`transit ${rf.key}: ${feed.patterns.length} patterns, ${feed.stats.trips} trips (${feed.stats.freqTrips} from frequencies), ${feed.stops.length} stops in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+      }
+      if (feed?.patterns.length) out.push(feed);
     }
-    if (!cached) {
-      db ??= await Db.open(":memory:", { threads: 4, memoryLimit: process.env.ETL_DUCKDB_MEMORY ?? "4GB", tempDir: join(tmpDir, "duckdb-transit") });
-      const t0 = Date.now();
-      feed = await extractTransitFeed(db, rf.key, zip, { monday, local, cityIdx, tmpDir });
-      await writeFile(cacheFile, gzipSync(JSON.stringify({ stamp, feed })));
-      extracted++;
-      if (feed)
-        log(`transit ${rf.key}: ${feed.patterns.length} patterns, ${feed.stats.trips} trips (${feed.stats.freqTrips} from frequencies), ${feed.stops.length} stops in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-    }
-    if (feed?.patterns.length) out.push(feed);
+  } finally {
+    // no download outlives the stage (the local layer would start its own of the same file)
+    await pool;
   }
   db?.close();
   log(`transit: ${out.length} feeds with rail-bound local transport (${extracted} extracted, week of ${monday})`);
