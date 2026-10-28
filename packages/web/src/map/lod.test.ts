@@ -1,6 +1,6 @@
 import { Cat } from "@etbm/shared";
 import { describe, expect, it } from "vitest";
-import { LEVELS, catWidth, cityTierZoom, corridorMinZoom, isLongHop, levelIndex, stationLevel } from "./lod.ts";
+import { LEVELS, catWidth, cityTierZoom, corridorMinZoom, isLongHop, levelIndex, SMALL_CITY_STATIONS, stationLevel } from "./lod.ts";
 import { shortStationName } from "./features.ts";
 
 describe("lod", () => {
@@ -30,6 +30,10 @@ describe("lod", () => {
     expect(stationLevel(Cat.LongDistance, 3)).toBe(0);
     expect(stationLevel(Cat.Regional, 10)).toBe(1);
     expect(stationLevel(Cat.Bus, 30)).toBe(3);
+    // a small town shows all its stops when it breaks out into stations
+    expect(stationLevel(Cat.Bus, 1, 2)).toBe(0);
+    expect(stationLevel(Cat.Bus, 5, SMALL_CITY_STATIONS)).toBe(0);
+    expect(stationLevel(Cat.Bus, 5, SMALL_CITY_STATIONS + 1)).toBe(2);
   });
   it("widths grow with frequency; buses thinner", () => {
     expect(catWidth(Cat.Regional, 100)).toBeGreaterThan(catWidth(Cat.Regional, 5));

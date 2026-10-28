@@ -104,7 +104,9 @@ Rules that keep generated data honest:
   and the routes / trains calling there are left out of the feed; the rest is built, the build never fails for it
   (only if nothing is left does the source fail with `NeedsGeocodingError`). `pnpm --filter @etbm/etl run geocode -- <id>`
   looks them up on OSM (restricted to the country and to the area of the stops already known, re-searched near the
-  neighbouring stops when the leg speeds are implausible), writes them as unchecked entries (`checked: null`; the
+  neighbouring stops when the leg speeds are implausible), puts each one on the stop of the same place in another feed
+  when there is one nearby (`src/generators/refstops.ts`, read from a local build's `work/etl.duckdb`: one station on the
+  map instead of two a few hundred metres apart), writes them as unchecked entries (`checked: null`; the
   build leaves those routes out as well) and prints MUST FIX (an agent sets the position by hand) and QUICK CHECK
   lists; rerun until MUST FIX is empty, then `geocode -- <id> --accept` marks them reviewed; commit the file. Stops that disappear from the timetable need nothing
   (their entries stay unused). A place that can never be located gets `"skip": true` (left out, reviewed).

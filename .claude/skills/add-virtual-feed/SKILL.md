@@ -112,10 +112,20 @@ pnpm run geocode -- <id> --accept   # after review: marks unchecked entries as c
 
 (The weekly build does none of this itself: it leaves the routes out and tells you in the run summary, see "Run logs".)
 
+The other feeds' stops are read from the DuckDB database of a local data build (`work/etl.duckdb`, read-only;
+`--stops-db <file>` for another one). Build the data first (`local-build-deploy` skill; download+load is enough, stop the
+build after `=== done: download+load` – a running build locks the file). Without a database the tool prints a WARNING
+and places stops on the OSM hits only; then run it again once a database exists (delete the unchecked entries first).
+
 What `geocode` does: runs the generator, takes the missing stops, searches Nominatim (1 request / 2 s, restricted to
 the file's `country` and to the box of the stops already known), prefers place nodes (town/village) over
 municipality-boundary centroids, writes `checked: null, source "osm-auto"` entries with a note saying why it is
-unsure, re-runs the generator with unchecked entries allowed, and re-searches a stop near its neighbours (±0.3°) when
+unsure, puts each hit on the existing stop of the same place when another (real GTFS) feed has one nearby
+(`src/generators/refstops.ts`: same name within 3 km – bus stop before rail station –, the bus station within 2 km, or
+the busiest stop whose name starts with the place name within 1.5 km; only railway stations for a rail feed and only
+bus stops for a bus feed, from the feed's `keep`; `source "stop-auto"`, the note names the stop and
+feed; without this the map shows the generated "Mazarron" as a second station 1 km from the regional feed's
+"Mazarrón"), re-runs the generator with unchecked entries allowed, and re-searches a stop near its neighbours (±0.3°) when
 its legs are implausible. The output has two lists:
 
 - **MUST FIX** – stops NOT FOUND on OSM, positions OUTSIDE the known area, "name differs", several similar hits,

@@ -11,6 +11,8 @@ export {
   corridorMinZoom,
   cityTierZoom,
   stationLevel,
+  isMajorStation,
+  SMALL_CITY_STATIONS,
   catWidth,
   haversineKm,
 } from "@etbm/shared";

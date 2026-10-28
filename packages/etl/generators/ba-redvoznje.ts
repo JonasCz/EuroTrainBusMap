@@ -500,7 +500,8 @@ export function buildFeed(o: BuildInput): GtfsFeed {
   }
   const { lines, merged } = mergeDuplicates(raw);
   const minLines = o.minLines ?? MIN_LINES;
-  if (lines.length < minLines) fail(`only ${lines.length} lines (expected at least ${minLines}): API answer incomplete or changed`);
+  // lines left out for a place that still needs geocoding count: they are in the answer (a fresh geocode file has none)
+  if (lines.length + stats.unlocated < minLines) fail(`only ${lines.length + stats.unlocated} lines (expected at least ${minLines}): API answer incomplete or changed`);
 
   // the build window, or for a stale feed the weeks up to its end (projected onto the window by the build)
   const win = until ? staleServiceWindow(until) : serviceWindow(o.startDate, o.days);

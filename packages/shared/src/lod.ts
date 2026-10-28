@@ -58,14 +58,25 @@ export function cityTierZoom(importance: number): number {
 }
 
 /**
+ * A city with at most this many stations shows all of them as soon as it breaks out into its stations: a town with
+ * two or three stops would otherwise split into one marker plus stops that appear zoom levels later, and a click on
+ * the visible one shows only part of the town's routes.
+ */
+export const SMALL_CITY_STATIONS = 6;
+
+/** Rail stations and the city's busiest stop: drawn with the larger marker and label. */
+export function isMajorStation(cats: number, rank: number): boolean {
+  return rank === 0 || ((cats & Cat.LongDistance) !== 0 && rank < 8);
+}
+
+/**
  * Station detail bucket: rail stations and the city's busiest stops first,
  * minor bus stops only when zoomed far in. `rank` = position in the city's
- * station list (ETL orders by service weight).
+ * station list (ETL orders by service weight), `count` = number of stations of the city.
  */
-export function stationLevel(cats: number, rank: number): number {
-  const ld = (cats & Cat.LongDistance) !== 0;
+export function stationLevel(cats: number, rank: number, count = Infinity): number {
   const rail = (cats & (Cat.LongDistance | Cat.Regional)) !== 0;
-  if (rank === 0 || (ld && rank < 8)) return 0;
+  if (isMajorStation(cats, rank) || count <= SMALL_CITY_STATIONS) return 0;
   if ((rail && rank < 20) || (cats & Cat.Coach && rank < 6)) return 1;
   if (rail || rank < 12) return 2;
   return 3;

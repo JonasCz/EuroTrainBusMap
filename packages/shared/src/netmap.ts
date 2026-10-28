@@ -17,7 +17,7 @@ import type * as GeoJSON from "geojson";
 import { Cat } from "./schema.ts";
 import { monotoneLevels, promoteScenarios } from "./density.ts";
 import { lineGroups, smoothLevels } from "./lines.ts";
-import { LEVELS, LONG_HOP_ZOOM, catWidth, cityTierZoom, corridorMinZoom, haversineKm, isLongHop, levelIndex, stationLevel } from "./lod.ts";
+import { LEVELS, LONG_HOP_ZOOM, catWidth, cityTierZoom, corridorMinZoom, haversineKm, isLongHop, isMajorStation, levelIndex, stationLevel } from "./lod.ts";
 
 export const MAPDATA_VERSION = 6;
 export const CAT_BITS = [Cat.LongDistance, Cat.Regional, Cat.Coach, Cat.Bus] as const;
@@ -427,8 +427,9 @@ function isGenericRemainder(rest: string): boolean {
 }
 
 export function stationProps(c: City, s: Station, rank: number): Record<string, number | string> {
-  const lz = stationLevel(s.cats, rank);
-  return { id: s.id, name: shortStationName(s.name, c.name), city: s.city, lz, rail: s.cats & (Cat.LongDistance | Cat.Regional) ? 1 : 0, major: lz === 0 ? 1 : 0, rank: rank + (lz === 0 ? 0 : 100) };
+  const lz = stationLevel(s.cats, rank, c.stations.length);
+  const major = isMajorStation(s.cats, rank);
+  return { id: s.id, name: shortStationName(s.name, c.name), city: s.city, lz, rail: s.cats & (Cat.LongDistance | Cat.Regional) ? 1 : 0, major: major ? 1 : 0, rank: rank + (major ? 0 : 100) };
 }
 
 // ---------------------------------------------------------------- core / stations files

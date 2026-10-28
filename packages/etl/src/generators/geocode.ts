@@ -1,12 +1,17 @@
 /**
  * Geocode the stops a feed generator reports as missing (NeedsGeocodingError, geocodes.ts) and prepare them for review:
  *
- *   pnpm --filter @etbm/etl run geocode -- <generator id> [--accept] [--start YYYY-MM-DD]
+ *   pnpm --filter @etbm/etl run geocode -- <generator id> [--accept] [--start YYYY-MM-DD] [--stops-db <file> | --no-stops]
  *
  *   1. runs the generator live; it names every stop that is not in data/geocodes/<id>.json (or not reviewed yet);
  *   2. looks each new stop up on OpenStreetMap (Nominatim: one request per 2 s, restricted to the country and to the
  *      area of the stops already in the file), picks the best hit and writes it as an UNCHECKED entry
  *      (`checked: null`, source "osm-auto", the note says why it is unsure); a stop with no hit is listed for manual work;
+ *   2b. puts each hit on the existing stop of the same place when another feed has one nearby (refstops.ts: same name
+ *      within 3 km, the bus station, or the busiest stop named after the place; only railway stations for a rail feed,
+ *      only bus stops for a bus feed; source "stop-auto", the note names the stop and feed). Otherwise the map shows
+ *      the generated stop as a second station next to the real one. The other feeds' stops come from the database of
+ *      a local data build (default work/etl.duckdb, `--stops-db <file>`); without one this step is skipped with a warning;
  *   3. runs the generator again with the unchecked entries allowed, and prints what a reviewer needs: every leg of every
  *      trip that touches a new stop with its distance, minutes and km/h (a wrong position shows as 150 km/h or as a
  *      zigzag), and the entries of the file the timetable no longer uses (removed stops: harmless).
@@ -24,7 +29,8 @@ import { todayIn } from "../core/time.ts";
 import { loadFeedsConfig } from "../feeds.ts";
 import { haversineKm, type GtfsFeed } from "./gtfs.ts";
 import { GEOCODES_DIR, GeocodeStore, NeedsGeocodingError, boundsOf, geoKey, saveGeocodes, type GeocodeEntry, type GeocodeFile, type MissingStop } from "./geocodes.ts";
-import { generatorContext } from "./registry.ts";
+import { generatedSource, generatorContext } from "./registry.ts";
+import { RefStops, snapModeOf } from "./refstops.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -125,6 +131,7 @@ async function main() {
     process.exit(2);
   }
   const accept = argv.includes("--accept");
+  const stopsDb = get("--stops-db") ?? join(here, "../../../../work/etl.duckdb");
   const startDate = get("--start") ?? todayIn("Europe/Berlin", new Date(Date.now() - 86_400_000));
   const cfg = await loadFeedsConfig(join(here, "../../feeds.json"));
   const gen = cfg.generators!.generators.get(id);
@@ -143,6 +150,7 @@ async function main() {
       if (!e.checked) {
         e.checked = today;
         if (e.source === "osm-auto") e.source = "osm";
+        if (e.source === "stop-auto") e.source = "stop";
         delete e.note;
         n++;
       }
@@ -174,18 +182,37 @@ async function main() {
   const fresh = missing.filter((m) => !m.unchecked);
   console.log(missing.length ? `${missing.length} stops need geocoding (${fresh.length} new, ${missing.length - fresh.length} looked up earlier, not reviewed yet)` : "all stops have reviewed coordinates");
 
+  let refs: RefStops | null = null;
+  if (fresh.length && !argv.includes("--no-stops")) {
+    const own = cfg.feeds.filter((f) => generatedSource(f)).map((f) => f.id);
+    const def = cfg.feeds.find((f) => generatedSource(f) === id);
+    const r = await RefStops.open(stopsDb, own, snapModeOf(def?.keep ?? []));
+    if (typeof r === "string") console.log(`WARNING: stops are NOT compared with the other feeds (${r}); build the data locally first (local-build-deploy skill) or pass --stops-db`);
+    else refs = r;
+  }
   const bounds = boundsOf(file);
   const notFound: string[] = [];
   const context = new Map<string, MissingStop>();
   const wait = () => new Promise((ok) => setTimeout(ok, 2000));
-  const toEntry = (m: { name: string; context: string }, best: { hit: Hit; note: string }, outside: boolean): GeocodeEntry => ({
-    name: best.hit.name && geoKey(best.hit.name) === geoKey(m.name) ? best.hit.name : titleCase(m.name),
-    lat: Math.round(Number(best.hit.lat) * 1e4) / 1e4,
-    lon: Math.round(Number(best.hit.lon) * 1e4) / 1e4,
-    source: "osm-auto",
-    checked: null,
-    note: `${outside ? "OUTSIDE the known area; " : ""}${best.note} [${best.hit.osm_type}/${best.hit.osm_id}] (first seen: ${m.context})`,
-  });
+  const toEntry = async (m: { name: string; context: string }, best: { hit: Hit; note: string }, outside: boolean): Promise<GeocodeEntry> => {
+    const e: GeocodeEntry = {
+      name: best.hit.name && geoKey(best.hit.name) === geoKey(m.name) ? best.hit.name : titleCase(m.name),
+      lat: Math.round(Number(best.hit.lat) * 1e4) / 1e4,
+      lon: Math.round(Number(best.hit.lon) * 1e4) / 1e4,
+      source: "osm-auto",
+      checked: null,
+      note: `${outside ? "OUTSIDE the known area; " : ""}${best.note} [${best.hit.osm_type}/${best.hit.osm_id}] (first seen: ${m.context})`,
+    };
+    // the same place in another feed: use that stop's position (one station on the map instead of two)
+    const snap = refs && (await refs.snap(m.name, Number(best.hit.lat), Number(best.hit.lon)));
+    if (snap) {
+      e.lat = Math.round(snap.ref.lat * 1e5) / 1e5;
+      e.lon = Math.round(snap.ref.lon * 1e5) / 1e5;
+      e.source = "stop-auto";
+      e.note = `on stop "${snap.ref.name}" of ${snap.ref.feed} (${snap.why}, ${snap.km.toFixed(1)} km from the OSM hit); ${e.note}`;
+    }
+    return e;
+  };
   for (const m of fresh) {
     let hits = await search(m.name, file.country, bounds, true, cfg.userAgent);
     await wait();
@@ -200,7 +227,7 @@ async function main() {
       notFound.push(m.name);
       continue;
     }
-    const entry = toEntry(m, best, outside);
+    const entry = await toEntry(m, best, outside);
     file.entries[geoKey(m.name)] = entry;
     context.set(geoKey(m.name), m);
     console.log(`  + ${m.name} → ${entry.name} ${entry.lat},${entry.lon}  ${entry.note}`);
@@ -213,7 +240,7 @@ async function main() {
   let second = await run(true);
   for (let round = 0; round < 2 && second.feed; round++) {
     file = await readFileObj();
-    const pending = Object.entries(file.entries).filter(([, e]) => !e.checked && e.source === "osm-auto");
+    const pending = Object.entries(file.entries).filter(([, e]) => !e.checked && (e.source === "osm-auto" || e.source === "stop-auto"));
     const legs = legsOf(second.feed, new Set(pending.map(([, e]) => geoKey(e.name))));
     const bad = pending.filter(([, e]) => legs.some((l) => l.flag && (geoKey(l.from) === geoKey(e.name) || geoKey(l.to) === geoKey(e.name))));
     if (!bad.length) break;
@@ -234,7 +261,7 @@ async function main() {
         e.note = `no OSM hit near its neighbours (${near.map((n) => n.name).join(", ")}) – position is probably wrong, set it by hand; ${e.note ?? ""}`;
         continue;
       }
-      const fixed = toEntry(m, best, false);
+      const fixed = await toEntry(m, best, false);
       fixed.note = `re-searched near ${near.map((n) => n.name).join(", ")}: ${fixed.note}`;
       console.log(`  ~ ${m.name}: ${e.lat},${e.lon} → ${fixed.lat},${fixed.lon}  (${fixed.note})`);
       file.entries[key] = fixed;

@@ -4,7 +4,7 @@
  * only draw what depends on the selection: the highlighted corridors (from the
  * per-shard geo files), the reachable cities and the selected cities' stations.
  */
-import { CAT_BITS, catWidth, cityTierZoom, levelIndex, mergeLines, segId, shortStationName, stationLevel, type City, type Station } from "@etbm/shared";
+import { CAT_BITS, catWidth, cityTierZoom, isMajorStation, levelIndex, mergeLines, segId, shortStationName, stationLevel, type City, type Station } from "@etbm/shared";
 import { Cat } from "@etbm/shared";
 import type * as GeoJSON from "geojson";
 import type { GeoStore } from "../data/load.ts";
@@ -189,11 +189,12 @@ export function stationData(cities: City[], stations: (Station | undefined)[], o
     c.stations.forEach((sid, rank) => {
       const s = stations[sid];
       if (!s) return;
-      const lz = stationLevel(s.cats, rank);
+      const lz = stationLevel(s.cats, rank, c.stations.length);
+      const major = isMajorStation(s.cats, rank);
       features.push({
         type: "Feature",
         id: sid,
-        properties: { id: sid, name: shortStationName(s.name, c.name), city: s.city, lz, cur: sid === current ? 1 : 0, rail: s.cats & (Cat.LongDistance | Cat.Regional) ? 1 : 0, major: lz === 0 ? 1 : 0, rank: rank + (lz === 0 ? 0 : 100) },
+        properties: { id: sid, name: shortStationName(s.name, c.name), city: s.city, lz, cur: sid === current ? 1 : 0, rail: s.cats & (Cat.LongDistance | Cat.Regional) ? 1 : 0, major: major ? 1 : 0, rank: rank + (major ? 0 : 100) },
         geometry: { type: "Point", coordinates: [s.lon, s.lat] },
       });
     });

@@ -206,7 +206,8 @@ const NOTES: { marker: string; text: string; effect: string }[] = [
   { marker: "**", text: "** EL SERVICIO DE LAS 17:00 BAZA-PUEBLA DE DON FADRIQUE SALE DESDE GRANADA A LAS 15:30 DE LUNES A VIERNES LABORABLES", effect: "the 17:00 weekday trip starts in Granada at 15:30 without published times" },
 ];
 /** Castril – Baza: a stop served only on demand, its printed time contradicts its neighbours (14 km in 1 minute). */
-const REQUEST_STOP = { id: "bb-huescar", text: "* HUESCAR SOLO PARA SI LLEVA GENTE" };
+// stops are recognised by the timetable's spelling (geoKey), not by their geocode entry, which may not exist yet
+const REQUEST_STOP = { key: "HUESCAR", text: "* HUESCAR SOLO PARA SI LLEVA GENTE" };
 const EXCEPTION = "*EXCEPCION: EL HORARIO DIARIO 4 DE ROQUETAS DE MAR (16:15) SE REALIZA UNICAMENTE EL DOMINGO DE RESURRECCION Y LOS DOMINGOS DE LA TEMPORADA DE VERANO.";
 const VALID_RE = /NUEVO SERVICIO DIRECTO DIARIO .*? VALIDO DEL (\d\d)\/(\d\d)\/(\d{4}) AL (\d\d)\/(\d\d)\/(\d{4})/;
 
@@ -380,8 +381,8 @@ function readStopsDown(t: RawTable, sink: Sink): Dir[] {
       if (!tm) continue;
       const { stop, day } = stopOf(row[0]!, where, sink);
       if (tm.star) {
-        if (!norm(t.after).includes(EXCEPTION) || stop.id !== "bb-roquetasdemar" || cal.label !== "DIARIO 4") throw new GeneratorError(`${where}: unexplained "*" at ${row[0]}`);
-        sink.warn(`${where0}: ${stop.name} ${row[c]} of "${head[c]}" runs only on Easter Sunday and summer Sundays (no dates published): call left out`);
+        if (!norm(t.after).includes(EXCEPTION) || geoKey(row[0]!) !== "ROQUETASDEMAR" || cal.label !== "DIARIO 4") throw new GeneratorError(`${where}: unexplained "*" at ${row[0]}`);
+        sink.warn(`${where0}: ${stop === NO_STOP ? row[0] : stop.name} ${row[c]} of "${head[c]}" runs only on Easter Sunday and summer Sundays (no dates published): call left out`);
         continue;
       }
       entries.push({ stop, day, t: tm.t });
@@ -436,8 +437,8 @@ function readSideBySide(t: RawTable, k: number, sink: Sink): Dir[] {
         if (!tm) continue;
         if (tm.star) throw new GeneratorError(`${where}: unexplained "*" at ${row[k]}`);
         const { stop, day } = stopOf(row[k]!, where, sink);
-        if (stop.id === REQUEST_STOP.id && norm(t.after).includes(REQUEST_STOP.text)) {
-          if (!requestWarned) sink.warn(`${where0}: ${stop.name} is a request stop ("sólo si lleva gente") with times that contradict its neighbours: left out`);
+        if (geoKey(row[k]!) === REQUEST_STOP.key && norm(t.after).includes(REQUEST_STOP.text)) {
+          if (!requestWarned) sink.warn(`${where0}: ${stop === NO_STOP ? row[k] : stop.name} is a request stop ("sólo si lleva gente") with times that contradict its neighbours: left out`);
           requestWarned = true;
           continue;
         }

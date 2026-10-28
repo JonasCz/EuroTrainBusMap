@@ -357,8 +357,8 @@ describe("ba-redvoznje (redvoznje.ba API)", () => {
     expect(names.get(calls[0]!.stop_id)).toBe("Istočno Sarajevo");
     expect(calls.map((c) => names.get(c.stop_id))).toContain("Kolding");
     expect(calls[calls.length - 1]!.arr).toBeGreaterThan(1440); // the next day
-    // "Bare" (Sarajevo) from the script's table; stations.json positions for the boards
-    expect(feed.stops.find((s) => s.stop_id === "bare")).toMatchObject({ stop_lat: 43.8745, stop_lon: 18.408 });
+    // "Bare" (Sarajevo) from the geocode store (on Centrotrans' stop BARE); stations.json positions for the boards
+    expect(feed.stops.find((s) => s.stop_id === "bare")).toMatchObject({ stop_lat: 43.87912, stop_lon: 18.39922 });
     expect(feed.stops.find((s) => s.stop_id === "sarajevo")).toMatchObject({ stop_name: "Sarajevo", stop_lat: 43.85881, stop_lon: 18.39688 });
     expect(feed.routes.every((r) => r.route_type === 200)).toBe(true);
     expect(feed.info.sourceUrl).toBe("https://redvoznje.ba/");

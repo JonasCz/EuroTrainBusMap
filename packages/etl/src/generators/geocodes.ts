@@ -18,8 +18,9 @@
  *     "entries": { "<KEY>": { "name": "Puerto de Mazarrón", "lat": 37.566, "lon": -1.2663, "source": "osm",
  *                              "checked": "2026-10-26", "approx": false, "aliases": ["PUERTO DE MAZARRON"] } } }
  *   KEY = geoKey(source spelling): upper case, no accents, only letters and digits ("PUERTOMAZARRON").
- *   source: "osm" (Nominatim hit, checked), "osm-auto" (written by the geocode tool), "manual", "estimate"
- *   (approx: true – a village placed from the road order, ±3 km), "api" for coordinates copied from the operator.
+ *   source: "osm" (Nominatim hit, checked), "osm-auto" (written by the geocode tool), "stop" / "stop-auto" (the position
+ *   of the same place's stop in another feed, refstops.ts), "manual", "estimate" (approx: true – a village placed from
+ *   the road order, ±3 km), "api" for coordinates copied from the operator.
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
