@@ -1799,10 +1799,33 @@
    "license": "timetable published by the operator",
    "licenseUrl": "https://booking.ctm.ma/",
    "attribution": "CTM (Compagnie de Transports au Maroc)",
-   "notes": "Generated on every build by packages/etl/generators/ma-ctm.ts from the JSON API of the booking site (no GTFS published): runs found by sweeping hub cities, weekdays from a sampled week. Last in the list on purpose: the generator takes ~25 minutes (1 request/s) and feeds are processed in order.",
+   "notes": "Generated on every build by packages/etl/generators/ma-ctm.ts from the JSON API of the booking site (no GTFS published): runs found by sweeping hub cities, weekdays from a sampled week. At the end of the list on purpose (behind it only ma-nejmechamal, also generated): the generator takes ~25 minutes (1 request/s) and feeds are processed in order.",
    "approxMB": 0.3,
    "options": {
     "allCoach": true
+   }
+  },
+  {
+   "id": "ma-nejmechamal",
+   "country": "MA",
+   "name": "Nejme Chamal (coaches of northern and eastern Morocco: Tanger, Tétouan, Al Hoceima, Nador, Oujda, Fès, Meknès, Casablanca, Errachidia…)",
+   "tier": "core",
+   "keep": [
+    "coach"
+   ],
+   "sources": [
+    {
+     "generated": "ma-nejmechamal"
+    }
+   ],
+   "license": "timetable published by the operator",
+   "licenseUrl": "https://www.nejmechamal.ma/horaire",
+   "attribution": "Nejme Chamal (nejmechamal.ma)",
+   "notes": "Generated on every build by packages/etl/generators/ma-nejmechamal.ts from the timetable search of nejmechamal.ma/horaire (no GTFS published; asked for every pair of the 59 cities of its form, ~3,400 requests, ~17 min). The buses run every day (the site ignores the date). Lowest dedup priority.",
+   "approxMB": 0.1,
+   "options": {
+    "allCoach": true,
+    "priority": -1
    }
   }
  ]

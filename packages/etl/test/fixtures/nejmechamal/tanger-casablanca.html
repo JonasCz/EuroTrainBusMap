@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="fr">
+<body>
+<form method="get">
+      <div class="form-row align-items-end">
+        <div class="col-md-3 col-xs-12">
+          <label class="ft-light">
+            Ville départ
+          </label>
+          <div class="form-group"><select id="villeDepart" name="villeDepart" required="required" class="form-control"><option value="">Ville de départ</option><option value="68">Ahfir</option><option value="41">Al hoceima</option><option value="51">Anif</option><option value="64">Arfoud</option><option value="63">Azrou</option><option value="70">Bab Berred</option><option value="58">Beni mellal</option><option value="46">Berkan</option><option value="31">Boulmane</option><option value="10">Casablanca</option><option value="40">Chefchaouen</option><option value="37">Driouch</option><option value="24">El Borouj</option><option value="28">El Hajeb</option><option value="54">Enjil</option><option value="38">Errachidia</option><option value="48">Erriche</option><option value="44">Errissani</option><option value="11">Fes</option><option value="57">Fnideq</option><option value="33">Guercif</option><option value="30">Guigou</option><option value="29">Ifrane</option><option value="55">Imzouren</option><option value="67">Issaguen</option><option value="59">Kasba tadla</option><option value="56">Kassita</option><option value="21">Kelaa Sraghna</option><option value="20">Kenitra</option><option value="35">Khemisset</option><option value="60">Khenifra</option><option value="25">Ksar El Kebir</option><option value="19">Larache</option><option value="12">Marrakech</option><option value="27">Meknes</option><option value="36">Midar</option><option value="45">Midelt</option><option value="32">Missour</option><option value="62">Mrirt</option><option value="17">Nador</option><option value="43">Ouarzazate</option><option value="65">Oued amlil</option><option value="15">Oujda</option><option value="16">Outat el Haj</option><option value="13">Rabat</option><option value="47">Saka</option><option value="22">Sale</option><option value="53">Sefrou</option><option value="23">Settat</option><option value="61">Sidi kacem</option><option value="26">Souk El Arbaa</option><option value="14" selected="selected">Tanger</option><option value="34">Taourirte</option><option value="42">Targuist</option><option value="18">Taza</option><option value="50">Tazarine</option><option value="39">Tetouan</option><option value="49">Tinghir</option><option value="66">Zaio</option></select></div>
+        </div>
+        <div class="col-md-3 col-xs-12">
+          <label class="ft-light">
+            Ville arrivée
+          </label>
+          <div class="form-group"><select id="villeArrive" name="villeArrive" required="required" class="form-control"><option value="">Votre destination</option><option value="68">Ahfir</option><option value="41">Al hoceima</option><option value="51">Anif</option><option value="64">Arfoud</option><option value="63">Azrou</option><option value="70">Bab Berred</option><option value="58">Beni mellal</option><option value="46">Berkan</option><option value="31">Boulmane</option><option value="10" selected="selected">Casablanca</option><option value="40">Chefchaouen</option><option value="37">Driouch</option><option value="24">El Borouj</option><option value="28">El Hajeb</option><option value="54">Enjil</option><option value="38">Errachidia</option><option value="48">Erriche</option><option value="44">Errissani</option><option value="11">Fes</option><option value="57">Fnideq</option><option value="33">Guercif</option><option value="30">Guigou</option><option value="29">Ifrane</option><option value="55">Imzouren</option><option value="67">Issaguen</option><option value="59">Kasba tadla</option><option value="56">Kassita</option><option value="21">Kelaa Sraghna</option><option value="20">Kenitra</option><option value="35">Khemisset</option><option value="60">Khenifra</option><option value="25">Ksar El Kebir</option><option value="19">Larache</option><option value="12">Marrakech</option><option value="27">Meknes</option><option value="36">Midar</option><option value="45">Midelt</option><option value="32">Missour</option><option value="62">Mrirt</option><option value="17">Nador</option><option value="43">Ouarzazate</option><option value="65">Oued amlil</option><option value="15">Oujda</option><option value="16">Outat el Haj</option><option value="13">Rabat</option><option value="47">Saka</option><option value="22">Sale</option><option value="53">Sefrou</option><option value="23">Settat</option><option value="61">Sidi kacem</option><option value="26">Souk El Arbaa</option><option value="14">Tanger</option><option value="34">Taourirte</option><option value="42">Targuist</option><option value="18">Taza</option><option value="50">Tazarine</option><option value="39">Tetouan</option><option value="49">Tinghir</option><option value="66">Zaio</option></select></div>
+        </div>
+        <div class="col-md-3 col-xs-12">
+          <label class="ft-light">
+            Date Voyage
+          </label>
+          <div class="form-group"><input type="text" id="dateDepart" name="dateDepart" required="required" readonly="readonly" class="date-picker form-control" value="02/11/2026" /></div>
+        </div>
+        <div class="col-md-3 col-xs-12">
+          <div class="form-group">
+            <button class="btn btn-secondary px-5">
+              Rechercher
+            </button>
+          </div>
+        </div>
+      </div>
+      </form>
+    </div>
+
+    <div class="container mt-2 mb-2">
+                                        <div class="card">
+            <div class="row">
+              <div class="col-sm-2">
+                <img src="/images/bus_stop.png" class="center" />
+              </div>
+              <div class="col-sm-8 text-center">
+                <table>
+                  <tr>
+                    <td  >
+                      <h2>
+                        00:30
+                      </h2>
+                    </td>
+                    <td class="col-sm-4">
+                      <div class="foo rectangle"></div><!--
+                      --><div class="foo triangle-right"></div>
+                      <!--<hr class="teal accent-4 d-inline-block my-auto"
+                        style="background-color: #00a658;width: 90%;" />-->
+                    </td>
+                    <td >
+                      <h2>
+                        05:30
+                      </h2>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <h6>
+                        Tanger
+                      </h6>
+                    </td>
+                    <td></td>
+                    <td>
+                      <h6>
+                        Casablanca
+                      </h6>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+          </div>
+                            <div class="card">
+            <div class="row">
+              <div class="col-sm-2">
+                <img src="/images/bus_stop.png" class="center" />
+              </div>
+              <div class="col-sm-8 text-center">
+                <table>
+                  <tr>
+                    <td  >
+                      <h2>
+                        02:00
+                      </h2>
+                    </td>
+                    <td class="col-sm-4">
+                      <div class="foo rectangle"></div><!--
+                      --><div class="foo triangle-right"></div>
+                      <!--<hr class="teal accent-4 d-inline-block my-auto"
+                        style="background-color: #00a658;width: 90%;" />-->
+                    </td>
+                    <td >
+                      <h2>
+                        06:30
+                      </h2>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <h6>
+                        Tanger
+                      </h6>
+                    </td>
+                    <td></td>
+                    <td>
+                      <h6>
+                        Casablanca
+                      </h6>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+          </div>
+                            <div class="card">
+            <div class="row">
+              <div class="col-sm-2">
+                <img src="/images/bus_stop.png" class="center" />
+              </div>
+              <div class="col-sm-8 text-center">
+                <table>
+                  <tr>
+                    <td  >
+                      <h2>
+                        03:30
+                      </h2>
+                    </td>
+                    <td class="col-sm-4">
+                      <div class="foo rectangle"></div><!--
+                      --><div class="foo triangle-right"></div>
+                      <!--<hr class="teal accent-4 d-inline-block my-auto"
+                        style="background-color: #00a658;width: 90%;" />-->
+                    </td>
+                    <td >
+                      <h2>
+                        08:30
+                      </h2>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <h6>
+                        Tanger
+                      </h6>
+                    </td>
+                    <td></td>
+                    <td>
+                      <h6>
+                        Casablanca
+                      </h6>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+          </div>
+                            <div class="card">
+            <div class="row">
+              <div class="col-sm-2">
+                <img src="/images/bus_stop.png" class="center" />
+              </div>
+              <div class="col-sm-8 text-center">
+                <table>
+                  <tr>
+                    <td  >
+                      <h2>
+                        04:00
+                      </h2>
+                    </td>
+                    <td class="col-sm-4">
+                      <div class="foo rectangle"></div><!--
+                      --><div class="foo triangle-right"></div>
+                      <!--<hr class="teal accent-4 d-inline-block my-auto"
+                        style="background-color: #00a658;width: 90%;" />-->
+                    </td>
+                    <td >
+                      <h2>
+                        09:15
+                      </h2>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <h6>
+                        Tanger
+                      </h6>
+                    </td>
+                    <td></td>
+                    <td>
+                      <h6>
+                        Casablanca
+                      </h6>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+          </div>
+                            <div class="card">
+            <div class="row">
+              <div class="col-sm-2">
+                <img src="/images/bus_stop.png" class="center" />
+              </div>
+              <div class="col-sm-8 text-center">
+                <table>
+                  <tr>
+                    <td  >
+                      <h2>
+                        05:45
+                      </h2>
+                    </td>
+                    <td class="col-sm-4">
+                      <div class="foo rectangle"></div><!--
+                      --><div class="foo triangle-right"></div>
+                      <!--<hr class="teal accent-4 d-inline-block my-auto"
+                        style="background-color: #00a658;width: 90%;" />-->
+                    </td>
+                    <td >
+                      <h2>
+                        10:30
+                      </h2>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <h6>
+                        Tanger
+                      </h6>
+                    </td>
+                    <td></td>
+                    <td>
+                      <h6>
+                        Casablanca
+                      </h6>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+          </div>
+                            <div class="card">
+            <div class="row">
+              <div class="col-sm-2">
+                <img src="/images/bus_stop.png" class="center" />
+              </div>
+              <div class="col-sm-8 text-center">
+                <table>
+                  <tr>
+                    <td  >
+                      <h2>
+                        06:45
+                      </h2>
+                    </td>
+                    <td class="col-sm-4">
+                      <div class="foo rectangle"></div><!--
+                      --><div class="foo triangle-right"></div>
+                      <!--<hr class="teal accent-4 d-inline-block my-auto"
+                        style="background-color: #00a658;width: 90%;" />-->
+                    </td>
+                    <td >
+                      <h2>
+                        12:00
+                      </h2>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <h6>
+                        Tanger
+                      </h6>
+                    </td>
+                    <td></td>
+                    <td>
+                      <h6>
+                        Casablanca
+                      </h6>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+          </div>
+                            <div class="card">
+            <div class="row">
+              <div class="col-sm-2">
+                <img src="/images/bus_stop.png" class="center" />
+              </div>
+              <div class="col-sm-8 text-center">
+                <table>
+                  <tr>
+                    <td  >
+                      <h2>
+                        13:15
+                      </h2>
+                    </td>
+                    <td class="col-sm-4">
+                      <div class="foo rectangle"></div><!--
+                      --><div class="foo triangle-right"></div>
+                      <!--<hr class="teal accent-4 d-inline-block my-auto"
+                        style="background-color: #00a658;width: 90%;" />-->
+                    </td>
+                    <td >
+                      <h2>
+                        18:30
+                      </h2>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <h6>
+                        Tanger
+                      </h6>
+                    </td>
+                    <td></td>
+                    <td>
+                      <h6>
+                        Casablanca
+                      </h6>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+          </div>
+                            <div class="card">
+            <div class="row">
+              <div class="col-sm-2">
+                <img src="/images/bus_stop.png" class="center" />
+              </div>
+              <div class="col-sm-8 text-center">
+                <table>
+                  <tr>
+                    <td  >
+                      <h2>
+                        14:30
+                      </h2>
+                    </td>
+                    <td class="col-sm-4">
+                      <div class="foo rectangle"></div><!--
+                      --><div class="foo triangle-right"></div>
+                      <!--<hr class="teal accent-4 d-inline-block my-auto"
+                        style="background-color: #00a658;width: 90%;" />-->
+                    </td>
+                    <td >
+                      <h2>
+                        19:30
+                      </h2>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <h6>
+                        Tanger
+                      </h6>
+                    </td>
+                    <td></td>
+                    <td>
+                      <h6>
+                        Casablanca
+                      </h6>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+          </div>
+                            <div class="card">
+            <div class="row">
+              <div class="col-sm-2">
+                <img src="/images/bus_stop.png" class="center" />
+              </div>
+              <div class="col-sm-8 text-center">
+                <table>
+                  <tr>
+                    <td  >
+                      <h2>
+                        17:00
+                      </h2>
+                    </td>
+                    <td class="col-sm-4">
+                      <div class="foo rectangle"></div><!--
+                      --><div class="foo triangle-right"></div>
+                      <!--<hr class="teal accent-4 d-inline-block my-auto"
+                        style="background-color: #00a658;width: 90%;" />-->
+                    </td>
+                    <td >
+                      <h2>
+                        22:00
+                      </h2>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <h6>
+                        Tanger
+                      </h6>
+                    </td>
+                    <td></td>
+                    <td>
+                      <h6>
+                        Casablanca
+                      </h6>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+          </div>
+                            <div class="card">
+            <div class="row">
+              <div class="col-sm-2">
+                <img src="/images/bus_stop.png" class="center" />
+              </div>
+              <div class="col-sm-8 text-center">
+                <table>
+                  <tr>
+                    <td  >
+                      <h2>
+                        22:30
+                      </h2>
+                    </td>
+                    <td class="col-sm-4">
+                      <div class="foo rectangle"></div><!--
+                      --><div class="foo triangle-right"></div>
+                      <!--<hr class="teal accent-4 d-inline-block my-auto"
+                        style="background-color: #00a658;width: 90%;" />-->
+                    </td>
+                    <td >
+                      <h2>
+                        03:30
+                      </h2>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <h6>
+                        Tanger
+                      </h6>
+                    </td>
+                    <td></td>
+                    <td>
+                      <h6>
+                        Casablanca
+                      </h6>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+            </div>
+          </div>
+                        </div>
+  </div>
+  </div></div>
+</body>
+</html>

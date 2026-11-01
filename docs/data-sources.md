@@ -111,6 +111,32 @@ wrong); the others and the correction are in `data/geocodes/ma-ctm.json` (review
 `ma-oncf` stops for Tchika, Beni Mellal and Casa Voyageurs). Result of the first run: 172 trips (168 runs, 4 with a
 second time pattern on other weekdays), 119 routes (one per direction and via), 130 stops.
 
+**Nejme Chamal** (private coach company of northern and eastern Morocco: Tanger, Tétouan, Al Hoceima, Nador, Oujda,
+Fès, Meknès, Casablanca, Errachidia…; checked 1 Nov 2026). No GTFS: Transitous has only `ma_oncf` for Morocco (ONCF trains
+and 34 Supratours coach routes, no Nejme Chamal), the Mobility Database has none, and the company is not sold on the
+Markoub portal. The site has no line list and no terms (`/robots.txt`, `/mentions-legales`, `/cgu`, `/conditions` answer
+404; the footer only says "© 2020 Nejme Chamal. All rights reserved"; no clause against reuse found), only a public
+search form, `GET /horaire?villeDepart=<id>&villeArrive=<id>&dateDepart=dd/mm/yyyy`, server-rendered, whose cards carry
+nothing but a departure time, an arrival time and the two city names. The date is ignored (identical answers for any
+date, also a past one): the source states one timetable for every day and gives no validity dates, so the feed is never
+flagged stale. `ma-nejmechamal` is **generated** (`packages/etl/generators/ma-nejmechamal.ts`, see the header there and the
+README): every ordered pair of the form's 59 cities is asked (3,422 requests, two at a time, about 17 minutes), and the
+104 buses of today (2 – 13 stops, 56 cities with service) are rebuilt from the cards (a bus is a maximal set of calls all
+linked by cards; the stops of a bus have one time each). Coordinates in `packages/etl/data/geocodes/ma-nejmechamal.json`:
+bus stations where OSM maps one (Tanger's active gare routière south-west of the city, Casablanca Ouled Ziane…), the
+town centre otherwise. Route type 200, `priority -1` in the cross-feed dedup.
+
+**Other Moroccan intercity bus sources (checked 1 Nov 2026), not built:**
+
+| Source | What it has | Why not |
+|---|---|---|
+| Markoub (markoub.ma), the multi-operator booking portal: ~110 private companies (SATAS, Globus, Itrane, Tassaout, Jaouharat, Al Yamama, STT Toulal…), Ghazala and SAT (sold only there) and CTM's inventory | a tRPC JSON API (`/api/trpc/bookingFlow.getJourneys`, `getJourneyStops`) with whole runs, times and coordinates at every stop, per date, 60 days ahead; no list of served pairs (499 cities) | robots.txt `Disallow: /api/`, and CGU art. 10 forbids to "télécharger, représenter, reproduire, copier, … exploiter … des éléments du Site" (textes, images, données). Would need permission from Markoub or the carriers. By far the largest gap left in Morocco |
+| Supratours' own site (supratours.ma) | the ONCF e-commerce gateway (`/api/getHoraires`, `/api/stations`), i.e. the same source as `ma_oncf`, same trip numbers | nothing beyond `ma-oncf`: the 24 coach stations absent from `ma_oncf` (Al Hoceima, Azrou, Midelt, Taroudant, Ouezzane…) gave "Aucun résultat" against 8 hubs; CGV IV-4.1 forbids exploiting its "base de données, données" without written permission |
+| Trans Ghazala, SAT, Itrane, Globus, Tassaout (own sites) | — | sell through Markoub only (search "Powered by markoub.ma", empty or template sites) |
+| SATAS, Pullman du Sud, Sahara Voyages, Lux Bus, Stareo | — | no timetable site of their own (satas.ma TLS error, the others do not resolve); on Markoub |
+| Alsa Maroc (city / suburban networks of Marrakech, Agadir, Tanger, Khouribga, Rabat; Casabus) | per line first bus, last bus, headway; the interurban map is an image | no stop times; alsa.ma / casabus.ma behind Imperva Incapsula (403 to scripts) |
+| Busbud, Omio, 12go, CheckMyBus, ComparaBUS, Bookaway | resell CTM, Supratours, Trans Ghazala | bot challenges (Busbud, Omio), robots `Disallow: /api/` (CheckMyBus), nothing that is not covered above |
+
 ## 6. Generated feeds: Bosnia and Herzegovina (checked 19 Oct 2026)
 
 No current GTFS exists for the railways of Bosnia and Herzegovina. Transitous' `ba_ZFBiH` (unofficial, by Petr Novak;

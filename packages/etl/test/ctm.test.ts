@@ -558,7 +558,10 @@ describe("ma-ctm: the generator on a fake API", () => {
     const cfg = await loadFeedsConfig(join(here, "../feeds.json"));
     const f = cfg.feeds.find((x) => x.id === "ma-ctm")!;
     expect(f).toMatchObject({ country: "MA", tier: "core", keep: ["coach"], sources: [{ generated: "ma-ctm" }], options: { allCoach: true }, timetableUrl: "https://booking.ctm.ma/" });
-    expect(cfg.feeds.at(-1)!.id).toBe("ma-ctm"); // last: a slow generator does not hold up the feeds behind it
+    // at the end, behind it only other generated feeds: processing is in feeds.json order, a slow generator
+    // must not hold up the downloaded feeds
+    const behind = cfg.feeds.slice(cfg.feeds.findIndex((x) => x.id === "ma-ctm") + 1);
+    expect(behind.filter((x) => !x.sources.some((s) => "generated" in s)).map((x) => x.id)).toEqual([]);
     const store = await GeocodeStore.load("ma-ctm");
     for (const [k, e] of Object.entries(store.file.entries)) {
       expect(e.checked, k).toMatch(/^\d{4}-\d{2}-\d{2}$/);
