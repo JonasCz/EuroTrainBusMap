@@ -32,6 +32,13 @@ Corridor geometries for the map: `buildGeometries(reqs, { workDir, log })` (see 
      half the hop's straight-line distance, at most 50 km (`RAIL_ROUTER_OPTS`). Before, a stop next to a fork
      could back onto the other branch (Libourne → Angoulême over LGV SEA via Ambarès, Paris → Sens reversing
      near Montereau). Road and tram graphs keep `reversalCost` 0.
+  5. **Stations cut off from the network** (`route.ts`): a station is snapped to the nearest track (plus 250 m
+     slack) and a route needs a component both ends share. When the nearest track of a station is a yard that
+     the graph does not link to the main line (Almería: 3.7 km of yard 0.4 km from the Huércal line, wider than the
+     300 m bridged), the route is retried with the track of every component within the snap radius (1.5 km) as
+     candidates, so the line ends where the main line ends. Before, such a hop failed and a rail corridor was drawn
+     along the road network (Guadix – Almería followed the A-92, up to 7 km off the line the other Almería
+     services use).
   Otherwise a straight great-circle line (`snapped: false`).
 - **road**: plausible feed shape, else a gentle curve bulging 5 % to the left of west→east
   (`snapped: false`).

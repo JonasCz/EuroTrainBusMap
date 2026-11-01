@@ -89,6 +89,38 @@ describe('routing', () => {
     expect(s.every((c) => g.compSize[g.comp[g.edgeU[c.edge]!]!]! >= 3000)).toBe(true);
     expect(r.route([0.1, 50], [5.2, 50], 1e6)).toBeNull();
   });
+  it('routes to a station whose nearest track is a yard cut off from the main line (Almería)', () => {
+    // main line (10,40) → (10.6,40); the station yard (4 km of track, so not ignored as a fragment) starts ~0.9 km
+    // beyond its end, farther than the bridged gaps, and the station snaps to the yard only (snapSlack)
+    const b = new RailGraphBuilder();
+    b.addLine(line([10, 40], [10.3, 40], [10.6, 40]));
+    b.addLine(line([10.611, 40], [10.66, 40]));
+    const yg = b.build({ simplifyTol: 15 });
+    const yr = new Router(yg, { minComponent: 3000 });
+    const station: LonLat = [10.615, 40.001];
+    expect(yr.snap(station).every((c) => c.lon > 10.61)).toBe(true);
+    const res = yr.route([10.1, 40.001], station, 200000)!;
+    expect(res).not.toBeNull();
+    expect(res.coords[res.coords.length - 1]![0]).toBeCloseTo(10.6, 2); // ends where the main line ends
+    expect(res.snapB).toBeGreaterThan(500);
+    // the retry is only for a failed route: a station on the network still snaps to its nearest track
+    expect(yr.route([10.1, 40.001], [10.5, 40.001], 200000)!.snapB).toBeLessThan(200);
+    // two separate islands farther apart than the snap radius stay unreachable
+    const far = new Router(synthetic(), { minComponent: 3000 });
+    expect(far.route([0.1, 50], [5.2, 50], 1e6)).toBeNull();
+  });
+  it('rail corridors on both sides of an isolated yard share one track and are not drawn along roads', () => {
+    const b = new RailGraphBuilder();
+    b.addLine(line([10, 40], [10.3, 40], [10.6, 40]));
+    b.addLine(line([10.611, 40], [10.66, 40]));
+    const yr = new Router(b.build({ simplifyTol: 15 }), { minComponent: 3000 });
+    const mk = (id: number, from: LonLat): GeometryRequest => ({ id, mode: 'rail', a: from, b: [10.615, 40.001], hops: [{ from, to: [10.615, 40.001] }] });
+    const out = buildWithRouter([mk(1, [10.1, 40.001]), mk(2, [10.4, 40.001])], yr, () => {}, null);
+    expect(out.every((o) => o.snapped)).toBe(true);
+    // the longer line contains the shorter one's track
+    const near = (p: [number, number]) => out[0]!.coords.some((c) => dist(c, p) < 300);
+    expect(out[1]!.coords.filter((c) => c[0] > 10.41 && c[0] < 10.59).every((c) => near(c))).toBe(true);
+  });
   it('respects the detour bound', () => {
     expect(r.route([0.1, 50], [0.9, 50], 30000)).toBeNull();
   });

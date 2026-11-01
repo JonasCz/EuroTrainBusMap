@@ -159,8 +159,12 @@ export class Router {
     return D[ie]! * D[jf]! + D[ie + 1]! * D[jf + 1]! > COS_REV;
   }
 
-  /** Candidate track positions near a point, best first (one per edge). */
-  snap(p: LonLat, radius = this.o.snapRadius): Snap[] {
+  /**
+   * Candidate track positions near a point, best first (one per edge). Candidates must be within
+   * `snapSlack` of the nearest one; with `perComponent` that holds per connected component of the
+   * graph, so track of a second component farther away is offered too (see `route`).
+   */
+  snap(p: LonLat, radius = this.o.snapRadius, perComponent = false): Snap[] {
     const g = this.g;
     const ids = new Set<number>();
     querySegments(g, p[0], p[1], radius, ids);
@@ -191,8 +195,21 @@ export class Router {
     }
     const all = [...best.values()].sort((a, b) => a.d - b.d);
     if (!all.length) return all;
-    const lim = all[0]!.d + this.o.snapSlack;
-    return all.filter((s) => s.d <= lim).slice(0, this.o.maxCandidates);
+    if (!perComponent) {
+      const lim = all[0]!.d + this.o.snapSlack;
+      return all.filter((s) => s.d <= lim).slice(0, this.o.maxCandidates);
+    }
+    const first = new Map<number, number>(), taken = new Map<number, number>();
+    const out: Snap[] = [];
+    for (const s of all) {
+      const c = g.comp[g.edgeU[s.edge]!]!;
+      const d0 = first.get(c) ?? (first.set(c, s.d), s.d);
+      const n = taken.get(c) ?? 0;
+      if (s.d > d0 + this.o.snapSlack || n >= this.o.maxCandidates) continue;
+      taken.set(c, n + 1);
+      out.push(s);
+    }
+    return out;
   }
 
   /**
@@ -204,14 +221,25 @@ export class Router {
     const M = ropts.edgeMult;
     const cost = M ? (e: number) => g.edgeCost[e]! * M(e) : (e: number) => g.edgeCost[e]!;
     this.stats.queries++;
+    const compOf = (s: Snap) => g.comp[g.edgeU[s.edge]!]!;
+    /** keep only components present on both sides */
+    const shared = (x: Snap[], y: Snap[]): [Snap[], Snap[]] => {
+      const cy = new Set(y.map(compOf));
+      const fx = x.filter((s) => cy.has(compOf(s)));
+      const cx = new Set(fx.map(compOf));
+      return [fx, y.filter((s) => cx.has(compOf(s)))];
+    };
     let sa = this.snap(a), sb = this.snap(b);
     if (!sa.length || !sb.length) return null;
-    // keep only components present on both sides
-    const compsB = new Set(sb.map((s) => g.comp[g.edgeU[s.edge]!]!));
-    sa = sa.filter((s) => compsB.has(g.comp[g.edgeU[s.edge]!]!));
-    const compsA = new Set(sa.map((s) => g.comp[g.edgeU[s.edge]!]!));
-    sb = sb.filter((s) => compsA.has(g.comp[g.edgeU[s.edge]!]!));
-    if (!sa.length || !sb.length) return null;
+    [sa, sb] = shared(sa, sb);
+    if (!sa.length || !sb.length) {
+      // The nearest track of one station is a piece cut off from the network (a station yard whose
+      // link to the main line is missing or longer than the bridged gaps: Almería), so the two
+      // stations have no component in common. Offer the track of the other components within the
+      // snap radius too; the snap penalty still prefers the closest one that connects.
+      [sa, sb] = shared(this.snap(a, this.o.snapRadius, true), this.snap(b, this.o.snapRadius, true));
+      if (!sa.length || !sb.length) return null;
+    }
 
     const pen = this.o.snapPenalty;
     const rev = this.dir ? Math.min(this.o.reversalCost, this.o.reversalShare * haversine(a[0], a[1], b[0], b[1])) : 0;
