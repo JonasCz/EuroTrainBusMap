@@ -1,0 +1,106 @@
+{
+ "Journeys": [
+  {
+   "JourneyId": "43ffbae8-f806-4340-9517-272766c204a5",
+   "DepartureDateTimeTimeZone": "Africa/Casablanca",
+   "DepartureDateTime": "2026-11-04T06:30:00",
+   "ArrivalDateTime": "2026-11-04T13:45:00",
+   "Duration": "07:15:00",
+   "OriginStopName": "Casablanca FAR",
+   "OriginStopId": 301,
+   "DestinationStopName": "Agadir",
+   "DestinationStopId": 277,
+   "OriginCityName": "Casablanca",
+   "OriginCityId": 5618,
+   "DestinationCityName": "Agadir",
+   "DestinationCityId": 5589,
+   "IsForSale": true,
+   "Legs": [
+    {
+     "OrderNumber": 1,
+     "BusCompanyName": "CTM",
+     "BrandName": "Confort",
+     "BrandShortName": "CONFORT",
+     "BusLineNumber": "009040",
+     "DepartureStopId": 301,
+     "DepartureStopName": "Casablanca FAR",
+     "DepartureDatetime": "2026-11-04T06:30:00",
+     "DepartureTimezone": "Africa/Casablanca",
+     "DestinationStopId": 277,
+     "DestinationStopName": "Agadir",
+     "ArrivalDatetime": "2026-11-04T13:45:00",
+     "ArrivalTimezone": "Africa/Casablanca",
+     "Duration": "07:15:00"
+    }
+   ]
+  },
+  {
+   "JourneyId": "a02dfd61-5bfe-4e73-b25f-30a71450f000",
+   "DepartureDateTimeTimeZone": "Africa/Casablanca",
+   "DepartureDateTime": "2026-11-04T07:00:00",
+   "ArrivalDateTime": "2026-11-04T13:45:00",
+   "Duration": "06:45:00",
+   "OriginStopName": "Casablanca Maarif",
+   "OriginStopId": 303,
+   "DestinationStopName": "Agadir",
+   "DestinationStopId": 277,
+   "OriginCityName": "Casablanca",
+   "OriginCityId": 5618,
+   "DestinationCityName": "Agadir",
+   "DestinationCityId": 5589,
+   "IsForSale": true,
+   "Legs": [
+    {
+     "OrderNumber": 1,
+     "BusCompanyName": "CTM",
+     "BrandName": "Confort",
+     "BrandShortName": "CONFORT",
+     "BusLineNumber": "009040",
+     "DepartureStopId": 303,
+     "DepartureStopName": "Casablanca Maarif",
+     "DepartureDatetime": "2026-11-04T07:00:00",
+     "DepartureTimezone": "Africa/Casablanca",
+     "DestinationStopId": 277,
+     "DestinationStopName": "Agadir",
+     "ArrivalDatetime": "2026-11-04T13:45:00",
+     "ArrivalTimezone": "Africa/Casablanca",
+     "Duration": "06:45:00"
+    }
+   ]
+  },
+  {
+   "JourneyId": "7788e0da-03e4-4013-8af9-2445e715886f",
+   "DepartureDateTimeTimeZone": "Africa/Casablanca",
+   "DepartureDateTime": "2026-11-04T11:15:00",
+   "ArrivalDateTime": "2026-11-04T18:45:00",
+   "Duration": "07:30:00",
+   "OriginStopName": "Casablanca FAR",
+   "OriginStopId": 301,
+   "DestinationStopName": "Agadir",
+   "DestinationStopId": 277,
+   "OriginCityName": "Casablanca",
+   "OriginCityId": 5618,
+   "DestinationCityName": "Agadir",
+   "DestinationCityId": 5589,
+   "IsForSale": false,
+   "Legs": [
+    {
+     "OrderNumber": 1,
+     "BusCompanyName": "CTM",
+     "BrandName": "Confort",
+     "BrandShortName": "CONFORT",
+     "BusLineNumber": "009044",
+     "DepartureStopId": 301,
+     "DepartureStopName": "Casablanca FAR",
+     "DepartureDatetime": "2026-11-04T11:15:00",
+     "DepartureTimezone": "Africa/Casablanca",
+     "DestinationStopId": 277,
+     "DestinationStopName": "Agadir",
+     "ArrivalDatetime": "2026-11-04T18:45:00",
+     "ArrivalTimezone": "Africa/Casablanca",
+     "Duration": "07:30:00"
+    }
+   ]
+  }
+ ]
+}

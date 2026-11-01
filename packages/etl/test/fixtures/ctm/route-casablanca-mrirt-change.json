@@ -1,0 +1,88 @@
+{
+ "Legs": [
+  {
+   "OrderNumber": 1,
+   "ServiceCode": "CABM110",
+   "BusCompanyName": "CTM",
+   "Subcontractor": null,
+   "BusLineNumber": "009006",
+   "TripName": "Casablanca-Beni mellal",
+   "BrandName": "Confort",
+   "BrandShortName": "CONFORT",
+   "DepartureCityName": "Casablanca",
+   "DepartureStopName": "Casablanca FAR",
+   "DepartureStopId": 301,
+   "DepartureDatetime": "2026-11-04T07:30:00",
+   "DestinationCityName": "Beni Mellal",
+   "DestinationStopName": "Beni Mellal Amiral",
+   "DestinationStopId": 293,
+   "ArrivalDatetime": "2026-11-04T11:00:00",
+   "Duration": "03:30:00",
+   "IntermediateStops": [
+    {
+     "StopName": "Casablanca Maarif",
+     "ArrivalDateTime": "2026-11-04T07:50:00",
+     "DepartureDateTime": "2026-11-04T08:00:00",
+     "IsRequestPickUpStop": true,
+     "IsRequestDropOffStop": false
+    },
+    {
+     "StopName": "Khouribga",
+     "ArrivalDateTime": "2026-11-04T09:20:00",
+     "DepartureDateTime": "2026-11-04T09:30:00",
+     "IsRequestPickUpStop": false,
+     "IsRequestDropOffStop": false
+    }
+   ]
+  },
+  {
+   "OrderNumber": 2,
+   "ServiceCode": "FEAG103",
+   "BusCompanyName": "CTM",
+   "Subcontractor": null,
+   "BusLineNumber": "015001",
+   "TripName": "Inzegane-Fes Via Beni Mellal",
+   "BrandName": "Confort",
+   "BrandShortName": "CONFORT",
+   "DepartureCityName": "Beni Mellal",
+   "DepartureStopName": "Beni Mellal Amiral",
+   "DepartureStopId": 293,
+   "DepartureDatetime": "2026-11-04T17:15:00",
+   "DestinationCityName": "Mrirt",
+   "DestinationStopName": "Mrirt",
+   "DestinationStopId": 350,
+   "ArrivalDatetime": "2026-11-04T20:40:00",
+   "Duration": "03:25:00",
+   "IntermediateStops": [
+    {
+     "StopName": "Kasbat Tadla",
+     "ArrivalDateTime": "2026-11-04T17:55:00",
+     "DepartureDateTime": "2026-11-04T18:00:00",
+     "IsRequestPickUpStop": false,
+     "IsRequestDropOffStop": false
+    },
+    {
+     "StopName": "Zaouit Echeikh",
+     "ArrivalDateTime": "2026-11-04T18:40:00",
+     "DepartureDateTime": "2026-11-04T18:45:00",
+     "IsRequestPickUpStop": false,
+     "IsRequestDropOffStop": false
+    },
+    {
+     "StopName": "Tighssaline",
+     "ArrivalDateTime": "2026-11-04T19:30:00",
+     "DepartureDateTime": "2026-11-04T19:40:00",
+     "IsRequestPickUpStop": false,
+     "IsRequestDropOffStop": true
+    },
+    {
+     "StopName": "Khenifra",
+     "ArrivalDateTime": "2026-11-04T20:00:00",
+     "DepartureDateTime": "2026-11-04T20:05:00",
+     "IsRequestPickUpStop": false,
+     "IsRequestDropOffStop": false
+    }
+   ]
+  }
+ ]
+}

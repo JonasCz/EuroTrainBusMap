@@ -1,0 +1,352 @@
+{
+ "Countries": [
+  {
+   "CountryId": 94,
+   "CountryName": "Maroc",
+   "Cities": [
+    {
+     "CityId": 5589,
+     "CityName": "Agadir",
+     "BusStops": [
+      {
+       "BusStopId": 277,
+       "BusStopCode": "AGD",
+       "BusStopName": "Agadir",
+       "CountyName": "Souss Massa",
+       "Address": {
+        "Street": "Gare Routière Municipale",
+        "ZipCode": "80000",
+        "CityName": "Agadir"
+       },
+       "Coordinates": {
+        "Latitude": 30.416237,
+        "Longitude": -9.565609
+       }
+      }
+     ]
+    },
+    {
+     "CityId": 5708,
+     "CityName": "Ait Melloul",
+     "BusStops": [
+      {
+       "BusStopId": 282,
+       "BusStopCode": "AIT",
+       "BusStopName": "Ait Melloul",
+       "CountyName": "Souss Massa",
+       "Address": {
+        "Street": "Lotissement Riad 3 Bloc 1",
+        "ZipCode": "86150",
+        "CityName": "Ait Melloul"
+       },
+       "Coordinates": {
+        "Latitude": 30.333778,
+        "Longitude": -9.50387
+       }
+      }
+     ]
+    },
+    {
+     "CityId": 5640,
+     "CityName": "Beni Mellal",
+     "BusStops": [
+      {
+       "BusStopId": 293,
+       "BusStopCode": "BEM",
+       "BusStopName": "Beni Mellal Amiral",
+       "CountyName": "Beni Mellal Khenifra",
+       "Address": {
+        "Street": "Angle Boulevard Mohamed V & Boulevard El Hanssali",
+        "ZipCode": "23000",
+        "CityName": "Beni Mellal"
+       },
+       "Coordinates": {
+        "Latitude": 32.339246,
+        "Longitude": -6.346041
+       }
+      },
+      {
+       "BusStopId": 294,
+       "BusStopCode": "BMG",
+       "BusStopName": "Beni Mellal GR",
+       "CountyName": "Beni Mellal Khenifra",
+       "Address": {
+        "Street": "Gare Routière Municipale",
+        "ZipCode": "23000",
+        "CityName": "Beni Mellal"
+       },
+       "Coordinates": {
+        "Latitude": 32.343483,
+        "Longitude": -6.358673
+       }
+      },
+      {
+       "BusStopId": 600,
+       "BusStopCode": "BEMSUP",
+       "BusStopName": "Beni Mellal Supratours",
+       "CountyName": null,
+       "Address": {
+        "Street": null,
+        "ZipCode": null,
+        "CityName": "Beni Mellal"
+       },
+       "Coordinates": null
+      }
+     ]
+    },
+    {
+     "CityId": 5618,
+     "CityName": "Casablanca",
+     "BusStops": [
+      {
+       "BusStopId": 302,
+       "BusStopCode": "ASC",
+       "BusStopName": "Casablanca Ain Sebaa",
+       "CountyName": "Casablanca Settat",
+       "Address": {
+        "Street": "Résidence Al Manar 2, Route De Rabat",
+        "ZipCode": "20000",
+        "CityName": "Casablanca"
+       },
+       "Coordinates": {
+        "Latitude": 33.602065,
+        "Longitude": -7.523093
+       }
+      },
+      {
+       "BusStopId": 301,
+       "BusStopCode": "CAS",
+       "BusStopName": "Casablanca FAR",
+       "CountyName": "Casablanca Settat",
+       "Address": {
+        "Street": "23, Rue Leon Africain",
+        "ZipCode": "20000",
+        "CityName": "Casablanca"
+       },
+       "Coordinates": {
+        "Latitude": 33.59586,
+        "Longitude": -7.612193
+       }
+      },
+      {
+       "BusStopId": 303,
+       "BusStopCode": "LAC",
+       "BusStopName": "Casablanca Maarif",
+       "CountyName": "Casablanca Settat",
+       "Address": {
+        "Street": "Rue Georges Sand",
+        "ZipCode": "20000",
+        "CityName": "Casablanca"
+       },
+       "Coordinates": {
+        "Latitude": 33.576692,
+        "Longitude": -7.635994
+       }
+      },
+      {
+       "BusStopId": 599,
+       "BusStopCode": "Sup_Casa",
+       "BusStopName": "Supratours Casa voyageurs",
+       "CountyName": null,
+       "Address": {
+        "Street": null,
+        "ZipCode": null,
+        "CityName": "Casablanca"
+       },
+       "Coordinates": null
+      }
+     ]
+    },
+    {
+     "CityId": 5595,
+     "CityName": "Essaouira",
+     "BusStops": [
+      {
+       "BusStopId": 313,
+       "BusStopCode": "ESI",
+       "BusStopName": "Essaouira",
+       "CountyName": "Marrakech Safi",
+       "Address": {
+        "Street": "Place 11 Janvier Lot Azlif",
+        "ZipCode": "44000",
+        "CityName": "Essaouira"
+       },
+       "Coordinates": {
+        "Latitude": 31.503372,
+        "Longitude": -9.758095
+       }
+      }
+     ]
+    },
+    {
+     "CityId": 5707,
+     "CityName": "Guelmim",
+     "BusStops": [
+      {
+       "BusStopId": 322,
+       "BusStopCode": "GUE",
+       "BusStopName": "Guelmim",
+       "CountyName": "Guelmim Oued Noun",
+       "Address": {
+        "Street": "Avenue Moulay Rachid N°207-209-211",
+        "ZipCode": "81000",
+        "CityName": "Guelmim"
+       },
+       "Coordinates": {
+        "Latitude": 28.99465,
+        "Longitude": -10.056467
+       }
+      }
+     ]
+    },
+    {
+     "CityId": 5720,
+     "CityName": "Inzegane",
+     "BusStops": [
+      {
+       "BusStopId": 327,
+       "BusStopCode": "INZ",
+       "BusStopName": "Inzegane",
+       "CountyName": "Souss Massa",
+       "Address": {
+        "Street": "94, Boulevard Al Mokhtar Essoussi",
+        "ZipCode": "86350",
+        "CityName": "Inzegane"
+       },
+       "Coordinates": {
+        "Latitude": 30.360531,
+        "Longitude": -9.528317
+       }
+      }
+     ]
+    },
+    {
+     "CityId": 5686,
+     "CityName": "Marrakech",
+     "BusStops": [
+      {
+       "BusStopId": 344,
+       "BusStopCode": "MMD",
+       "BusStopName": "Marrakech",
+       "CountyName": "Marrakech Safi",
+       "Address": {
+        "Street": "Boulevard Aboubaker Seddik",
+        "ZipCode": "40000",
+        "CityName": "Marrakech"
+       },
+       "Coordinates": {
+        "Latitude": 31.626731,
+        "Longitude": -8.020431
+       }
+      }
+     ]
+    },
+    {
+     "CityId": 5615,
+     "CityName": "Safi",
+     "BusStops": [
+      {
+       "BusStopId": 365,
+       "BusStopCode": "SAF",
+       "BusStopName": "Safi",
+       "CountyName": "Marrakech Safi",
+       "Address": {
+        "Street": "Gare Routière Municipale",
+        "ZipCode": "46000",
+        "CityName": "Safi"
+       },
+       "Coordinates": {
+        "Latitude": 32.289072,
+        "Longitude": -9.235576
+       }
+      },
+      {
+       "BusStopId": 609,
+       "BusStopCode": "SAFSUP",
+       "BusStopName": "Safi Supratours",
+       "CountyName": null,
+       "Address": {
+        "Street": null,
+        "ZipCode": null,
+        "CityName": "Safi"
+       },
+       "Coordinates": {
+        "Latitude": 32.300806,
+        "Longitude": -9.226872
+       }
+      }
+     ]
+    },
+    {
+     "CityId": 5590,
+     "CityName": "Tafraout",
+     "BusStops": [
+      {
+       "BusStopId": 374,
+       "BusStopCode": "TFR",
+       "BusStopName": "Tafraout",
+       "CountyName": "Souss Massa",
+       "Address": {
+        "Street": "Route Amiane",
+        "ZipCode": "85450",
+        "CityName": "Tafraout"
+       },
+       "Coordinates": {
+        "Latitude": 29.719235,
+        "Longitude": -8.971301
+       }
+      }
+     ]
+    },
+    {
+     "CityId": 5744,
+     "CityName": "Tamelelt",
+     "BusStops": [
+      {
+       "BusStopId": 479,
+       "BusStopCode": "TML",
+       "BusStopName": "Tamelelt",
+       "CountyName": "Marrakech Safi",
+       "Address": {
+        "Street": null,
+        "ZipCode": "43450",
+        "CityName": "Tamelelt"
+       },
+       "Coordinates": {
+        "Latitude": 31.814217,
+        "Longitude": -7.521099
+       }
+      }
+     ]
+    },
+    {
+     "CityId": 5656,
+     "CityName": "Tiznit",
+     "BusStops": [
+      {
+       "BusStopId": 395,
+       "BusStopCode": "TIZ",
+       "BusStopName": "Tiznit",
+       "CountyName": "Souss Massa",
+       "Address": {
+        "Street": "N1, Lotissement Saadaoui Route Tafraout",
+        "ZipCode": "85000",
+        "CityName": "Tiznit"
+       },
+       "Coordinates": {
+        "Latitude": 29.692529,
+        "Longitude": -9.722937
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "Suggestions": {
+  "Origin": [],
+  "DefaultOrigin": null,
+  "Destination": [],
+  "DefaultDestination": null
+ }
+}

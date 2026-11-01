@@ -1782,6 +1782,28 @@
    ],
    "notes": "Covered by ee-unified; disabled to avoid dupes",
    "disabled": true
+  },
+  {
+   "id": "ma-ctm",
+   "country": "MA",
+   "name": "CTM (Morocco's national intercity coaches, from the booking.ctm.ma timetable)",
+   "tier": "core",
+   "keep": [
+    "coach"
+   ],
+   "sources": [
+    {
+     "generated": "ma-ctm"
+    }
+   ],
+   "license": "timetable published by the operator",
+   "licenseUrl": "https://booking.ctm.ma/",
+   "attribution": "CTM (Compagnie de Transports au Maroc)",
+   "notes": "Generated on every build by packages/etl/generators/ma-ctm.ts from the JSON API of the booking site (no GTFS published): runs found by sweeping hub cities, weekdays from a sampled week. Last in the list on purpose: the generator takes ~25 minutes (1 request/s) and feeds are processed in order.",
+   "approxMB": 0.3,
+   "options": {
+    "allCoach": true
+   }
   }
  ]
 }

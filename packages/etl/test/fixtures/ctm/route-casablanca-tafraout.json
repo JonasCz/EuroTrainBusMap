@@ -1,0 +1,88 @@
+{
+ "Legs": [
+  {
+   "OrderNumber": 1,
+   "ServiceCode": "CATF100",
+   "BusCompanyName": "CTM",
+   "Subcontractor": null,
+   "BusLineNumber": "009040",
+   "TripName": "Casablanca-Tafraout",
+   "BrandName": "Confort",
+   "BrandShortName": "CONFORT",
+   "DepartureCityName": "Casablanca",
+   "DepartureStopName": "Casablanca FAR",
+   "DepartureStopId": 301,
+   "DepartureDatetime": "2026-11-04T06:30:00",
+   "DestinationCityName": "Tafraout",
+   "DestinationStopName": "Tafraout",
+   "DestinationStopId": 374,
+   "ArrivalDatetime": "2026-11-04T19:15:00",
+   "Duration": "12:45:00",
+   "IntermediateStops": [
+    {
+     "StopName": "Casablanca Maarif",
+     "ArrivalDateTime": "2026-11-04T06:45:00",
+     "DepartureDateTime": "2026-11-04T07:00:00",
+     "IsRequestPickUpStop": true,
+     "IsRequestDropOffStop": false
+    },
+    {
+     "StopName": "Marrakech",
+     "ArrivalDateTime": "2026-11-04T10:25:00",
+     "DepartureDateTime": "2026-11-04T10:30:00",
+     "IsRequestPickUpStop": false,
+     "IsRequestDropOffStop": false
+    },
+    {
+     "StopName": "Agadir",
+     "ArrivalDateTime": "2026-11-04T13:45:00",
+     "DepartureDateTime": "2026-11-04T14:00:00",
+     "IsRequestPickUpStop": false,
+     "IsRequestDropOffStop": false
+    },
+    {
+     "StopName": "Inzegane",
+     "ArrivalDateTime": "2026-11-04T14:35:00",
+     "DepartureDateTime": "2026-11-04T14:45:00",
+     "IsRequestPickUpStop": false,
+     "IsRequestDropOffStop": false
+    },
+    {
+     "StopName": "Ait Melloul",
+     "ArrivalDateTime": "2026-11-04T14:55:00",
+     "DepartureDateTime": "2026-11-04T15:00:00",
+     "IsRequestPickUpStop": false,
+     "IsRequestDropOffStop": false
+    },
+    {
+     "StopName": "Tiznit",
+     "ArrivalDateTime": "2026-11-04T16:15:00",
+     "DepartureDateTime": "2026-11-04T16:30:00",
+     "IsRequestPickUpStop": false,
+     "IsRequestDropOffStop": false
+    },
+    {
+     "StopName": "Tighmi",
+     "ArrivalDateTime": "2026-11-04T17:25:00",
+     "DepartureDateTime": "2026-11-04T17:30:00",
+     "IsRequestPickUpStop": false,
+     "IsRequestDropOffStop": true
+    },
+    {
+     "StopName": "Idaousmlal",
+     "ArrivalDateTime": "2026-11-04T17:45:00",
+     "DepartureDateTime": "2026-11-04T17:50:00",
+     "IsRequestPickUpStop": false,
+     "IsRequestDropOffStop": true
+    },
+    {
+     "StopName": "Ait Ouafqa",
+     "ArrivalDateTime": "2026-11-04T17:50:00",
+     "DepartureDateTime": "2026-11-04T18:00:00",
+     "IsRequestPickUpStop": false,
+     "IsRequestDropOffStop": true
+    }
+   ]
+  }
+ ]
+}

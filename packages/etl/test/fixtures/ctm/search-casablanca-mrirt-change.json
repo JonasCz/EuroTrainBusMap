@@ -1,0 +1,54 @@
+{
+ "Journeys": [
+  {
+   "JourneyId": "2b11df64-2619-415d-8aa0-156674ed0b5c",
+   "DepartureDateTimeTimeZone": "Africa/Casablanca",
+   "DepartureDateTime": "2026-11-04T07:30:00",
+   "ArrivalDateTime": "2026-11-04T20:40:00",
+   "Duration": "13:10:00",
+   "OriginStopName": "Casablanca FAR",
+   "OriginStopId": 301,
+   "DestinationStopName": "Mrirt",
+   "DestinationStopId": 350,
+   "OriginCityName": "Casablanca",
+   "OriginCityId": 5618,
+   "DestinationCityName": "Mrirt",
+   "DestinationCityId": 5632,
+   "IsForSale": true,
+   "Legs": [
+    {
+     "OrderNumber": 1,
+     "BusCompanyName": "CTM",
+     "BrandName": "Confort",
+     "BrandShortName": "CONFORT",
+     "BusLineNumber": "009006",
+     "DepartureStopId": 301,
+     "DepartureStopName": "Casablanca FAR",
+     "DepartureDatetime": "2026-11-04T07:30:00",
+     "DepartureTimezone": "Africa/Casablanca",
+     "DestinationStopId": 293,
+     "DestinationStopName": "Beni Mellal Amiral",
+     "ArrivalDatetime": "2026-11-04T11:00:00",
+     "ArrivalTimezone": "Africa/Casablanca",
+     "Duration": "03:30:00"
+    },
+    {
+     "OrderNumber": 2,
+     "BusCompanyName": "CTM",
+     "BrandName": "Confort",
+     "BrandShortName": "CONFORT",
+     "BusLineNumber": "015001",
+     "DepartureStopId": 293,
+     "DepartureStopName": "Beni Mellal Amiral",
+     "DepartureDatetime": "2026-11-04T17:15:00",
+     "DepartureTimezone": "Africa/Casablanca",
+     "DestinationStopId": 350,
+     "DestinationStopName": "Mrirt",
+     "ArrivalDatetime": "2026-11-04T20:40:00",
+     "ArrivalTimezone": "Africa/Casablanca",
+     "Duration": "03:25:00"
+    }
+   ]
+  }
+ ]
+}

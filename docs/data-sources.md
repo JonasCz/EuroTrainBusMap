@@ -86,8 +86,30 @@ Sahara. Feeds checked (downloaded, calendars read):
 | Baleària (incl. Algeciras – Tanger Med / Ceuta, Huelva – Gran Canaria / Tenerife) | Transitous `es_Ferry-Baleària` | service dates end 2025-03-31 | no: ferry, and stale |
 
 No GTFS found (Transitous, Mobility Database): Global (Gran Canaria interurban), Lanzarote / Fuerteventura buses,
-CTM coaches, Rabat–Salé tram, Naviera Armas, FRS Tarifa – Tanger. Madeira (`pt_Funchal`, valid to 2026-11-30) is inside
-the coverage now but not added.
+CTM coaches (the feed `ma-ctm` is generated instead, below), Rabat–Salé tram, Naviera Armas, FRS Tarifa – Tanger. Madeira
+(`pt_Funchal`, valid to 2026-11-30) is inside the coverage now but not added.
+
+**CTM** (Compagnie de Transports au Maroc, the national intercity coach operator; checked 1 Nov 2026). Transitous has only
+`ma_oncf` for Morocco (ONCF trains and 34 Supratours coach routes, nothing of CTM), the Mobility Database nothing. The
+operator's booking site `booking.ctm.ma` (a Turnit app) answers an unauthenticated JSON API (`filtered-stops`,
+`journeys/search`, `journeys/{id}/route`; no key, no cookie). `booking.ctm.ma/robots.txt` is `User-agent: * Disallow:`
+(`ctm.ma/robots.txt` disallows only `/wp-json/`) and the terms of sale (`ctm.ma/cgv`) have no clause against scraping or
+reuse, so the feed `ma-ctm` (coach, tier core) is **generated** on every build by `packages/etl/generators/ma-ctm.ts`.
+The API has no list of lines and gives a run's stops only between two searched stops, so the script (1 request/s, at
+most 2 in flight, a hard budget of 2,000 requests; about 1,400 requests and 25 minutes) sweeps three hub cities
+(Casablanca, Agadir, Marrakech) against all 119 cities in both directions on one day, asks the route of every journey not
+yet explained by a known run, joins the pieces of one `ServiceCode` into runs (168 on 4 Nov 2026, all 130 stops of the stop
+list occur) and completes the runs known only in part. Their weekdays come from one sampled week: a covering set of 43
+city pairs is searched on seven consecutive days, the weekly pattern is repeated over the window up to the sales horizon
+(today + 60 days; some southern lines are sold only 30 days ahead), and two later days (+21, +49) are compared as a check
+(no difference on 25 Nov and 23 Dec). That repetition is an assumption (holidays and seasonal changes are not seen).
+Completeness: the three hubs find the same 168 runs as six hubs (Fès, Oujda, Tanger add none), and 480 searches around
+10 random other cities found no journey the runs do not explain; what can be missed is a run that does not run on the
+first sampled day on a city pair nothing else serves, and short runs between non-hub cities (Marrakech – Essaouira was
+found only after Marrakech became a hub). 125 of the 130 stops have coordinates in the API (one of them, Ait Aissa, is
+wrong); the others and the correction are in `data/geocodes/ma-ctm.json` (reviewed; Supratours' own agency list and its
+`ma-oncf` stops for Tchika, Beni Mellal and Casa Voyageurs). Result of the first run: 172 trips (168 runs, 4 with a
+second time pattern on other weekdays), 119 routes (one per direction and via), 130 stops.
 
 ## 6. Generated feeds: Bosnia and Herzegovina (checked 19 Oct 2026)
 
