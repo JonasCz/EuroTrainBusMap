@@ -4,9 +4,10 @@
  *   pnpm --filter @etbm/etl run geocode -- <generator id> [--accept] [--start YYYY-MM-DD] [--stops-db <file> | --no-stops]
  *
  *   1. runs the generator live; it names every stop that is not in data/geocodes/<id>.json (or not reviewed yet);
- *   2. looks each new stop up on OpenStreetMap (Nominatim: one request per 2 s, restricted to the country and to the
- *      area of the stops already in the file), picks the best hit and writes it as an UNCHECKED entry
- *      (`checked: null`, source "osm-auto", the note says why it is unsure); a stop with no hit is listed for manual work;
+ *   2. looks each new stop up on OpenStreetMap (Nominatim: one request per 2 s, restricted to the country – the file's
+ *      `country`, for a new file the feed's country in feeds.json – and to the area of the stops already in the file),
+ *      picks the best hit and writes it as an UNCHECKED entry (`checked: null`, source "osm-auto", the note says why it
+ *      is unsure); a stop with no hit is listed for manual work;
  *   2b. puts each hit on the existing stop of the same place when another feed has one nearby (refstops.ts: same name
  *      within 3 km, the bus station, or the busiest stop named after the place; only railway stations for a rail feed,
  *      only bus stops for a bus feed; source "stop-auto", the note names the stop and feed). Otherwise the map shows
@@ -140,7 +141,10 @@ async function main() {
     process.exit(2);
   }
   const path = join(GEOCODES_DIR, `${id}.json`);
-  const readFileObj = async (): Promise<GeocodeFile> => (existsSync(path) ? (JSON.parse(await readFile(path, "utf8")) as GeocodeFile) : { version: 1, entries: {} });
+  // a new store takes the feed's country (feeds.json), so that the very first lookups are restricted to it as well
+  const feedCountry = cfg.feeds.find((f) => generatedSource(f) === id)?.country?.toLowerCase();
+  const readFileObj = async (): Promise<GeocodeFile> =>
+    existsSync(path) ? (JSON.parse(await readFile(path, "utf8")) as GeocodeFile) : { version: 1, ...(feedCountry ? { country: feedCountry } : {}), entries: {} };
   let file = await readFileObj();
   const today = new Date().toISOString().slice(0, 10);
 
